@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+set +e
+
+# openclaw-gated-run — Policy enforcement wrapper for commands
+# Usage: openclaw-gated-run --task "desc" --agent "id" --channel "name" --estimated-cost-usd N [--confirm-budget] -- <command>
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_ROOT="$(dirname "$SCRIPT_DIR")"
+CONFIG_DIR="$TEST_ROOT/config/policy"
+DATA_DIR="$TEST_ROOT/data"
+LOGS_DIR="$TEST_ROOT/logs"
+
+# Ensure directories exist
+mkdir -p "$DATA_DIR" "$LOGS_DIR"
+
+# Parse arguments
+TASK_DESC=""
+AGENT_ID=""
+CHANNEL_NAME=""
+ESTIMATED_COST=0.00
+CONFIRM_BUDGET=false
+NON_INTERACTIVE=false
+COMMAND_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --task)
+      TASK_DESC="$2"
+      shift 2
+      ;;
+    --agent)
+      AGENT_ID="$2"
+      shift 2
+      ;;
+    --channel)
+      CHANNEL_NAME="$2"
+      shift 2
+      ;;
+    --estimated-cost-usd)
+      ESTIMATED_COST="$2"
+      shift 2
+      ;;
+    --confirm-budget)
+      CONFIRM_BUDGET=true
+      shift
+      ;;
+    --non-interactive)
+      NON_INTERACTIVE=true
+      shift
+      ;;
+    --)
+      shift
+      COMMAND_ARGS=("$@")
+      break
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Validate required arguments
+if [[ -z "$TASK_DESC" || -z "$AGENT_ID" || -z "$CHANNEL_NAME" || -z "$ESTIMATED_COST" || ${#COMMAND_ARGS[@]} -eq 0 ]]; then
+  echo "Usage: openclaw-gated-run --task 'desc' --agent 'id' --channel 'name' --estimated-cost-usd N [--confirm-budget] -- <command>" >&2
+  exit 1
+fi
+
+# ============================================================================
+# Helper: Format array as JSON (handle empty arrays)
+# ============================================================================
+
+format_json_array() {
+  local -a arr=("$@")
+  local json="["
+  local first=true
+  
+  for item in "${arr[@]}"; do
+    if [ -z "$item" ]; then
+      continue  # Skip empty items
+    fi
+    if [ "$first" = false ]; then
+      json="$json,"
+    fi
+    json="$json\"$item\""
+    first=false
+  done
+  
+  json="$json]"
+  echo "$json"
+}
+
+# Initialize gate decisions tracking
+declare -a GATES_PASSED=()
+declare -a GATES_BLOCKED=()
+GATE_EXIT_CODE=0
+GATES_FAILED=false
+
+# ============================================================================
+# GATE 1: Cost Ceiling (via routing tier)
+# ============================================================================
+
+# Call routing engine to get tier and cost ceiling
+ROUTING_OUTPUT=$(bash "$SCRIPT_DIR/openclaw-route" "$AGENT_ID" "$CHANNEL_NAME" "$TASK_DESC" 2>/dev/null || echo '{"tier":"unknown","cost_ceiling_usd":0,"approval_required":false}')
+
+TIER=$(echo "$ROUTING_OUTPUT" | jq -r '.tier // "unknown"')
+COST_CEILING=$(echo "$ROUTING_OUTPUT" | jq -r '.cost_ceiling_usd // 0')
+APPROVAL_REQUIRED=$(echo "$ROUTING_OUTPUT" | jq -r '.approval_required // false')
+ROUTING_REASON=$(echo "$ROUTING_OUTPUT" | jq -r '.reason // "Unknown"')
+
+# Check cost ceiling
+if (( $(echo "$ESTIMATED_COST > $COST_CEILING" | bc -l) )); then
+  if [ "$CONFIRM_BUDGET" != "true" ]; then
+    GATES_BLOCKED+=("cost_ceiling: estimated $ESTIMATED_COST > ceiling $COST_CEILING (tier: $TIER)")
+    GATE_EXIT_CODE=2
+  else
+    GATES_PASSED+=("cost_ceiling: override confirmed by user")
+  fi
+else
+  GATES_PASSED+=("cost_ceiling: $ESTIMATED_COST <= $COST_CEILING")
+fi
+
+# ============================================================================
+# GATE 2: Approval Cache (TTL-based)
+# ============================================================================
+
+APPROVAL_CACHE="$DATA_DIR/approval-cache.json"
+CURRENT_TIME=$(date +%s)
+APPROVAL_KEY="${AGENT_ID}:${CHANNEL_NAME}:${TASK_DESC}"
+APPROVAL_VALID=false
+
+if [ "$APPROVAL_REQUIRED" = "true" ]; then
+  # Load approval cache (create if missing)
+  if [ -f "$APPROVAL_CACHE" ]; then
+    CACHE_CONTENT=$(cat "$APPROVAL_CACHE")
+  else
+    CACHE_CONTENT='{"approvals": []}'
+  fi
+
+  # Check for valid approval in cache
+  VALID_APPROVAL=$(echo "$CACHE_CONTENT" | jq --arg key "$APPROVAL_KEY" '.approvals[] | select(.key == $key and .expires_at > '"$CURRENT_TIME"')' 2>/dev/null || echo "")
+
+  if [ -n "$VALID_APPROVAL" ]; then
+    APPROVAL_VALID=true
+    APPROVED_AT=$(echo "$VALID_APPROVAL" | jq -r '.approved_at')
+    APPROVER=$(echo "$VALID_APPROVAL" | jq -r '.approver')
+    GATES_PASSED+=("approval_cache: valid approval from $APPROVER (approved at $(date -d @$APPROVED_AT '+%H:%M:%S'))")
+  else
+    GATES_BLOCKED+=("approval_cache: no valid approval found (tier: $TIER requires approval)")
+    GATE_EXIT_CODE=3
+  fi
+fi
+
+# ============================================================================
+# Gate Check: Decide whether to proceed
+# ============================================================================
+
+if [ $GATE_EXIT_CODE -ne 0 ]; then
+  # Gates failed — mark that gates failed and either ask user or exit
+  GATES_FAILED=true
+  
+  if [ "$NON_INTERACTIVE" = true ]; then
+    # Non-interactive mode: just fail
+    PASSED_JSON=$(format_json_array "${GATES_PASSED[@]}")
+    BLOCKED_JSON=$(format_json_array "${GATES_BLOCKED[@]}")
+    
+    FINAL_JSON=$(cat <<EOF
+{
+  "exit_code": $GATE_EXIT_CODE,
+  "cost": $ESTIMATED_COST,
+  "execution_time": 0,
+  "gate_decisions": {
+    "passed": $PASSED_JSON,
+    "blocked": $BLOCKED_JSON
+  }
+}
+EOF
+    )
+    echo "$FINAL_JSON" | jq '.'
+    exit $GATE_EXIT_CODE
+  else
+    # Interactive mode: ask user
+    echo ""
+    echo "=== POLICY GATE FAILURE ===" >&2
+    echo "Task: $TASK_DESC" >&2
+    echo "Agent: $AGENT_ID, Channel: $CHANNEL_NAME" >&2
+    echo "Tier: $TIER (Reason: $ROUTING_REASON)" >&2
+    echo "" >&2
+    echo "Blocked Gates:" >&2
+    for gate in "${GATES_BLOCKED[@]}"; do
+      echo "  ✗ $gate" >&2
+    done
+    echo "" >&2
+    echo "Approve this execution? (y/n): " >&2
+    read -r USER_APPROVAL
+
+    if [ "$USER_APPROVAL" = "y" ]; then
+      APPROVAL_VALID=true
+      GATES_PASSED+=("user_approval: granted at shell prompt")
+      GATE_EXIT_CODE=0
+      
+      # Update approval cache with this new approval
+      EXPIRES_AT=$((CURRENT_TIME + 1800))  # 30 minutes default TTL
+      NEW_APPROVAL="{\"key\":\"$APPROVAL_KEY\",\"approved_at\":$CURRENT_TIME,\"expires_at\":$EXPIRES_AT,\"approver\":\"user-interactive\"}"
+      
+      if [ -f "$APPROVAL_CACHE" ]; then
+        CACHE_CONTENT=$(jq --argjson new "$NEW_APPROVAL" '.approvals += [$new]' "$APPROVAL_CACHE")
+      else
+        CACHE_CONTENT="{\"approvals\": [$NEW_APPROVAL]}"
+      fi
+      echo "$CACHE_CONTENT" | jq '.' > "$APPROVAL_CACHE"
+    else
+      echo "Execution blocked by policy gates." >&2
+      PASSED_JSON=$(format_json_array "${GATES_PASSED[@]}")
+      BLOCKED_JSON=$(format_json_array "${GATES_BLOCKED[@]}")
+      
+      FINAL_JSON=$(cat <<EOF
+{
+  "exit_code": $GATE_EXIT_CODE,
+  "cost": $ESTIMATED_COST,
+  "execution_time": 0,
+  "gate_decisions": {
+    "passed": $PASSED_JSON,
+    "blocked": $BLOCKED_JSON
+  }
+}
+EOF
+    )
+      echo "$FINAL_JSON" | jq '.'
+      exit $GATE_EXIT_CODE
+    fi
+  fi
+fi
+
+# ============================================================================
+# EXECUTION: Run the command with metadata logging
+# ============================================================================
+
+START_TIME=$(date +%s)
+START_EPOCH=$(date +%s%N)
+
+# Execute the command and capture exit code
+"${COMMAND_ARGS[@]}"
+COMMAND_EXIT_CODE=$?
+
+END_TIME=$(date +%s)
+END_EPOCH=$(date +%s%N)
+EXECUTION_TIME=$(( (END_EPOCH - START_EPOCH) / 1000000 ))  # milliseconds
+
+# ============================================================================
+# Helper: Format array as JSON (handle empty arrays)
+# ============================================================================
+# LOGGING: Write execution record to JSONL log
+# ============================================================================
+
+PASSED_JSON=$(format_json_array "${GATES_PASSED[@]}")
+BLOCKED_JSON=$(format_json_array "${GATES_BLOCKED[@]}")
+
+# JSONL format: single line JSON objects
+LOG_ENTRY="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"agent\":\"$AGENT_ID\",\"channel\":\"$CHANNEL_NAME\",\"task\":\"$TASK_DESC\",\"tier\":\"$TIER\",\"cost\":$ESTIMATED_COST,\"duration_ms\":$EXECUTION_TIME,\"exit_code\":$COMMAND_EXIT_CODE,\"gates_passed\":$PASSED_JSON,\"gates_blocked\":$BLOCKED_JSON}"
+
+echo "$LOG_ENTRY" >> "$LOGS_DIR/gated-runs.jsonl"
+
+# ============================================================================
+# OUTPUT: JSON result with metadata
+# ============================================================================
+
+FINAL_JSON=$(cat <<EOF
+{
+  "exit_code": $COMMAND_EXIT_CODE,
+  "cost": $ESTIMATED_COST,
+  "execution_time": $EXECUTION_TIME,
+  "gate_decisions": {
+    "passed": $PASSED_JSON,
+    "blocked": $BLOCKED_JSON
+  }
+}
+EOF
+  )
+
+echo "$FINAL_JSON" | jq '.'
+
+# If gates failed, exit with gate error code; otherwise exit with command code
+if [ "$GATES_FAILED" = true ]; then
+  exit $GATE_EXIT_CODE
+else
+  exit $COMMAND_EXIT_CODE
+fi

@@ -1,0 +1,189 @@
+---
+# Dangerous Patterns Library for pretool-guard Hook
+# Used by: pretool_guard.py
+# Purpose: Centralized regex patterns for dangerous command detection
+
+patterns:
+  npm_publish:
+    regex: '\bnpm\s+(publish|dist-tag|set|deprecate)\b'
+    description: "Publishing to npm (or modifying package versions)"
+    severity: "critical"
+    remediation: "Review package version and registry before publishing"
+    whitelisted: false
+
+  npm_install_global:
+    regex: '\bnpm\s+(install|i)\s+(-g|--global)'
+    description: "Global npm install (system-wide effects)"
+    severity: "high"
+    remediation: "Use local installation or verify global package intent"
+    whitelisted: false
+
+  git_reset_hard:
+    regex: '\bgit\s+reset\s+(--hard|--force)'
+    description: "Destructive git reset (permanent history loss)"
+    severity: "critical"
+    remediation: "Use 'git reset --soft' or 'git revert' for safer alternatives"
+    whitelisted: false
+
+  git_force_push:
+    regex: '\bgit\s+push\s+(--force|--force-with-lease|-f)'
+    description: "Force push to git (overwrites remote history)"
+    severity: "high"
+    remediation: "Ensure this is intentional; use force-with-lease if possible"
+    whitelisted: false
+
+  git_clean:
+    regex: '\bgit\s+clean\s+(-f|-fd|-fdx)'
+    description: "Destructive git clean (untracked files deleted)"
+    severity: "high"
+    remediation: "Use 'git clean -n' to preview changes first"
+    whitelisted: false
+
+  docker_privileged:
+    regex: '\bdocker\s+(run|create).*--privileged'
+    description: "Docker with --privileged (full host access)"
+    severity: "critical"
+    remediation: "Use specific capabilities (--cap-add) instead of --privileged"
+    whitelisted: false
+
+  docker_root:
+    regex: '\bdocker\s+(run|exec).*-u\s+0'
+    description: "Docker as root user (security risk)"
+    severity: "high"
+    remediation: "Create non-root user in Dockerfile and use that user"
+    whitelisted: false
+
+  rm_recursive_force:
+    regex: '\brm\s+(-r|-rf|--recursive|--force)[^-]*/'
+    description: "Recursive rm with force flag (permanent deletion)"
+    severity: "high"
+    remediation: "Use 'trash' instead of 'rm' for recoverable deletion"
+    whitelisted: false
+
+  curl_pipe_interpreter:
+    regex: 'curl\s+[^\|]*\|(\s*python|bash|sh|zsh|perl)'
+    description: "Piping curl to interpreter (unvetted code execution)"
+    severity: "critical"
+    remediation: "Download script first, review, then execute explicitly"
+    whitelisted: false
+
+  wget_pipe_interpreter:
+    regex: 'wget\s+[^\|]*\|(\s*python|bash|sh|zsh|perl)'
+    description: "Piping wget to interpreter (unvetted code execution)"
+    severity: "critical"
+    remediation: "Download script first, review, then execute explicitly"
+    whitelisted: false
+
+  fork_bomb:
+    regex: ':\s*\(\)\s*{\s*:\s*\|\s*:\s*&\s*}\s*;\s*:'
+    description: "Fork bomb (DOS attack pattern)"
+    severity: "critical"
+    remediation: "This pattern is never safe; rejected unconditionally"
+    whitelisted: false
+
+  dd_system_write:
+    regex: '\bdd\s+of=(/dev/|/sys/)'
+    description: "dd writing to system device (hardware risk)"
+    severity: "critical"
+    remediation: "Ensure device path is correct; use extreme caution"
+    whitelisted: false
+
+  eval_untrusted:
+    regex: '\b(eval|exec)\s+\$'
+    description: "Eval or exec of variable (code injection risk)"
+    severity: "high"
+    remediation: "Use explicit command lists instead of eval"
+    whitelisted: false
+
+  ssh_no_host_check:
+    regex: '\bssh\s+-o\s+StrictHostKeyChecking=no'
+    description: "SSH without host key verification (MITM risk)"
+    severity: "high"
+    remediation: "Verify host key first or use 'ssh-keyscan' with known host"
+    whitelisted: false
+
+  chmod_777:
+    regex: '\bchmod\s+777\b'
+    description: "World-writable permissions (security risk)"
+    severity: "high"
+    remediation: "Use restrictive permissions; 755 for dirs, 644 for files"
+    whitelisted: false
+
+  sudo_no_password:
+    regex: '\bsudo\s+-S'
+    description: "Sudo with stdin password (credentials in command history)"
+    severity: "high"
+    remediation: "Use sudo without arguments or SSH keys for non-interactive auth"
+    whitelisted: false
+
+# Protected Files (checked by name/extension)
+protected_files:
+  - pattern: '\.env'
+    description: "Environment variables (often contains secrets)"
+    severity: "critical"
+
+  - pattern: '\.env\.\*'
+    description: "Environment variable files"
+    severity: "critical"
+
+  - pattern: '(id_rsa|id_dsa|id_ecdsa|id_ed25519)$'
+    description: "SSH private keys"
+    severity: "critical"
+
+  - pattern: '\.pem$'
+    description: "PEM certificates/keys"
+    severity: "critical"
+
+  - pattern: '\.p12$'
+    description: "PKCS12 keystores"
+    severity: "critical"
+
+  - pattern: 'credentials|secrets|password'
+    description: "Filename contains sensitive keyword"
+    severity: "high"
+
+  - pattern: '\.aws/credentials'
+    description: "AWS credentials file"
+    severity: "critical"
+
+  - pattern: '\.kube/config'
+    description: "Kubernetes config (cluster access)"
+    severity: "critical"
+
+  - pattern: '\.ssh/authorized_keys'
+    description: "SSH authorized keys"
+    severity: "critical"
+
+# Safe patterns (whitelist exceptions)
+safe_patterns:
+  - regex: '\bnpm\s+install\b'
+    description: "Safe npm install"
+
+  - regex: '\bnpm\s+(ci|run)'
+    description: "Safe npm ci and run"
+
+  - regex: '\bgit\s+(commit|push|pull|fetch|status|log)'
+    description: "Safe git operations"
+
+  - regex: '\bgit\s+reset\s+(--soft|--mixed)'
+    description: "Safe git reset (non-destructive)"
+
+  - regex: '\bgit\s+revert'
+    description: "Safe git revert (creates new commit)"
+
+  - regex: '\brm\s+[^/]*$'
+    description: "rm without directory traversal"
+
+  - regex: '\bchmod\s+(644|755|700)'
+    description: "Safe chmod permissions"
+
+  - regex: '\bsudo\s+[a-z]'
+    description: "Sudo with explicit command"
+
+metadata:
+  version: "1.0.0"
+  last_updated: "2026-03-17"
+  maintainer: "Agent D"
+  total_patterns: 18
+  total_protected_files: 12
+  total_safe_patterns: 8

@@ -1,0 +1,28 @@
+{
+  "name": "balanced",
+  "version": "1.0.0",
+  "description": "Standard profile: session context injection + quality gate detection",
+  "use_case": "General-purpose development, coding, moderate-risk tasks",
+  "hooks_enabled": [
+    "session-start",
+    "stop-quality-gate"
+  ],
+  "hooks_disabled": [
+    "pretool-guard",
+    "write-validate"
+  ],
+  "configuration": {
+    "session_start": {
+      "inject_git_context": true,
+      "inject_file_list": true,
+      "max_commits_to_show": 5
+    },
+    "stop_quality_gate": {
+      "enable_test_detection": true,
+      "enable_todo_detection": true,
+      "enable_rationalization_detection": true,
+      "sensitivity": "medium"
+    }
+  },
+  "notes": "Recommended default profile. Provides useful context while maintaining productivity. Good balance between safety and speed."
+}

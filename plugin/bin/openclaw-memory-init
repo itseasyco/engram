@@ -1,0 +1,152 @@
+#!/bin/bash
+
+# openclaw-memory-init
+# Scaffolds per-project session memory structure
+# Usage: openclaw-memory-init <project-path> <agent-id> <channel> [session-id]
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+TEMPLATE_DIR="${HOME}/.openclaw-test/templates"
+CONFIG_DIR="${HOME}/.openclaw-test/config/memory"
+SESSION_BASE="${HOME}/.openclaw-test/data/project-sessions"
+
+# Usage
+usage() {
+  cat <<EOF
+Usage: openclaw-memory-init <project-path> <agent-id> <channel> [session-id]
+
+Arguments:
+  project-path     Path to project root (e.g., /path/to/repo)
+  agent-id         Agent identifier (e.g., agent-a, claude-code)
+  channel          Channel name (e.g., discord, webchat)
+  session-id       (Optional) Session ID. Auto-generated if omitted.
+
+Examples:
+  openclaw-memory-init ~/easy-api agent-a discord
+  openclaw-memory-init ~/my-project claude-code webchat session-12345
+
+Output:
+  Creates: ~/.openclaw-test/data/project-sessions/<project>/<agent_id>/<session_id>/
+  Files:   memory.md, context.json
+EOF
+  exit 1
+}
+
+if [[ $# -lt 3 ]]; then
+  usage
+fi
+
+PROJECT_PATH="$1"
+AGENT_ID="$2"
+CHANNEL="$3"
+SESSION_ID="${4:-$(date +%s)}"
+
+# Validate inputs
+if [[ ! -d "$PROJECT_PATH" ]]; then
+  echo -e "${RED}ERROR: Project path does not exist: $PROJECT_PATH${NC}" >&2
+  exit 1
+fi
+
+# Generate project slug from path
+PROJECT_NAME=$(basename "$PROJECT_PATH")
+PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+
+# Create directory structure
+SESSION_DIR="${SESSION_BASE}/${PROJECT_SLUG}/${AGENT_ID}/${SESSION_ID}"
+mkdir -p "$SESSION_DIR"
+
+# Get timestamp
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Load enable-scaffolding config if it exists
+AUTO_GIT_INIT=true
+if [[ -f "$CONFIG_DIR/enable-scaffolding.json" ]]; then
+  AUTO_GIT_INIT=$(jq -r '.auto_git_init // true' "$CONFIG_DIR/enable-scaffolding.json")
+fi
+
+# Create memory.md from template
+if [[ ! -f "$SESSION_DIR/memory.md" ]]; then
+  MEMORY_FILE="$SESSION_DIR/memory.md"
+  cp "$TEMPLATE_DIR/project-memory-scaffold.md" "$MEMORY_FILE"
+  
+  # Substitute template variables
+  sed -i '' "s|{{project-name}}|${PROJECT_NAME}|g" "$MEMORY_FILE"
+  sed -i '' "s|{{codebase-path}}|${PROJECT_PATH}|g" "$MEMORY_FILE"
+  sed -i '' "s|{{agent-id}}|${AGENT_ID}|g" "$MEMORY_FILE"
+  sed -i '' "s|{{channel}}|${CHANNEL}|g" "$MEMORY_FILE"
+  sed -i '' "s|{{timestamp}}|${TIMESTAMP}|g" "$MEMORY_FILE"
+  
+  echo -e "${GREEN}✓${NC} Created memory.md"
+else
+  echo -e "${YELLOW}~${NC} memory.md already exists (skipping)"
+fi
+
+# Create context.json
+if [[ ! -f "$SESSION_DIR/context.json" ]]; then
+  cat > "$SESSION_DIR/context.json" << EOF
+{
+  "project": {
+    "name": "${PROJECT_NAME}",
+    "slug": "${PROJECT_SLUG}",
+    "path": "${PROJECT_PATH}"
+  },
+  "agent": {
+    "id": "${AGENT_ID}"
+  },
+  "session": {
+    "id": "${SESSION_ID}",
+    "channel": "${CHANNEL}",
+    "created_at": "${TIMESTAMP}"
+  },
+  "execution": {
+    "cost_usd": 0.0,
+    "gate_decisions": [],
+    "exit_code": null,
+    "learnings": []
+  }
+}
+EOF
+  echo -e "${GREEN}✓${NC} Created context.json"
+else
+  echo -e "${YELLOW}~${NC} context.json already exists (skipping)"
+fi
+
+# Initialize git in session directory if enabled
+if [[ "$AUTO_GIT_INIT" == "true" ]]; then
+  if [[ ! -d "$SESSION_DIR/.git" ]]; then
+    cd "$SESSION_DIR"
+    git init -q
+    git config user.email "wren@itseasy.co"
+    git config user.name "Wren (OpenClaw)"
+    git add .
+    git commit -q -m "init: session memory scaffold for ${PROJECT_NAME}/${AGENT_ID}/${SESSION_ID}"
+    echo -e "${GREEN}✓${NC} Initialized git repository"
+  else
+    echo -e "${YELLOW}~${NC} Git repository already exists (skipping)"
+  fi
+fi
+
+# Output summary
+echo ""
+echo -e "${BLUE}Session Memory Initialized${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "Project:   ${YELLOW}${PROJECT_NAME}${NC} (${PROJECT_SLUG})"
+echo -e "Agent:     ${YELLOW}${AGENT_ID}${NC}"
+echo -e "Channel:   ${YELLOW}${CHANNEL}${NC}"
+echo -e "Session:   ${YELLOW}${SESSION_ID}${NC}"
+echo -e "Location:  ${BLUE}${SESSION_DIR}${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Next steps:"
+echo "  • Edit memory.md to capture context"
+echo "  • Use openclaw-memory-append to log execution results"
+echo "  • Commit changes with: git -C $SESSION_DIR commit"
+echo ""

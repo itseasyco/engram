@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""
+openclaw-verify: Task execution verification framework
+
+Takes task definition + execution result and determines pass/fail with evidence.
+Supports three verification modes: heuristic, test, llm, and hybrid combinations.
+
+Usage:
+  openclaw-verify <task.json> <execution-result.json> [--output <report.json>]
+  openclaw-verify <task.json> <execution-result.json> --mode heuristic|test|llm|hybrid
+"""
+
+import json
+import sys
+import os
+import subprocess
+from pathlib import Path
+from datetime import datetime
+from typing import Any, Dict, List, Tuple, Optional
+import re
+import argparse
+
+
+class VerificationEngine:
+    """Core verification engine supporting heuristic, test, and LLM modes"""
+
+    def __init__(self, task_def: Dict, execution_result: Dict, verbose: bool = False):
+        self.task_def = task_def
+        self.execution_result = execution_result
+        self.verbose = verbose
+        self.checks_performed = []
+        self.evidence = {
+            "task_id": task_def.get("task_id", "unknown"),
+            "timestamp": datetime.now().isoformat(),
+            "verification_results": {},
+            "pass": False,
+            "details": [],
+            "artifacts": []
+        }
+
+    def log(self, msg: str):
+        """Print if verbose"""
+        if self.verbose:
+            print(f"[verify] {msg}")
+
+    def run_heuristic_checks(self, harness: Dict) -> Tuple[bool, List[Dict]]:
+        """Run file/directory/git-based heuristic checks"""
+        self.log("Running heuristic checks...")
+        checks = harness.get("verification_methods", {}).get("heuristic", {}).get("heuristic_checks", [])
+        
+        results = []
+        critical_passed = 0
+        critical_total = 0
+        
+        for check in checks:
+            check_name = check.get("check_name", "unnamed")
+            check_type = check.get("check_type")
+            check_target = check.get("check_target")
+            check_value = check.get("check_value", "")
+            is_critical = check.get("critical", False)
+            
+            passed = False
+            reason = ""
+            
+            try:
+                # Expand ~ to home directory
+                expanded_target = os.path.expanduser(check_target)
+                
+                if check_type == "file-exists":
+                    passed = Path(expanded_target).is_file()
+                    reason = f"File exists: {check_target}" if passed else f"File missing: {check_target}"
+                
+                elif check_type == "file-not-exists":
+                    passed = not Path(expanded_target).is_file()
+                    reason = f"File absent: {check_target}" if passed else f"File unexpectedly exists: {check_target}"
+                
+                elif check_type == "file-contains":
+                    if Path(expanded_target).is_file():
+                        content = Path(expanded_target).read_text()
+                        passed = check_value in content
+                        reason = f"Pattern found in {check_target}" if passed else f"Pattern NOT found in {check_target}"
+                    else:
+                        passed = False
+                        reason = f"File not found: {check_target}"
+                
+                elif check_type == "directory-exists":
+                    passed = Path(expanded_target).is_dir()
+                    reason = f"Directory exists: {check_target}" if passed else f"Directory missing: {check_target}"
+                
+                elif check_type == "executable-exists":
+                    passed = Path(expanded_target).is_file() and os.access(expanded_target, os.X_OK)
+                    reason = f"Executable exists: {check_target}" if passed else f"Executable missing: {check_target}"
+                
+                elif check_type == "git-committed":
+                    # Check if a commit message contains the value
+                    try:
+                        git_dir = expanded_target if Path(expanded_target).is_dir() else Path(expanded_target).parent
+                        result = subprocess.run(
+                            ["git", "log", "-1", "--pretty=%B"],
+                            cwd=str(git_dir),
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        passed = check_value in result.stdout if result.returncode == 0 else False
+                        reason = f"Commit message contains: {check_value}" if passed else f"Commit message does NOT contain: {check_value}"
+                    except Exception as e:
+                        passed = False
+                        reason = f"Git check failed: {str(e)}"
+                
+                elif check_type == "git-tagged":
+                    # Check if a git tag exists
+                    try:
+                        git_dir = expanded_target if Path(expanded_target).is_dir() else Path(expanded_target).parent
+                        result = subprocess.run(
+                            ["git", "tag", "-l", check_value],
+                            cwd=str(git_dir),
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        passed = check_value in result.stdout if result.returncode == 0 else False
+                        reason = f"Git tag exists: {check_value}" if passed else f"Git tag NOT found: {check_value}"
+                    except Exception as e:
+                        passed = False
+                        reason = f"Git tag check failed: {str(e)}"
+                
+                elif check_type == "exit-code":
+                    exec_exit = self.execution_result.get("exit_code", -1)
+                    expected = int(check_value)
+                    passed = exec_exit == expected
+                    reason = f"Exit code {exec_exit} matches expected {expected}" if passed else f"Exit code {exec_exit} != {expected}"
+                
+                else:
+                    reason = f"Unknown check type: {check_type}"
+            
+            except Exception as e:
+                passed = False
+                reason = f"Check error: {str(e)}"
+            
+            if is_critical:
+                critical_total += 1
+                if passed:
+                    critical_passed += 1
+            
+            result_obj = {
+                "check_name": check_name,
+                "check_type": check_type,
+                "passed": passed,
+                "critical": is_critical,
+                "reason": reason
+            }
+            results.append(result_obj)
+            self.log(f"  {check_name}: {'✓' if passed else '✗'} {reason}")
+        
+        # Determine pass based on criteria
+        pass_criteria = harness.get("pass_criteria", {})
+        require_all_critical = pass_criteria.get("require_all_critical", True)
+        
+        if require_all_critical and critical_total > 0:
+            all_critical_passed = critical_passed == critical_total
+        else:
+            all_critical_passed = True
+        
+        # Check non-critical pass rate
+        non_critical = [r for r in results if not r["critical"]]
+        min_pass_rate = pass_criteria.get("min_heuristic_pass_rate", 0.8)
+        
+        if non_critical:
+            non_critical_passed = sum(1 for r in non_critical if r["passed"])
+            pass_rate = non_critical_passed / len(non_critical)
+            pass_rate_ok = pass_rate >= min_pass_rate
+        else:
+            pass_rate_ok = True
+        
+        overall_pass = all_critical_passed and pass_rate_ok
+        
+        return overall_pass, results
+
+    def run_test_checks(self, harness: Dict) -> Tuple[bool, Dict]:
+        """Run test command and parse results"""
+        self.log("Running test verification...")
+        test_config = harness.get("verification_methods", {}).get("test", {})
+        
+        if not test_config:
+            return True, {"test_skipped": True}
+        
+        test_command = test_config.get("test_command")
+        expected_exit = test_config.get("test_expected_exit_code", 0)
+        timeout = test_config.get("test_timeout_seconds", 300)
+        
+        if not test_command:
+            return True, {"test_skipped": True}
+        
+        try:
+            self.log(f"Running: {test_command}")
+            result = subprocess.run(
+                test_command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=self.execution_result.get("working_dir", os.getcwd())
+            )
+            
+            passed = result.returncode == expected_exit
+            
+            test_result = {
+                "test_command": test_command,
+                "exit_code": result.returncode,
+                "expected_exit_code": expected_exit,
+                "passed": passed,
+                "stdout": result.stdout[:1000] if result.stdout else "",  # Truncate
+                "stderr": result.stderr[:1000] if result.stderr else "",
+                "timeout_seconds": timeout
+            }
+            
+            self.log(f"Test exit code: {result.returncode} (expected {expected_exit}) - {'✓' if passed else '✗'}")
+            
+            return passed, test_result
+        
+        except subprocess.TimeoutExpired:
+            return False, {
+                "test_command": test_command,
+                "error": f"Test timeout after {timeout}s",
+                "passed": False
+            }
+        except Exception as e:
+            return False, {
+                "test_command": test_command,
+                "error": str(e),
+                "passed": False
+            }
+
+    def run_llm_checks(self, harness: Dict) -> Tuple[bool, Dict]:
+        """Run LLM-based evaluation (placeholder for now)"""
+        self.log("Running LLM verification...")
+        llm_config = harness.get("verification_methods", {}).get("llm", {})
+        
+        if not llm_config:
+            return True, {"llm_skipped": True}
+        
+        # For now, just record the prompt and mark as needs-review
+        # In production, this would call claude-3-5-sonnet or similar
+        llm_prompt = llm_config.get("llm_eval_prompt", "")
+        
+        llm_result = {
+            "llm_prompt": llm_prompt,
+            "llm_model": llm_config.get("llm_model", "claude-3-5-sonnet"),
+            "status": "needs_manual_review",
+            "confidence": 0.0,
+            "passed": None  # Pending human review
+        }
+        
+        self.log(f"LLM evaluation pending: {llm_prompt[:100]}...")
+        
+        return True, llm_result  # Don't block on LLM for now
+
+    def collect_evidence_artifacts(self, harness: Dict):
+        """Collect specified artifact files"""
+        self.log("Collecting evidence artifacts...")
+        artifacts = harness.get("evidence_artifacts", [])
+        
+        for artifact in artifacts:
+            artifact_name = artifact.get("artifact_name")
+            artifact_path = artifact.get("artifact_path")
+            artifact_type = artifact.get("artifact_type")
+            
+            try:
+                expanded_path = os.path.expanduser(artifact_path)
+                path = Path(expanded_path)
+                if path.exists():
+                    self.evidence["artifacts"].append({
+                        "name": artifact_name,
+                        "path": str(artifact_path),
+                        "type": artifact_type,
+                        "exists": True
+                    })
+                    self.log(f"  ✓ Artifact found: {artifact_name}")
+                else:
+                    self.evidence["artifacts"].append({
+                        "name": artifact_name,
+                        "path": str(artifact_path),
+                        "type": artifact_type,
+                        "exists": False
+                    })
+                    self.log(f"  ✗ Artifact missing: {artifact_name}")
+            except Exception as e:
+                self.log(f"  ✗ Error collecting {artifact_name}: {str(e)}")
+
+    def verify(self, harness_path: str) -> Dict:
+        """Run full verification against harness contract"""
+        self.log(f"Starting verification for task: {self.task_def.get('task_id')}")
+        
+        # Load harness
+        try:
+            with open(harness_path) as f:
+                harness = json.load(f)
+        except Exception as e:
+            self.evidence["pass"] = False
+            self.evidence["error"] = f"Failed to load harness: {str(e)}"
+            return self.evidence
+        
+        mode = self.task_def.get("verification_mode", "hybrid")
+        
+        results = {
+            "heuristic": None,
+            "test": None,
+            "llm": None
+        }
+        
+        # Run applicable checks
+        if mode in ["heuristic", "hybrid"]:
+            heuristic_pass, heuristic_results = self.run_heuristic_checks(harness)
+            results["heuristic"] = {
+                "passed": heuristic_pass,
+                "checks": heuristic_results
+            }
+        
+        if mode in ["test", "hybrid"]:
+            test_pass, test_result = self.run_test_checks(harness)
+            results["test"] = {
+                "passed": test_pass,
+                "details": test_result
+            }
+        
+        if mode in ["llm", "hybrid"]:
+            llm_pass, llm_result = self.run_llm_checks(harness)
+            results["llm"] = {
+                "passed": llm_pass,
+                "details": llm_result
+            }
+        
+        # Collect artifacts
+        self.collect_evidence_artifacts(harness)
+        
+        # Determine overall pass
+        pass_criteria = harness.get("pass_criteria", {})
+        
+        heuristic_pass = results.get("heuristic", {}).get("passed", True) if mode in ["heuristic", "hybrid"] else True
+        test_pass = results.get("test", {}).get("passed", True) if mode in ["test", "hybrid"] else True
+        llm_pass = results.get("llm", {}).get("passed", True) if mode in ["llm", "hybrid"] else True
+        
+        # Determine overall pass based on mode and criteria
+        if mode == "heuristic":
+            overall_pass = heuristic_pass
+        elif mode == "test":
+            overall_pass = test_pass
+        elif mode == "llm":
+            overall_pass = llm_pass
+        else:  # hybrid
+            require_test = pass_criteria.get("test_pass_required", True)
+            require_all_critical = pass_criteria.get("require_all_critical", True)
+            
+            if require_test:
+                overall_pass = heuristic_pass and test_pass
+            else:
+                overall_pass = heuristic_pass or test_pass
+        
+        self.evidence["verification_results"] = results
+        self.evidence["pass"] = overall_pass
+        self.evidence["verification_mode"] = mode
+        self.evidence["details"].append(f"Verification mode: {mode}")
+        self.evidence["details"].append(f"Overall result: {'PASS' if overall_pass else 'FAIL'}")
+        
+        self.log(f"Verification complete: {'PASS ✓' if overall_pass else 'FAIL ✗'}")
+        
+        return self.evidence
+
+
+def main():
+    parser = argparse.ArgumentParser(description="OpenClaw Task Verification Engine")
+    parser.add_argument("task_json", help="Path to task definition JSON")
+    parser.add_argument("execution_result_json", help="Path to execution result JSON")
+    parser.add_argument("--harness", help="Path to harness contract (auto-detected if not provided)")
+    parser.add_argument("--output", help="Output report path (default: stdout)")
+    parser.add_argument("--mode", choices=["heuristic", "test", "llm", "hybrid"], help="Override verification mode")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    
+    args = parser.parse_args()
+    
+    # Load task definition
+    try:
+        with open(args.task_json) as f:
+            task_def = json.load(f)
+    except Exception as e:
+        print(f"Error loading task: {e}", file=sys.stderr)
+        return 1
+    
+    # Load execution result
+    try:
+        with open(args.execution_result_json) as f:
+            execution_result = json.load(f)
+    except Exception as e:
+        print(f"Error loading execution result: {e}", file=sys.stderr)
+        return 1
+    
+    # Determine harness path
+    if args.harness:
+        harness_path = args.harness
+    else:
+        # Look for harness in same directory as task or in schemas/
+        task_id = task_def.get("task_id", "")
+        harness_path = f"~/.openclaw-test/schemas/{task_id}-harness.json"
+        harness_path = os.path.expanduser(harness_path)
+        if not Path(harness_path).exists():
+            # Fallback to generic harness
+            harness_path = os.path.expanduser("~/.openclaw-test/schemas/harness-contract.json")
+    
+    # Override mode if specified
+    if args.mode:
+        task_def["verification_mode"] = args.mode
+    
+    # Run verification
+    engine = VerificationEngine(task_def, execution_result, verbose=args.verbose)
+    evidence = engine.verify(harness_path)
+    
+    # Output results
+    output = json.dumps(evidence, indent=2)
+    
+    if args.output:
+        Path(args.output).write_text(output)
+        print(f"Evidence report written to: {args.output}")
+    else:
+        print(output)
+    
+    # Exit with status
+    return 0 if evidence["pass"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

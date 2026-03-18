@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_ROOT="$(dirname "$SCRIPT_DIR")"
+POLICY_FILE="$TEST_ROOT/config/policy/risk-policy.json"
+
+AGENT_ID="$1"
+CHANNEL_NAME="$2"
+TASK_DESC="$3"
+
+if [ ! -f "$POLICY_FILE" ]; then
+  echo '{"tier":"unknown","cost_ceiling_usd":0,"approval_required":false,"reason":"Policy file not found"}' >&2
+  exit 1
+fi
+
+POLICY=$(cat "$POLICY_FILE")
+ROUTING_KEY="agent:$AGENT_ID,channel:$CHANNEL_NAME"
+MATCHED_RULE=$(echo "$POLICY" | jq --arg key "$ROUTING_KEY" '.rules[] | select(.pattern == $key)' 2>/dev/null)
+
+if [ -n "$MATCHED_RULE" ]; then
+  TIER=$(echo "$MATCHED_RULE" | jq -r '.tier')
+  REASON=$(echo "$MATCHED_RULE" | jq -r '.reason')
+else
+  TIER="review"
+  REASON="Default tier (no matching rule)"
+fi
+
+TIER_DEF=$(echo "$POLICY" | jq --arg tier "$TIER" '.tiers[$tier]' 2>/dev/null)
+
+if [ "$TIER_DEF" = "null" ] || [ -z "$TIER_DEF" ]; then
+  TIER="review"
+  TIER_DEF=$(echo "$POLICY" | jq --arg tier "$TIER" '.tiers[$tier]')
+fi
+
+COST_CEILING=$(echo "$TIER_DEF" | jq -r '.cost_ceiling_usd')
+APPROVAL_REQUIRED=$(echo "$TIER_DEF" | jq -r '.approval_required')
+
+cat <<EOF
+{
+  "tier": "$TIER",
+  "cost_ceiling_usd": $COST_CEILING,
+  "approval_required": $APPROVAL_REQUIRED,
+  "reason": "$REASON"
+}
+EOF

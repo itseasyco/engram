@@ -1,0 +1,59 @@
+{
+  "name": "lacp-hooks",
+  "version": "1.0.0",
+  "description": "LACP-inspired hooks for safety + quality",
+  "author": "Agent D",
+  "license": "MIT",
+  "hooks": {
+    "session-start": {
+      "handler": "handlers/session-start.py",
+      "trigger": "session_initialization",
+      "description": "Inject git context (branch, commits, modified files) at session start"
+    },
+    "pretool-guard": {
+      "handler": "handlers/pretool-guard.py",
+      "trigger": "pre_tool_use",
+      "description": "Block dangerous patterns (npm publish, git reset, docker --privileged, etc.)"
+    },
+    "stop-quality-gate": {
+      "handler": "handlers/stop-quality-gate.py",
+      "trigger": "agent_stop",
+      "description": "Detect incomplete work before agent reports completion"
+    },
+    "write-validate": {
+      "handler": "handlers/write-validate.py",
+      "trigger": "file_write",
+      "description": "Validate schema and format before writing files"
+    }
+  },
+  "profiles": {
+    "minimal-stop": {
+      "description": "Lightweight: only quality gate detection",
+      "hooks": ["stop-quality-gate"]
+    },
+    "balanced": {
+      "description": "Standard: session context + quality gate",
+      "hooks": ["session-start", "stop-quality-gate"]
+    },
+    "hardened-exec": {
+      "description": "Maximum safety: all hooks enabled",
+      "hooks": ["session-start", "pretool-guard", "stop-quality-gate", "write-validate"]
+    }
+  },
+  "configuration": {
+    "pretool_guard": {
+      "ttl_minutes": 720,
+      "approval_cache_enabled": true,
+      "block_level": "warn"
+    },
+    "stop_quality_gate": {
+      "enable_test_detection": true,
+      "enable_todo_detection": true,
+      "enable_rationalization_detection": true
+    },
+    "write_validate": {
+      "enable_schema_validation": true,
+      "enable_format_validation": true
+    }
+  }
+}

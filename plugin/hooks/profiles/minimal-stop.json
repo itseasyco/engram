@@ -1,0 +1,23 @@
+{
+  "name": "minimal-stop",
+  "version": "1.0.0",
+  "description": "Lightweight profile: only stop quality gate detection",
+  "use_case": "Development, testing, low-risk tasks",
+  "hooks_enabled": [
+    "stop-quality-gate"
+  ],
+  "hooks_disabled": [
+    "session-start",
+    "pretool-guard",
+    "write-validate"
+  ],
+  "configuration": {
+    "stop_quality_gate": {
+      "enable_test_detection": true,
+      "enable_todo_detection": true,
+      "enable_rationalization_detection": true,
+      "sensitivity": "medium"
+    }
+  },
+  "notes": "Use this profile when safety is less critical and context injection overhead is not desired."
+}

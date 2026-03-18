@@ -1,0 +1,39 @@
+{
+  "name": "hardened-exec",
+  "version": "1.0.0",
+  "description": "Maximum security profile: all hooks enabled for dangerous operations",
+  "use_case": "High-risk tasks, production systems, security-critical work",
+  "hooks_enabled": [
+    "session-start",
+    "pretool-guard",
+    "stop-quality-gate",
+    "write-validate"
+  ],
+  "hooks_disabled": [],
+  "configuration": {
+    "session_start": {
+      "inject_git_context": true,
+      "inject_file_list": true,
+      "max_commits_to_show": 10
+    },
+    "pretool_guard": {
+      "ttl_minutes": 720,
+      "approval_cache_enabled": true,
+      "block_level": "error",
+      "strict_mode": true,
+      "dangerous_patterns": "all"
+    },
+    "stop_quality_gate": {
+      "enable_test_detection": true,
+      "enable_todo_detection": true,
+      "enable_rationalization_detection": true,
+      "sensitivity": "high"
+    },
+    "write_validate": {
+      "enable_schema_validation": true,
+      "enable_format_validation": true,
+      "require_explicit_approval": true
+    }
+  },
+  "notes": "Use this profile for production deploys, dangerous commands, or any high-stakes work. All hooks are enforced; violations require explicit approval."
+}

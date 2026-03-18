@@ -1,0 +1,37 @@
+{
+  "tiers": {
+    "safe": {
+      "description": "Known low-risk, no approval needed",
+      "cost_ceiling_usd": 1.00,
+      "approval_required": false
+    },
+    "review": {
+      "description": "Semi-trusted, TTL approval required",
+      "cost_ceiling_usd": 10.00,
+      "approval_required": true,
+      "approval_ttl_minutes": 30
+    },
+    "critical": {
+      "description": "High-risk, explicit per-run confirmation required",
+      "cost_ceiling_usd": 100.00,
+      "approval_required": true,
+      "confirmation_required": true
+    }
+  },
+  "rules": [
+    {
+      "pattern": "agent:zoe,channel:bridge",
+      "tier": "review",
+      "reason": "Engineering agent in shared channel"
+    },
+    {
+      "pattern": "agent:wren,channel:webchat",
+      "tier": "safe",
+      "reason": "Control agent in main session"
+    }
+  ],
+  "defaults": {
+    "tier": "review",
+    "reason": "Default policy"
+  }
+}
