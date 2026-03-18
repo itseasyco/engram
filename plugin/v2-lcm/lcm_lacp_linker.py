@@ -210,7 +210,7 @@ class LCMLACPLinker:
 
         lines.append("")
         lines.append("---")
-        lines.append(f"*Auto-linked by openclaw-lacp-promote v2.0.0*")
+        lines.append(f"*Auto-linked by openclaw-lacp-promote v2.1.0*")
 
         return "\n".join(lines)
 

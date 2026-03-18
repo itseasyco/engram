@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # OpenClaw LACP Fusion Plugin Installer
-# Version: 2.0.0
+# Version: 2.2.0
 # Installs to ~/.openclaw/extensions/openclaw-lacp-fusion/
 # Registers in ~/.openclaw/openclaw.json gateway config
 
 PLUGIN_NAME="openclaw-lacp-fusion"
-PLUGIN_VERSION="2.0.0"
+PLUGIN_VERSION="2.2.0"
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
 GATEWAY_CONFIG="$OPENCLAW_HOME/openclaw.json"
@@ -427,6 +427,17 @@ ${BOLD}Next steps:${NC}
   2. Init project memory:  $PLUGIN_PATH/bin/openclaw-memory-init ~/my-project agent-name webchat
   3. Validate setup:       $PLUGIN_PATH/bin/openclaw-lacp-validate
   4. Test context query:   $PLUGIN_PATH/bin/openclaw-brain-graph query "test"
+
+${BOLD}Configuring lossless-claw integration (optional):${NC}
+  To use the native LCM database instead of file-based context:
+
+  1. Ensure lossless-claw is installed and ~/.openclaw/lcm.db exists
+  2. Add contextEngine to your openclaw.json:
+     jq '.plugins.entries["openclaw-lacp-fusion"].config.contextEngine = "lossless-claw"' \\
+       $GATEWAY_CONFIG > /tmp/oc.json && mv /tmp/oc.json $GATEWAY_CONFIG
+  3. Verify connection:
+     $PLUGIN_PATH/bin/openclaw-lacp-promote discover --backend lossless-claw --limit 5
+  4. See plugin/config/example-openclaw-lacp.lossless-claw.json for full config
 
 ${BOLD}Locations:${NC}
   Config:  $PLUGIN_PATH/config/.openclaw-lacp.env

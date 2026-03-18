@@ -10,7 +10,7 @@
 
 set -eo pipefail
 
-VERSION="2.0.0"
+VERSION="2.2.0"
 SCRIPT_NAME="openclaw-lacp-context"
 
 # Colors
@@ -55,6 +55,8 @@ OPTIONS:
   --min-score <n>      Minimum relevance score (default: 50)
   --format <fmt>       Output format: text, json, markdown (default: text)
   --session-id <id>    Session ID for tracking
+  --backend <name>     Override backend: lossless-claw or file (default: from config)
+  --discover           Auto-discover context from LCM backend (requires lossless-claw)
   --help               Show this help
 
 EXAMPLES:
@@ -681,6 +683,7 @@ main() {
         query)        cmd_query "$@" ;;
         list)         cmd_list "$@" ;;
         history)      cmd_history "$@" ;;
+        discover)     cmd_discover "$@" ;;
         --help|-h) usage ;;
         --version|-v) echo "${SCRIPT_NAME} v${VERSION}" ;;
         *)
@@ -688,6 +691,73 @@ main() {
             usage
             ;;
     esac
+}
+
+# --- Discover (requires lossless-claw backend) ---
+
+cmd_discover() {
+    local project=""
+    local topic=""
+    local limit=10
+    local backend_override=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  project="$2"; shift 2 ;;
+            --topic)    topic="$2"; shift 2 ;;
+            --limit)    limit="$2"; shift 2 ;;
+            --backend)  backend_override="$2"; shift 2 ;;
+            *)          log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    local config_engine=""
+    local gateway_config="${HOME}/.openclaw/openclaw.json"
+    if [[ -f "$gateway_config" ]] && command -v jq &>/dev/null; then
+        config_engine=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.contextEngine // ""' "$gateway_config" 2>/dev/null || true)
+    fi
+
+    local active_backend="${backend_override:-$config_engine}"
+
+    if [[ "$active_backend" != "lossless-claw" ]]; then
+        log_error "discover requires the lossless-claw backend."
+        log_error "Set contextEngine to 'lossless-claw' in your config or use --backend lossless-claw"
+        exit 1
+    fi
+
+    local lcm_db="${HOME}/.openclaw/lcm.db"
+    if [[ ! -f "$lcm_db" ]]; then
+        log_error "LCM database not found at ${lcm_db}"
+        exit 1
+    fi
+
+    if [[ -z "$topic" ]]; then
+        log_error "Missing required --topic for context discovery"
+        exit 1
+    fi
+
+    log_info "Discovering context from LCM database..."
+    log_info "  Backend: lossless-claw"
+    log_info "  Topic: ${topic}"
+    [[ -n "$project" ]] && log_info "  Project: ${project}"
+    log_info "  Limit: ${limit}"
+
+    local v2_lcm_dir
+    v2_lcm_dir="$(cd "$(dirname "$0")/.." && pwd)/v2-lcm"
+
+    python3 -c "
+import sys, json
+sys.path.insert(0, '${v2_lcm_dir}')
+sys.path.insert(0, '${v2_lcm_dir}/backends')
+from lcm_backend import LCMBackend
+backend = LCMBackend({'lcmDbPath': '${lcm_db}'})
+results = backend.find_context(task='${topic}', project='${project}' or None, limit=int('${limit}'))
+for r in results:
+    print(json.dumps(r, default=str))
+" 2>/dev/null || {
+        log_error "Failed to query LCM database"
+        exit 1
+    }
 }
 
 main "$@"

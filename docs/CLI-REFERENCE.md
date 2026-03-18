@@ -478,6 +478,67 @@ openclaw-lacp-policies summary [--json]
 
 ---
 
+## Backend Selection Flags (v2.2.0)
+
+Phase C added two new flags to `openclaw-lacp-promote` and `openclaw-lacp-context`: `--discover` and `--backend`. These enable config-driven backend selection and auto-discovery of LCM summaries.
+
+### `openclaw-lacp-promote discover`
+Auto-discover summaries from the LCM database for review or pipeline processing.
+
+```bash
+openclaw-lacp-promote discover [--project <name>] [--since <date>] [--limit <n>] [--backend <name>]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--project` | Filter by project name | (all projects) |
+| `--since` | Filter by date (YYYY-MM-DD) | (no filter) |
+| `--limit` | Max summaries to return | `10` |
+| `--backend` | Override backend: `lossless-claw` or `file` | from config |
+
+Requires `contextEngine: "lossless-claw"` in config (or `--backend lossless-claw`).
+
+### `openclaw-lacp-context discover`
+Auto-discover context from the LCM database relevant to a topic.
+
+```bash
+openclaw-lacp-context discover --topic <topic> [--project <name>] [--limit <n>] [--backend <name>]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--topic` | Topic to search for (required) | (none) |
+| `--project` | Filter by project name | (all projects) |
+| `--limit` | Max results to return | `10` |
+| `--backend` | Override backend: `lossless-claw` or `file` | from config |
+
+Requires `contextEngine: "lossless-claw"` in config (or `--backend lossless-claw`).
+
+### `--backend` flag
+
+Available on both `openclaw-lacp-promote` and `openclaw-lacp-context` for any subcommand. Overrides the `contextEngine` setting from `openclaw.json` for a single invocation.
+
+```bash
+# Force LCM backend regardless of config
+openclaw-lacp-promote discover --backend lossless-claw --project easy-api
+
+# Force file backend regardless of config
+openclaw-lacp-context inject --backend file --project easy-api --topic "checkout"
+```
+
+Valid values: `lossless-claw`, `file`.
+
+### `--discover` flag
+
+Shorthand for the `discover` subcommand. Can be used as a flag on the `pipeline` or `inject` subcommands to trigger auto-discovery before processing:
+
+```bash
+openclaw-lacp-promote pipeline --discover --project easy-api --threshold 80
+openclaw-lacp-context inject --discover --project easy-api --topic "settlement"
+```
+
+---
+
 ## Environment Variables
 
 All commands respect these environment variables:

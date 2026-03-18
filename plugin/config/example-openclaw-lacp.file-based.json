@@ -1,0 +1,9 @@
+{
+  "openclaw-lacp-fusion": {
+    "enabled": true,
+    "config": {
+      "contextEngine": null,
+      "promotionThreshold": 70
+    }
+  }
+}
