@@ -72,22 +72,39 @@ if [[ -f "$CONFIG_DIR/enable-scaffolding.json" ]]; then
   AUTO_GIT_INIT=$(jq -r '.auto_git_init // true' "$CONFIG_DIR/enable-scaffolding.json")
 fi
 
-# Create memory.md from template
-if [[ ! -f "$SESSION_DIR/memory.md" ]]; then
-  MEMORY_FILE="$SESSION_DIR/memory.md"
-  cp "$TEMPLATE_DIR/project-memory-scaffold.md" "$MEMORY_FILE"
+# Function to create seed file from template
+create_seed_file() {
+  local template_name=$1
+  local output_name=$2
+  local output_path="$SESSION_DIR/$output_name"
   
-  # Substitute template variables
-  sed -i '' "s|{{project-name}}|${PROJECT_NAME}|g" "$MEMORY_FILE"
-  sed -i '' "s|{{codebase-path}}|${PROJECT_PATH}|g" "$MEMORY_FILE"
-  sed -i '' "s|{{agent-id}}|${AGENT_ID}|g" "$MEMORY_FILE"
-  sed -i '' "s|{{channel}}|${CHANNEL}|g" "$MEMORY_FILE"
-  sed -i '' "s|{{timestamp}}|${TIMESTAMP}|g" "$MEMORY_FILE"
-  
-  echo -e "${GREEN}✓${NC} Created memory.md"
-else
-  echo -e "${YELLOW}~${NC} memory.md already exists (skipping)"
-fi
+  if [[ ! -f "$output_path" ]]; then
+    local template_file="$TEMPLATE_DIR/${template_name}-scaffold.md"
+    if [[ -f "$template_file" ]]; then
+      cp "$template_file" "$output_path"
+      
+      # Substitute template variables
+      sed -i '' "s|{{project-name}}|${PROJECT_NAME}|g" "$output_path"
+      sed -i '' "s|{{codebase-path}}|${PROJECT_PATH}|g" "$output_path"
+      sed -i '' "s|{{agent-id}}|${AGENT_ID}|g" "$output_path"
+      sed -i '' "s|{{channel}}|${CHANNEL}|g" "$output_path"
+      sed -i '' "s|{{timestamp}}|${TIMESTAMP}|g" "$output_path"
+      
+      echo -e "${GREEN}✓${NC} Created $output_name"
+    else
+      echo -e "${YELLOW}~${NC} Template missing: $template_file (skipping $output_name)"
+    fi
+  else
+    echo -e "${YELLOW}~${NC} $output_name already exists (skipping)"
+  fi
+}
+
+# Create all 5 Layer 1 seed files
+create_seed_file "project-memory" "MEMORY.md"
+create_seed_file "debugging" "debugging.md"
+create_seed_file "patterns" "patterns.md"
+create_seed_file "architecture" "architecture.md"
+create_seed_file "preferences" "preferences.md"
 
 # Create context.json
 if [[ ! -f "$SESSION_DIR/context.json" ]]; then
@@ -146,7 +163,12 @@ echo -e "Location:  ${BLUE}${SESSION_DIR}${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "Next steps:"
-echo "  • Edit memory.md to capture context"
+echo "  • Edit seed files to capture context:"
+echo "    - MEMORY.md: Key decisions, architecture, learnings"
+echo "    - debugging.md: Common issues and solutions"
+echo "    - patterns.md: Code and architectural patterns"
+echo "    - architecture.md: System design and components"
+echo "    - preferences.md: Team and agent preferences"
 echo "  • Use openclaw-memory-append to log execution results"
 echo "  • Commit changes with: git -C $SESSION_DIR commit"
 echo ""

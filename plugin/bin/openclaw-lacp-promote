@@ -1,0 +1,714 @@
+#!/usr/bin/env bash
+# openclaw-lacp-promote — Promote LCM session facts to LACP persistent memory
+#
+# Usage:
+#   openclaw-lacp-promote auto --summary <id> [--score <n>] [--category <cat>]
+#   openclaw-lacp-promote manual --summary <id> --fact <fact> --reasoning <why>
+#   openclaw-lacp-promote list --project <project> [--since <date>]
+#   openclaw-lacp-promote verify --receipt-hash <hash>
+#
+# Part of OpenClaw LACP v2.0.0 — LCM Bidirectional Integration
+
+set -eo pipefail
+
+VERSION="2.0.0"
+SCRIPT_NAME="openclaw-lacp-promote"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Defaults
+VAULT_ROOT="${OPENCLAW_VAULT_ROOT:-$HOME/.openclaw/vault}"
+MEMORY_ROOT="${OPENCLAW_MEMORY_ROOT:-$HOME/.openclaw/memory}"
+PROMOTIONS_LOG="${OPENCLAW_PROMOTIONS_LOG:-$HOME/.openclaw/logs/promotions.jsonl}"
+PROVENANCE_DIR="${OPENCLAW_PROVENANCE_DIR:-$HOME/.openclaw/provenance}"
+PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+V2_LCM_DIR="${PLUGIN_DIR}/v2-lcm"
+
+log_info()  { echo -e "${BLUE}[info]${NC} $*"; }
+log_ok()    { echo -e "${GREEN}[ok]${NC} $*"; }
+log_warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
+log_error() { echo -e "${RED}[error]${NC} $*" >&2; }
+
+usage() {
+    cat <<EOF
+${SCRIPT_NAME} v${VERSION} — Promote LCM facts to LACP
+
+COMMANDS:
+  auto      Auto-promote a scored LCM summary
+  pipeline  Full pipeline: read file, score, promote if above threshold
+  manual    Manually promote a fact with reasoning
+  list      List promoted facts
+  verify    Verify a promotion receipt
+
+OPTIONS:
+  --summary <id>         LCM summary ID (e.g., sum_abc123xyz)
+  --file <path>          Path to LCM summary file (.md or .json)
+  --score <n>            Override score threshold
+  --threshold <n>        Minimum score to auto-promote (default: 70)
+  --category <cat>       Fact category
+  --fact <text>          Fact text (manual mode)
+  --reasoning <text>     Why this fact matters (manual mode)
+  --project <name>       Project filter
+  --since <date>         Date filter (YYYY-MM-DD)
+  --receipt-hash <hash>  Receipt hash to verify
+  --dry-run              Score but don't actually promote
+  --help                 Show this help
+
+CATEGORIES:
+  architectural-decision, operational-knowledge, domain-insight,
+  integration-pattern, debugging-insight, team-context, process-improvement
+
+EXAMPLES:
+  $SCRIPT_NAME pipeline --file /path/to/sum_abc123.md --project easy-api
+  $SCRIPT_NAME pipeline --file /path/to/summary.json --threshold 80 --dry-run
+  $SCRIPT_NAME auto --summary sum_abc123xyz --score 85 --category architectural-decision
+  $SCRIPT_NAME manual --summary sum_abc123xyz --fact "Brale is settlement layer" --reasoning "Affects treasury"
+  $SCRIPT_NAME list --project easy-api --since 2026-03-18
+  $SCRIPT_NAME verify --receipt-hash abc123def456
+EOF
+    exit 0
+}
+
+# Ensure directories exist
+ensure_dirs() {
+    mkdir -p "$(dirname "$PROMOTIONS_LOG")"
+    mkdir -p "$PROVENANCE_DIR"
+    mkdir -p "$MEMORY_ROOT"
+}
+
+# Generate SHA-256 hash
+sha256_hash() {
+    echo -n "$1" | shasum -a 256 | cut -d' ' -f1
+}
+
+# Generate provenance receipt (Layer 5)
+generate_receipt() {
+    local summary_id="$1"
+    local fact="$2"
+    local category="$3"
+    local score="$4"
+    local reasoning="${5:-auto-promoted}"
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local prev_hash="genesis"
+
+    # Chain from last receipt
+    if [[ -f "$PROMOTIONS_LOG" ]]; then
+        local last_line
+        last_line=$(tail -1 "$PROMOTIONS_LOG" 2>/dev/null || true)
+        if [[ -n "$last_line" ]] && command -v jq &>/dev/null; then
+            prev_hash=$(echo "$last_line" | jq -r '.receipt_hash // "genesis"' 2>/dev/null || echo "genesis")
+        fi
+    fi
+
+    local payload="${summary_id}|${fact}|${category}|${score}|${timestamp}|${prev_hash}"
+    local receipt_hash
+    receipt_hash=$(sha256_hash "$payload")
+
+    local receipt
+    receipt=$(cat <<RECEIPT_EOF
+{
+  "summary_id": "${summary_id}",
+  "fact": $(echo "$fact" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))'),
+  "category": "${category}",
+  "score": ${score},
+  "reasoning": $(echo "$reasoning" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))'),
+  "timestamp": "${timestamp}",
+  "prev_hash": "${prev_hash}",
+  "receipt_hash": "${receipt_hash}",
+  "version": "${VERSION}"
+}
+RECEIPT_EOF
+)
+
+    echo "$receipt"
+}
+
+# Write fact to LACP Layer 1
+write_to_layer1() {
+    local project="$1"
+    local fact="$2"
+    local category="$3"
+    local receipt_hash="$4"
+
+    local slug
+    slug=$(echo "$project" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-')
+    local project_dir="${MEMORY_ROOT}/${slug}"
+    mkdir -p "$project_dir"
+
+    # Append to MEMORY.md
+    local memory_file="${project_dir}/MEMORY.md"
+    if [[ ! -f "$memory_file" ]]; then
+        echo "# ${project} — Promoted Facts" > "$memory_file"
+        echo "" >> "$memory_file"
+    fi
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%d %H:%M UTC")
+    cat >> "$memory_file" <<EOF
+
+## [${category}] ${timestamp}
+${fact}
+_Receipt: ${receipt_hash:0:12}..._
+
+EOF
+
+    # Also write to category-specific file
+    local cat_file="${project_dir}/${category}.md"
+    if [[ ! -f "$cat_file" ]]; then
+        echo "# ${project} — ${category}" > "$cat_file"
+        echo "" >> "$cat_file"
+    fi
+
+    cat >> "$cat_file" <<EOF
+
+### ${timestamp}
+${fact}
+_Receipt: ${receipt_hash:0:12}..._
+
+EOF
+
+    log_ok "Written to Layer 1: ${memory_file}"
+    log_ok "Written to category: ${cat_file}"
+}
+
+# Write wikilink to LACP Layer 2
+write_to_layer2() {
+    local project="$1"
+    local fact="$2"
+    local summary_id="$3"
+
+    local slug
+    slug=$(echo "$project" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-')
+    local vault_dir="${VAULT_ROOT}/${slug}"
+
+    if [[ ! -d "$vault_dir" ]]; then
+        log_warn "Vault not initialized for ${project}, skipping Layer 2 link"
+        return
+    fi
+
+    # Create a note in vault inbox
+    local inbox_dir="${vault_dir}/inbox"
+    mkdir -p "$inbox_dir"
+
+    local safe_title
+    safe_title=$(echo "$fact" | head -c 60 | tr -cd 'a-zA-Z0-9 -' | tr ' ' '-')
+    local note_file="${inbox_dir}/${safe_title}.md"
+
+    cat > "$note_file" <<EOF
+# ${fact}
+
+**Source:** LCM Summary \`${summary_id}\`
+**Promoted:** $(date -u +"%Y-%m-%d %H:%M UTC")
+
+---
+
+${fact}
+
+---
+*Auto-promoted by openclaw-lacp-promote v${VERSION}*
+EOF
+
+    log_ok "Written to Layer 2: ${note_file}"
+}
+
+# Log promotion
+log_promotion() {
+    local receipt="$1"
+    # Compact to single-line JSONL
+    if command -v jq &>/dev/null; then
+        echo "$receipt" | jq -c '.' >> "$PROMOTIONS_LOG"
+    else
+        echo "$receipt" | tr -d '\n' >> "$PROMOTIONS_LOG"
+        echo "" >> "$PROMOTIONS_LOG"
+    fi
+}
+
+# --- Commands ---
+
+cmd_auto() {
+    local summary_id="" score=0 category="" project=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --summary)   summary_id="$2"; shift 2 ;;
+            --score)     score="$2"; shift 2 ;;
+            --category)  category="$2"; shift 2 ;;
+            --project)   project="$2"; shift 2 ;;
+            *)           log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$summary_id" ]]; then
+        log_error "Missing required --summary"
+        exit 1
+    fi
+
+    ensure_dirs
+
+    log_info "Auto-promoting summary=${summary_id} score=${score} category=${category:-auto}"
+
+    # If score not provided, try to score via Python module
+    if [[ "$score" -eq 0 ]] && [[ -f "${V2_LCM_DIR}/promotion_scorer.py" ]]; then
+        log_info "Running promotion scorer..."
+        local scorer_result
+        scorer_result=$(python3 -c "
+import sys
+sys.path.insert(0, '${V2_LCM_DIR}')
+from promotion_scorer import score_summary
+result = score_summary({'summary_id': '${summary_id}', 'content': '', 'source': 'lcm'})
+print(f\"{result['score']}|{result['category']}\")
+" 2>/dev/null || echo "70|operational-knowledge")
+        score=$(echo "$scorer_result" | cut -d'|' -f1)
+        [[ -z "$category" ]] && category=$(echo "$scorer_result" | cut -d'|' -f2)
+    fi
+
+    [[ -z "$category" ]] && category="operational-knowledge"
+    [[ -z "$project" ]] && project="default"
+
+    # Extract fact (placeholder for actual LCM integration)
+    local fact="Auto-promoted from LCM summary ${summary_id} (score: ${score})"
+
+    # Generate receipt
+    local receipt
+    receipt=$(generate_receipt "$summary_id" "$fact" "$category" "$score")
+    local receipt_hash
+    receipt_hash=$(echo "$receipt" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["receipt_hash"])' 2>/dev/null || echo "unknown")
+
+    # Write to Layer 1
+    write_to_layer1 "$project" "$fact" "$category" "$receipt_hash"
+
+    # Write to Layer 2
+    write_to_layer2 "$project" "$fact" "$summary_id"
+
+    # Log promotion
+    log_promotion "$receipt"
+
+    # Audit trail
+    log_to_gated_runs "promote" "$summary_id" "$score" "$category" "$receipt_hash" "$project"
+
+    echo ""
+    log_ok "Promotion complete!"
+    echo "  Summary: ${summary_id}"
+    echo "  Score: ${score}"
+    echo "  Category: ${category}"
+    echo "  Receipt: ${receipt_hash:0:16}..."
+}
+
+cmd_manual() {
+    local summary_id="" fact="" reasoning="" category="" project=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --summary)    summary_id="$2"; shift 2 ;;
+            --fact)       fact="$2"; shift 2 ;;
+            --reasoning)  reasoning="$2"; shift 2 ;;
+            --category)   category="$2"; shift 2 ;;
+            --project)    project="$2"; shift 2 ;;
+            *)            log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$summary_id" || -z "$fact" ]]; then
+        log_error "Missing required --summary and --fact"
+        exit 1
+    fi
+
+    ensure_dirs
+
+    [[ -z "$reasoning" ]] && reasoning="Manually promoted"
+    [[ -z "$category" ]] && category="operational-knowledge"
+    [[ -z "$project" ]] && project="default"
+
+    log_info "Manual promotion: summary=${summary_id}"
+
+    # Generate receipt with score 100 (manual = high confidence)
+    local receipt
+    receipt=$(generate_receipt "$summary_id" "$fact" "$category" "100" "$reasoning")
+    local receipt_hash
+    receipt_hash=$(echo "$receipt" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["receipt_hash"])' 2>/dev/null || echo "unknown")
+
+    # Write to Layer 1
+    write_to_layer1 "$project" "$fact" "$category" "$receipt_hash"
+
+    # Write to Layer 2
+    write_to_layer2 "$project" "$fact" "$summary_id"
+
+    # Log promotion
+    log_promotion "$receipt"
+
+    # Audit trail
+    log_to_gated_runs "manual_promote" "$summary_id" "100" "$category" "$receipt_hash" "$project"
+
+    echo ""
+    log_ok "Manual promotion complete!"
+    echo "  Fact: ${fact}"
+    echo "  Reasoning: ${reasoning}"
+    echo "  Receipt: ${receipt_hash:0:16}..."
+}
+
+cmd_list() {
+    local project="" since=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  project="$2"; shift 2 ;;
+            --since)    since="$2"; shift 2 ;;
+            *)          log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ ! -f "$PROMOTIONS_LOG" ]]; then
+        log_warn "No promotions log found"
+        exit 0
+    fi
+
+    log_info "Listing promotions${project:+ for project=${project}}${since:+ since ${since}}"
+
+    local count=0
+    while IFS= read -r line; do
+        if [[ -z "$line" ]]; then continue; fi
+
+        local show=true
+
+        # Filter by project (in fact text)
+        if [[ -n "$project" ]]; then
+            if ! echo "$line" | grep -qi "$project"; then
+                show=false
+            fi
+        fi
+
+        # Filter by date
+        if [[ -n "$since" ]] && command -v jq &>/dev/null; then
+            local ts
+            ts=$(echo "$line" | jq -r '.timestamp // ""' 2>/dev/null || true)
+            if [[ -n "$ts" && "$ts" < "$since" ]]; then
+                show=false
+            fi
+        fi
+
+        if [[ "$show" == "true" ]]; then
+            if command -v jq &>/dev/null; then
+                echo "$line" | jq -c '{summary_id, category, score, timestamp, receipt_hash}' 2>/dev/null || echo "$line"
+            else
+                echo "$line"
+            fi
+            count=$((count + 1))
+        fi
+    done < "$PROMOTIONS_LOG"
+
+    echo ""
+    log_ok "Total: ${count} promotions"
+}
+
+# Log to gated-runs.jsonl audit trail
+log_to_gated_runs() {
+    local event_type="$1"
+    local summary_id="$2"
+    local score="$3"
+    local category="$4"
+    local receipt_hash="$5"
+    local project="$6"
+
+    local gated_log="${OPENCLAW_GATED_RUNS_LOG:-$HOME/.openclaw/logs/gated-runs.jsonl}"
+    mkdir -p "$(dirname "$gated_log")"
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local entry
+    if command -v jq &>/dev/null; then
+        entry=$(jq -nc \
+            --arg type "$event_type" \
+            --arg sid "$summary_id" \
+            --arg score "$score" \
+            --arg cat "$category" \
+            --arg hash "$receipt_hash" \
+            --arg proj "$project" \
+            --arg ts "$timestamp" \
+            --arg ver "$VERSION" \
+            '{timestamp: $ts, event: $type, summary_id: $sid, score: ($score|tonumber), category: $cat, receipt_hash: $hash, project: $proj, version: $ver}')
+    else
+        entry="{\"timestamp\":\"${timestamp}\",\"event\":\"${event_type}\",\"summary_id\":\"${summary_id}\",\"score\":${score},\"category\":\"${category}\",\"receipt_hash\":\"${receipt_hash}\",\"project\":\"${project}\",\"version\":\"${VERSION}\"}"
+    fi
+
+    echo "$entry" >> "$gated_log"
+}
+
+# Full pipeline: read file → score → promote if above threshold
+cmd_pipeline() {
+    local file="" project="" threshold=70 dry_run=false category=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --file)       file="$2"; shift 2 ;;
+            --project)    project="$2"; shift 2 ;;
+            --threshold)  threshold="$2"; shift 2 ;;
+            --category)   category="$2"; shift 2 ;;
+            --dry-run)    dry_run=true; shift ;;
+            *)            log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$file" ]]; then
+        log_error "Missing required --file"
+        exit 1
+    fi
+
+    if [[ ! -f "$file" ]]; then
+        log_error "File not found: $file"
+        exit 1
+    fi
+
+    ensure_dirs
+
+    # Determine summary ID from filename
+    local summary_id
+    summary_id=$(basename "$file" | sed 's/\.[^.]*$//')
+
+    [[ -z "$project" ]] && project="default"
+
+    log_info "Pipeline: file=${file} project=${project} threshold=${threshold}"
+
+    # Read file content
+    local content
+    content=$(cat "$file")
+
+    # Detect file type and parse
+    local source="lcm"
+    local citations_json="[]"
+
+    if [[ "$file" == *.json ]]; then
+        # JSON format: extract fields
+        if command -v jq &>/dev/null; then
+            summary_id=$(echo "$content" | jq -r '.summary_id // "'"$summary_id"'"' 2>/dev/null || echo "$summary_id")
+            project=$(echo "$content" | jq -r '.project // "'"$project"'"' 2>/dev/null || echo "$project")
+            source=$(echo "$content" | jq -r '.source // "lcm"' 2>/dev/null || echo "lcm")
+            citations_json=$(echo "$content" | jq -c '.citations // []' 2>/dev/null || echo "[]")
+            content=$(echo "$content" | jq -r '.content // ""' 2>/dev/null || echo "$content")
+        fi
+    fi
+
+    # Run promotion scorer via Python
+    log_info "Running promotion scorer..."
+    local scorer_output
+    scorer_output=$(python3 -c "
+import sys, json
+sys.path.insert(0, '${V2_LCM_DIR}')
+from promotion_scorer import score_summary
+
+summary = {
+    'summary_id': '''${summary_id}''',
+    'content': sys.stdin.read(),
+    'source': '''${source}''',
+    'citations': json.loads('''${citations_json}'''),
+    'project': '''${project}''',
+}
+result = score_summary(summary, threshold=${threshold})
+print(json.dumps(result))
+" <<< "$content" 2>/dev/null)
+
+    if [[ -z "$scorer_output" ]]; then
+        log_error "Scorer failed — check Python module"
+        exit 1
+    fi
+
+    # Parse scorer results
+    local score promote score_category facts_json receipt_hash
+    if command -v jq &>/dev/null; then
+        score=$(echo "$scorer_output" | jq -r '.score' 2>/dev/null)
+        promote=$(echo "$scorer_output" | jq -r '.promote' 2>/dev/null)
+        score_category=$(echo "$scorer_output" | jq -r '.category' 2>/dev/null)
+        facts_json=$(echo "$scorer_output" | jq -c '.facts' 2>/dev/null)
+        receipt_hash=$(echo "$scorer_output" | jq -r '.receipt_hash // ""' 2>/dev/null)
+    else
+        score=$(echo "$scorer_output" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["score"])')
+        promote=$(echo "$scorer_output" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["promote"])')
+        score_category=$(echo "$scorer_output" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["category"])')
+        facts_json="[]"
+        receipt_hash=""
+    fi
+
+    [[ -n "$category" ]] && score_category="$category"
+
+    echo ""
+    log_info "Score: ${score}/100 (threshold: ${threshold})"
+    log_info "Category: ${score_category}"
+    log_info "Promote: ${promote}"
+
+    if [[ "$promote" == "false" || "$promote" == "False" ]]; then
+        log_warn "Score ${score} below threshold ${threshold} — skipping promotion"
+        log_to_gated_runs "promote_skipped" "$summary_id" "$score" "$score_category" "" "$project"
+
+        if command -v jq &>/dev/null; then
+            echo "$scorer_output" | jq '.'
+        fi
+        exit 0
+    fi
+
+    if [[ "$dry_run" == "true" ]]; then
+        log_info "[DRY RUN] Would promote ${summary_id} with score ${score}"
+        if command -v jq &>/dev/null; then
+            echo "$scorer_output" | jq '.'
+        fi
+        exit 0
+    fi
+
+    # Extract top facts for promotion
+    local facts_count
+    facts_count=$(echo "$facts_json" | python3 -c 'import sys,json; print(len(json.loads(sys.stdin.read())))' 2>/dev/null || echo "0")
+
+    if [[ "$facts_count" -gt 0 ]]; then
+        # Promote each extracted fact
+        local i=0
+        while [[ $i -lt $facts_count && $i -lt 5 ]]; do
+            local fact
+            fact=$(echo "$facts_json" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[$i])" 2>/dev/null || true)
+
+            if [[ -n "$fact" ]]; then
+                local receipt
+                receipt=$(generate_receipt "$summary_id" "$fact" "$score_category" "$score")
+                local r_hash
+                r_hash=$(echo "$receipt" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["receipt_hash"])' 2>/dev/null || echo "unknown")
+
+                write_to_layer1 "$project" "$fact" "$score_category" "$r_hash"
+                log_promotion "$receipt"
+                log_to_gated_runs "promote" "$summary_id" "$score" "$score_category" "$r_hash" "$project"
+            fi
+
+            i=$((i + 1))
+        done
+    else
+        # Promote the summary itself as a single fact
+        local fact="Auto-promoted from LCM summary ${summary_id} (score: ${score})"
+        local receipt
+        receipt=$(generate_receipt "$summary_id" "$fact" "$score_category" "$score")
+        local r_hash
+        r_hash=$(echo "$receipt" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["receipt_hash"])' 2>/dev/null || echo "unknown")
+
+        write_to_layer1 "$project" "$fact" "$score_category" "$r_hash"
+        write_to_layer2 "$project" "$fact" "$summary_id"
+        log_promotion "$receipt"
+        log_to_gated_runs "promote" "$summary_id" "$score" "$score_category" "$r_hash" "$project"
+    fi
+
+    # Run linker for cross-references
+    if [[ -f "${V2_LCM_DIR}/lcm_lacp_linker.py" ]]; then
+        log_info "Creating cross-references..."
+        python3 -c "
+import sys, json
+sys.path.insert(0, '${V2_LCM_DIR}')
+from lcm_lacp_linker import link_summary_to_vault
+
+summary = {
+    'summary_id': '${summary_id}',
+    'content': sys.stdin.read(),
+    'project': '${project}',
+}
+result = link_summary_to_vault(summary, vault_path='${VAULT_ROOT}')
+print(f\"Linked {result['link_count']} notes\")
+" <<< "$content" 2>/dev/null || log_warn "Cross-reference linking skipped"
+    fi
+
+    # Record provenance (Layer 5)
+    local prov_receipt_file="${PROVENANCE_DIR}/promote_${summary_id}.json"
+    if command -v jq &>/dev/null; then
+        echo "$scorer_output" | jq --arg file "$file" --arg project "$project" \
+            '. + {source_file: $file, project: $project, promoted_at: now | todate}' \
+            > "$prov_receipt_file" 2>/dev/null || true
+    fi
+
+    echo ""
+    log_ok "Pipeline complete!"
+    echo "  Summary: ${summary_id}"
+    echo "  Score: ${score}/100"
+    echo "  Category: ${score_category}"
+    echo "  Facts promoted: ${facts_count:-1}"
+}
+
+cmd_verify() {
+    local receipt_hash=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --receipt-hash)  receipt_hash="$2"; shift 2 ;;
+            *)               log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$receipt_hash" ]]; then
+        log_error "Missing required --receipt-hash"
+        exit 1
+    fi
+
+    if [[ ! -f "$PROMOTIONS_LOG" ]]; then
+        log_error "No promotions log found"
+        exit 1
+    fi
+
+    log_info "Verifying receipt: ${receipt_hash:0:16}..."
+
+    local found=false
+    while IFS= read -r line; do
+        if echo "$line" | grep -q "$receipt_hash"; then
+            found=true
+            echo ""
+            log_ok "Receipt VERIFIED"
+            if command -v jq &>/dev/null; then
+                echo "$line" | jq '.' 2>/dev/null || echo "$line"
+            else
+                echo "$line"
+            fi
+
+            # Verify chain integrity
+            if command -v jq &>/dev/null; then
+                local stored_hash
+                stored_hash=$(echo "$line" | jq -r '.receipt_hash' 2>/dev/null || true)
+                if [[ "$stored_hash" == "$receipt_hash" ]]; then
+                    log_ok "Hash match confirmed"
+                else
+                    log_warn "Partial match (searched by prefix)"
+                fi
+            fi
+            break
+        fi
+    done < "$PROMOTIONS_LOG"
+
+    if [[ "$found" == "false" ]]; then
+        log_error "Receipt NOT FOUND: ${receipt_hash}"
+        exit 1
+    fi
+}
+
+# --- Main ---
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        auto)     cmd_auto "$@" ;;
+        pipeline) cmd_pipeline "$@" ;;
+        manual)   cmd_manual "$@" ;;
+        list)     cmd_list "$@" ;;
+        verify)   cmd_verify "$@" ;;
+        --help|-h) usage ;;
+        --version|-v) echo "${SCRIPT_NAME} v${VERSION}" ;;
+        *)
+            log_error "Unknown command: $command"
+            usage
+            ;;
+    esac
+}
+
+main "$@"

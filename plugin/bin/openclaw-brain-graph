@@ -1,0 +1,709 @@
+#!/bin/bash
+
+# openclaw-brain-graph
+# Layer 2: Knowledge Graph initialization and management
+# Integrates Obsidian vault with QMD (semantic search) and smart-connections MCP
+#
+# Usage:
+#   openclaw-brain-graph init <project-path> [--vault <vault-path>]
+#   openclaw-brain-graph index <session-dir> [--update-qmd]
+#   openclaw-brain-graph query <session-dir> "<search-query>"
+#   openclaw-brain-graph mcp-config <vault-path> <output-path>
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+NC='\033[0m' # No Color
+
+# Configuration
+GRAPH_CONFIG_DIR="${HOME}/.openclaw-test/config/graph"
+GRAPH_DATA_DIR="${HOME}/.openclaw-test/data/knowledge-graphs"
+MCP_CONFIG_DIR="${HOME}/.openclaw-test/config/mcp"
+
+# Usage
+usage() {
+  cat <<'EOF'
+Usage: openclaw-brain-graph <command> [options]
+
+Commands:
+  init <project-path>              Initialize knowledge graph for project
+    --vault <path>                   Custom Obsidian vault path (optional)
+    
+  index <session-dir>               Index session memory into knowledge graph
+    --update-qmd                     Also update QMD vector embeddings
+    
+  query <session-dir> "<query>"      Search knowledge graph with semantic query
+    --limit <n>                      Max results to return (default: 5)
+    --threshold <float>              Min similarity score (default: 0.5)
+    
+  mcp-config <vault-path>           Generate MCP config for Obsidian integration
+    --output <path>                  Config output path (default: stderr)
+    
+  status <vault-path>                Check graph initialization status
+    --details                        Show detailed graph statistics
+
+Examples:
+  # Initialize graph for a project
+  openclaw-brain-graph init ~/easy-api --vault /Volumes/Cortex/easy-api-vault
+  
+  # Index session memory
+  openclaw-brain-graph index ~/.openclaw-test/data/project-sessions/easy-api/agent-a/1234567890 --update-qmd
+  
+  # Search the graph
+  openclaw-brain-graph query ~/.openclaw-test/data/project-sessions/easy-api/agent-a/1234567890 "rate limiting issues"
+  
+  # Generate MCP config
+  openclaw-brain-graph mcp-config /Volumes/Cortex/easy-api-vault --output ~/.openclaw-test/config/mcp/obsidian.json
+EOF
+  exit 1
+}
+
+# Helpers
+log_info() {
+  echo -e "${BLUE}[graph]${NC} $*" >&2
+}
+
+log_success() {
+  echo -e "${GREEN}✓${NC} $*" >&2
+}
+
+log_warn() {
+  echo -e "${YELLOW}~${NC} $*" >&2
+}
+
+log_error() {
+  echo -e "${RED}✗${NC} $*" >&2
+}
+
+# Check dependencies
+check_deps() {
+  local deps=("jq" "git" "python3")
+  for dep in "${deps[@]}"; do
+    if ! command -v "$dep" &> /dev/null; then
+      log_error "Required dependency missing: $dep"
+      exit 1
+    fi
+  done
+}
+
+# Initialize knowledge graph for a project
+init_graph() {
+  local project_path="$1"
+  local vault_path="${2:-}"
+  
+  if [[ ! -d "$project_path" ]]; then
+    log_error "Project path does not exist: $project_path"
+    exit 1
+  fi
+  
+  local project_name=$(basename "$project_path")
+  local project_slug=$(echo "$project_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+  
+  # Use custom vault path or default to .obsidian-vault within project
+  if [[ -z "$vault_path" ]]; then
+    vault_path="${project_path}/.obsidian-vault"
+  fi
+  
+  log_info "Initializing knowledge graph for $project_name"
+  log_info "Vault path: $vault_path"
+  
+  # Create vault structure
+  mkdir -p "$vault_path"/{inbox,projects,agents,patterns,decisions,references}
+  
+  # Create vault config (obsidian.json)
+  mkdir -p "$vault_path/.obsidian"
+  cat > "$vault_path/.obsidian/vault.json" << VAULT_EOF
+{
+  "id": "$(uuidgen | tr '[:upper:]' '[:lower:]')",
+  "name": "$project_name Knowledge Graph",
+  "type": "open",
+  "dir": "."
+}
+VAULT_EOF
+  log_success "Created Obsidian vault structure"
+  
+  # Create README
+  cat > "$vault_path/README.md" << README_EOF
+# $project_name Knowledge Graph
+
+Semantic knowledge graph for \`$project_path\`.
+
+## Structure
+
+- **inbox/** — Incoming notes, auto-ingested via \`openclaw-brain-ingest\`
+- **projects/** — Project-specific knowledge (architecture, decisions, patterns)
+- **agents/** — Agent-specific learnings and preferences
+- **patterns/** — Code patterns, conventions, best practices
+- **decisions/** — Architectural and design decisions (ADRs)
+- **references/** — External references, links, documentation
+
+## Indexing
+
+This vault is automatically indexed by QMD (Quick Markdown Search) for semantic search.
+
+To update indices:
+\`\`\`bash
+qmd update && qmd embed
+\`\`\`
+
+## Integration
+
+- **MCP:** Integrated with smart-connections, memory, and obsidian MCPs
+- **QMD:** Indexed for semantic and keyword search
+- **Ingestion:** Auto-fed by \`openclaw-brain-ingest\` pipeline
+
+## View the Graph
+
+```bash
+# Semantic search
+qmd search "your query" -c $project_slug
+
+# Get details on specific note
+qmd get "qmd://$project_slug/path/to/note.md"
+
+# Full-text search
+qmd search "keyword" -c $project_slug --full-text
+```
+
+---
+
+**Created:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")**
+**Project:** $project_name
+**Graph Type:** Obsidian + QMD Hybrid
+README_EOF
+  log_success "Created vault README"
+  
+  # Store graph config
+  mkdir -p "$GRAPH_CONFIG_DIR"
+  cat > "$GRAPH_CONFIG_DIR/${project_slug}.json" << CONFIG_EOF
+{
+  "project_name": "$project_name",
+  "project_slug": "$project_slug",
+  "project_path": "$project_path",
+  "vault_path": "$vault_path",
+  "created_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "mcp_servers": {
+    "obsidian": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-obsidian", "$vault_path"],
+      "env": {
+        "OBSIDIAN_VAULT": "$vault_path"
+      }
+    },
+    "smart-connections": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-smart-connections"],
+      "env": {
+        "VAULT_PATH": "$vault_path"
+      }
+    }
+  },
+  "qmd_collection": "$project_slug",
+  "qmd_path": "$vault_path",
+  "index_status": "pending"
+}
+CONFIG_EOF
+  log_success "Created graph configuration"
+  
+  # Initialize git in vault
+  if [[ ! -d "$vault_path/.git" ]]; then
+    cd "$vault_path"
+    git init -q
+    git config user.email "wren@itseasy.co"
+    git config user.name "Wren (OpenClaw)"
+    git add .
+    git commit -q -m "init: knowledge graph vault for $project_name" || true
+    log_success "Initialized git repository in vault"
+  fi
+  
+  # Output summary
+  echo ""
+  echo -e "${MAGENTA}Knowledge Graph Initialized${NC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "Project:   ${YELLOW}$project_name${NC}"
+  echo -e "Vault:     ${BLUE}$vault_path${NC}"
+  echo -e "Config:    ${BLUE}$GRAPH_CONFIG_DIR/${project_slug}.json${NC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "Next steps:"
+  echo "  • Index session memory: openclaw-brain-graph index <session-dir> --update-qmd"
+  echo "  • Generate MCP config: openclaw-brain-graph mcp-config $vault_path"
+  echo "  • Search the graph: openclaw-brain-graph query <session-dir> \"<query>\""
+  echo ""
+}
+
+# Index session memory into knowledge graph
+index_session() {
+  local session_dir="$1"
+  local update_qmd="${2:-false}"
+  
+  if [[ ! -d "$session_dir" ]]; then
+    log_error "Session directory does not exist: $session_dir"
+    exit 1
+  fi
+  
+  if [[ ! -f "$session_dir/context.json" ]]; then
+    log_error "Missing context.json in session directory"
+    exit 1
+  fi
+  
+  # Extract project slug from context.json
+  local project_slug=$(jq -r '.project.slug' "$session_dir/context.json")
+  local agent_id=$(jq -r '.agent.id' "$session_dir/context.json")
+  
+  log_info "Indexing session memory for project: $project_slug"
+  
+  # Look up vault path from graph config
+  local graph_config="$GRAPH_CONFIG_DIR/${project_slug}.json"
+  if [[ ! -f "$graph_config" ]]; then
+    log_error "Graph not initialized. Run: openclaw-brain-graph init <project-path>"
+    exit 1
+  fi
+  
+  local vault_path=$(jq -r '.vault_path' "$graph_config")
+  local inbox_path="$vault_path/inbox"
+  
+  log_info "Copying session files to inbox: $inbox_path"
+  
+  # Copy seed files to inbox
+  for file in MEMORY.md debugging.md patterns.md architecture.md preferences.md; do
+    if [[ -f "$session_dir/$file" ]]; then
+      cp "$session_dir/$file" "$inbox_path/${agent_id}-${file}" || true
+      log_success "Indexed: ${agent_id}-${file}"
+    fi
+  done
+  
+  # Commit to git
+  if [[ -d "$vault_path/.git" ]]; then
+    cd "$vault_path"
+    git add inbox/
+    if ! git diff --cached --quiet; then
+      git commit -q -m "index: session memory from $agent_id" || true
+      log_success "Committed to vault git history"
+    fi
+  fi
+  
+  # Update QMD indices if requested
+  if [[ "$update_qmd" == "true" ]]; then
+    log_info "Updating QMD indices..."
+    export PATH="$HOME/.bun/bin:$PATH"
+    if command -v qmd &> /dev/null; then
+      cd "$vault_path"
+      qmd update && qmd embed
+      log_success "QMD indices updated"
+    else
+      log_warn "QMD not found. Install with: npm install -g @qmd/cli"
+    fi
+  fi
+  
+  # Update graph config status
+  jq '.index_status = "indexed"' "$graph_config" > "$graph_config.tmp"
+  mv "$graph_config.tmp" "$graph_config"
+  log_success "Updated graph configuration"
+  
+  echo ""
+  echo -e "${GREEN}✓${NC} Session indexed into knowledge graph"
+  echo -e "Vault: ${BLUE}$vault_path${NC}"
+  echo ""
+}
+
+# Query knowledge graph
+query_graph() {
+  local session_dir="$1"
+  local search_query="$2"
+  local limit="${3:-5}"
+  local threshold="${4:-0.5}"
+  
+  if [[ ! -d "$session_dir" ]]; then
+    log_error "Session directory does not exist: $session_dir"
+    exit 1
+  fi
+  
+  if [[ ! -f "$session_dir/context.json" ]]; then
+    log_error "Missing context.json in session directory"
+    exit 1
+  fi
+  
+  local project_slug=$(jq -r '.project.slug' "$session_dir/context.json")
+  local graph_config="$GRAPH_CONFIG_DIR/${project_slug}.json"
+  
+  if [[ ! -f "$graph_config" ]]; then
+    log_error "Graph not initialized for project: $project_slug"
+    exit 1
+  fi
+  
+  log_info "Searching knowledge graph: \"$search_query\""
+  log_info "Limit: $limit, Threshold: $threshold"
+  
+  export PATH="$HOME/.bun/bin:$PATH"
+  if command -v qmd &> /dev/null; then
+    qmd search "$search_query" -c "$project_slug" --limit "$limit" 2>/dev/null || {
+      log_error "QMD search failed. Ensure indices are up-to-date."
+      exit 1
+    }
+  else
+    log_error "QMD not installed. Install with: npm install -g @qmd/cli"
+    exit 1
+  fi
+}
+
+# Generate MCP configuration
+generate_mcp_config() {
+  local vault_path="$1"
+  local output_path="${2:-}"
+  
+  if [[ ! -d "$vault_path" ]]; then
+    log_error "Vault path does not exist: $vault_path"
+    exit 1
+  fi
+  
+  log_info "Generating MCP configuration for vault: $vault_path"
+  
+  local config=$(cat <<'MCP_EOF'
+{
+  "mcpServers": {
+    "obsidian": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-obsidian",
+        "{vault_path}"
+      ]
+    },
+    "smart-connections": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-smart-connections",
+        "{vault_path}"
+      ]
+    },
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "qmd": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "export PATH=$HOME/.bun/bin:$PATH && qmd mcp --collection {project_slug}"
+      ]
+    }
+  }
+}
+MCP_EOF
+  )
+  
+  # Substitute vault path
+  config="${config//\{vault_path\}/$vault_path}"
+  
+  # Extract project slug from vault path
+  local project_slug=$(basename "$vault_path" | sed 's/-vault$//')
+  config="${config//\{project_slug\}/$project_slug}"
+  
+  if [[ -z "$output_path" ]]; then
+    echo "$config" | jq .
+  else
+    mkdir -p "$(dirname "$output_path")"
+    echo "$config" | jq . > "$output_path"
+    log_success "MCP configuration written to: $output_path"
+  fi
+}
+
+# Check graph status
+check_status() {
+  local vault_path="$1"
+  local details="${2:-false}"
+  
+  if [[ ! -d "$vault_path" ]]; then
+    log_error "Vault path does not exist: $vault_path"
+    exit 1
+  fi
+  
+  local vault_name=$(basename "$vault_path")
+  log_info "Checking status of vault: $vault_name"
+  
+  # Count files
+  local file_count=$(find "$vault_path" -name "*.md" -type f 2>/dev/null | wc -l)
+  local inbox_count=$(find "$vault_path/inbox" -name "*.md" -type f 2>/dev/null | wc -l || echo 0)
+  
+  echo ""
+  echo -e "${MAGENTA}Knowledge Graph Status${NC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "Vault:          ${YELLOW}$vault_name${NC}"
+  echo -e "Total Files:    ${YELLOW}$file_count${NC}"
+  echo -e "Inbox Files:    ${YELLOW}$inbox_count${NC}"
+  echo -e "Git History:    $(test -d "$vault_path/.git" && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}")"
+  
+  if [[ "$details" == "true" ]]; then
+    echo ""
+    echo "Directories:"
+    ls -la "$vault_path" | grep "^d" | awk '{print "  " $NF}' | grep -v "^\.$\|^\.\.$\|^\.git\|^\.obsidian"
+  fi
+  
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+}
+
+# Sync from LCM — enrich knowledge graph with promoted facts
+sync_from_lcm() {
+  local from_lcm="$1"
+  local summary_id="$2"
+  local auto_link="$3"
+
+  if [[ "$from_lcm" != "true" ]]; then
+    log_error "sync requires --from-lcm flag"
+    exit 1
+  fi
+
+  log_info "Syncing LCM summary to knowledge graph"
+
+  local PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+  local V2_LCM_DIR="${PLUGIN_DIR}/v2-lcm"
+  local PROMOTIONS_LOG="${OPENCLAW_PROMOTIONS_LOG:-$HOME/.openclaw/logs/promotions.jsonl}"
+
+  if [[ -n "$summary_id" && -f "$PROMOTIONS_LOG" ]]; then
+    log_info "Looking up summary: ${summary_id}"
+    local entry
+    entry=$(grep "$summary_id" "$PROMOTIONS_LOG" 2>/dev/null | tail -1 || true)
+
+    if [[ -z "$entry" ]]; then
+      log_error "Summary not found in promotions log: ${summary_id}"
+      exit 1
+    fi
+
+    local fact category receipt_hash
+    if command -v jq &>/dev/null; then
+      fact=$(echo "$entry" | jq -r '.fact // ""')
+      category=$(echo "$entry" | jq -r '.category // "operational-knowledge"')
+      receipt_hash=$(echo "$entry" | jq -r '.receipt_hash // ""')
+    else
+      fact="Promoted fact from ${summary_id}"
+      category="operational-knowledge"
+      receipt_hash=""
+    fi
+
+    log_info "Fact: ${fact}"
+    log_info "Category: ${category}"
+  else
+    log_info "No specific summary — scanning all recent promotions"
+    summary_id="batch-sync"
+    local fact="Batch sync from LCM promotions"
+    local category="operational-knowledge"
+    local receipt_hash=""
+  fi
+
+  # Find all configured vaults
+  local synced=0
+  if [[ -d "$GRAPH_CONFIG_DIR" ]]; then
+    for config_file in "$GRAPH_CONFIG_DIR"/*.json; do
+      [[ ! -f "$config_file" ]] && continue
+
+      local vault_path
+      vault_path=$(jq -r '.vault_path' "$config_file" 2>/dev/null || true)
+
+      if [[ -n "$vault_path" && -d "$vault_path" ]]; then
+        local inbox_path="$vault_path/inbox"
+        mkdir -p "$inbox_path"
+
+        # Create note from promoted fact
+        local safe_name
+        safe_name=$(echo "${summary_id}" | tr -cd 'a-zA-Z0-9-_')
+        local note_file="${inbox_path}/lcm-${safe_name}.md"
+
+        cat > "$note_file" <<NOTE_EOF
+# LCM Sync: ${summary_id}
+
+**Category:** ${category:-unknown}
+**Synced:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+${receipt_hash:+**Receipt:** \`${receipt_hash:0:12}...\`}
+
+---
+
+${fact:-No fact content available}
+
+---
+*Synced by openclaw-brain-graph sync --from-lcm v2.0.0*
+NOTE_EOF
+
+        log_success "Created note: ${note_file}"
+
+        # Auto-link: find related notes and add wikilinks
+        if [[ "$auto_link" == "true" ]]; then
+          log_info "Auto-linking to related notes..."
+          local related_count=0
+
+          # Simple keyword matching against existing notes
+          for md_file in "$vault_path"/**/*.md; do
+            [[ ! -f "$md_file" ]] && continue
+            [[ "$md_file" == "$note_file" ]] && continue
+
+            # Check for keyword overlap
+            local basename_note
+            basename_note=$(basename "$md_file" .md)
+            if echo "${fact:-}" | grep -qi "$basename_note" 2>/dev/null; then
+              # Add wikilink to the sync note
+              echo "- Related: [[${basename_note}]]" >> "$note_file"
+              related_count=$((related_count + 1))
+            fi
+          done
+
+          if [[ $related_count -gt 0 ]]; then
+            log_success "Auto-linked to ${related_count} related notes"
+          else
+            log_info "No related notes found for auto-linking"
+          fi
+        fi
+
+        # Commit to git
+        if [[ -d "$vault_path/.git" ]]; then
+          cd "$vault_path"
+          git add inbox/ 2>/dev/null || true
+          if ! git diff --cached --quiet 2>/dev/null; then
+            git commit -q -m "sync: LCM summary ${summary_id}" 2>/dev/null || true
+            log_success "Committed to vault git"
+          fi
+        fi
+
+        synced=$((synced + 1))
+      fi
+    done
+  fi
+
+  # Re-index QMD if available
+  export PATH="$HOME/.bun/bin:$PATH"
+  if command -v qmd &>/dev/null; then
+    log_info "Re-indexing QMD..."
+    qmd update 2>/dev/null && qmd embed 2>/dev/null || true
+    log_success "QMD re-indexed"
+  fi
+
+  echo ""
+  echo -e "${GREEN}✓${NC} LCM sync complete — enriched ${synced} vault(s)"
+  echo ""
+}
+
+# Main dispatcher
+main() {
+  if [[ $# -lt 1 ]]; then
+    usage
+  fi
+  
+  check_deps
+  
+  local command="$1"
+  shift
+  
+  case "$command" in
+    init)
+      if [[ $# -lt 1 ]]; then
+        usage
+      fi
+      local project_path="$1"
+      shift
+      local vault_path=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --vault) vault_path="$2"; shift 2 ;;
+          *) echo "Unknown option: $1"; usage ;;
+        esac
+      done
+      init_graph "$project_path" "$vault_path"
+      ;;
+    index)
+      if [[ $# -lt 1 ]]; then
+        usage
+      fi
+      local session_dir="$1"
+      shift
+      local update_qmd="false"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --update-qmd) update_qmd="true"; shift ;;
+          *) echo "Unknown option: $1"; usage ;;
+        esac
+      done
+      index_session "$session_dir" "$update_qmd"
+      ;;
+    query)
+      if [[ $# -lt 2 ]]; then
+        usage
+      fi
+      local session_dir="$1"
+      local search_query="$2"
+      shift 2
+      local limit="5"
+      local threshold="0.5"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --limit) limit="$2"; shift 2 ;;
+          --threshold) threshold="$2"; shift 2 ;;
+          *) echo "Unknown option: $1"; usage ;;
+        esac
+      done
+      query_graph "$session_dir" "$search_query" "$limit" "$threshold"
+      ;;
+    mcp-config)
+      if [[ $# -lt 1 ]]; then
+        usage
+      fi
+      local vault_path="$1"
+      shift
+      local output_path=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --output) output_path="$2"; shift 2 ;;
+          *) echo "Unknown option: $1"; usage ;;
+        esac
+      done
+      generate_mcp_config "$vault_path" "$output_path"
+      ;;
+    status)
+      if [[ $# -lt 1 ]]; then
+        usage
+      fi
+      local vault_path="$1"
+      shift
+      local details="false"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --details) details="true"; shift ;;
+          *) echo "Unknown option: $1"; usage ;;
+        esac
+      done
+      check_status "$vault_path" "$details"
+      ;;
+    sync)
+      local from_lcm="false"
+      local summary_id=""
+      local auto_link="false"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --from-lcm) from_lcm="true"; shift ;;
+          --summary) summary_id="$2"; shift 2 ;;
+          --auto-link) auto_link="true"; shift ;;
+          *) echo "Unknown option: $1"; usage ;;
+        esac
+      done
+      sync_from_lcm "$from_lcm" "$summary_id" "$auto_link"
+      ;;
+    *)
+      echo "Unknown command: $command"
+      usage
+      ;;
+  esac
+}
+
+main "$@"
+
+

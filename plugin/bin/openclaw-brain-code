@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""
+openclaw-brain-code: Layer 4 Code Intelligence
+AST-level knowledge graph for analyzing code context, symbols, and call chains
+Integrates with GitNexus for advanced code intelligence (optional)
+
+Usage:
+  openclaw-brain-code analyze <repo-path> [--output <json>] [--gitnexus]
+  openclaw-brain-code symbols <repo-path> [--pattern <regex>]
+  openclaw-brain-code calls <repo-path> <symbol> [--depth <n>]
+  openclaw-brain-code impact <repo-path> <file> [--scope]
+  openclaw-brain-code export <repo-path> <output-json>
+"""
+
+import sys
+import os
+import json
+import ast
+import re
+from pathlib import Path
+from typing import Dict, List, Set, Optional, Tuple, Any
+from collections import defaultdict
+from datetime import datetime
+import argparse
+import subprocess
+
+
+class CodeIntelligence:
+    """AST-based code intelligence for Python/JS/TS codebases"""
+    
+    def __init__(self, repo_path: str, verbose: bool = False):
+        self.repo_path = Path(repo_path)
+        self.verbose = verbose
+        self.symbols: Dict[str, List[Dict]] = defaultdict(list)
+        self.call_graph: Dict[str, Set[str]] = defaultdict(set)
+        self.file_graph: Dict[str, Set[str]] = defaultdict(set)
+        self.imports: Dict[str, Set[str]] = defaultdict(set)
+    
+    def _log(self, msg: str):
+        if self.verbose:
+            print(f"[code] {msg}", file=sys.stderr)
+    
+    def analyze(self) -> Dict[str, Any]:
+        """Analyze codebase and build symbol/call graphs"""
+        self._log(f"Analyzing codebase: {self.repo_path}")
+        
+        # Find all Python files
+        py_files = list(self.repo_path.rglob("*.py"))
+        js_files = list(self.repo_path.rglob("*.js")) + list(self.repo_path.rglob("*.ts")) + list(self.repo_path.rglob("*.tsx"))
+        
+        self._log(f"Found {len(py_files)} Python files and {len(js_files)} JS/TS files")
+        
+        # Analyze Python files
+        for py_file in py_files[:100]:  # Limit to first 100
+            self._analyze_python_file(py_file)
+        
+        # Build call graph
+        self._build_call_graph()
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "repo_path": str(self.repo_path),
+            "symbols_count": len(self.symbols),
+            "files_count": len(py_files) + len(js_files),
+            "symbols": dict(self.symbols),
+            "call_graph": {k: list(v) for k, v in self.call_graph.items()},
+            "imports": {k: list(v) for k, v in self.imports.items()}
+        }
+    
+    def _analyze_python_file(self, file_path: Path):
+        """Analyze a Python file for symbols and imports"""
+        try:
+            content = file_path.read_text(encoding='utf-8', errors='ignore')
+            tree = ast.parse(content)
+            
+            rel_path = str(file_path.relative_to(self.repo_path))
+            self._log(f"Analyzing: {rel_path}")
+            
+            for node in ast.walk(tree):
+                # Extract class definitions
+                if isinstance(node, ast.ClassDef):
+                    self.symbols[node.name].append({
+                        "type": "class",
+                        "file": rel_path,
+                        "lineno": node.lineno,
+                        "methods": [
+                            m.name for m in node.body
+                            if isinstance(m, ast.FunctionDef)
+                        ]
+                    })
+                
+                # Extract function definitions
+                elif isinstance(node, ast.FunctionDef):
+                    self.symbols[node.name].append({
+                        "type": "function",
+                        "file": rel_path,
+                        "lineno": node.lineno,
+                        "args": [arg.arg for arg in node.args.args[:10]]  # First 10 args
+                    })
+                
+                # Extract imports
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        self.imports[rel_path].add(alias.name)
+                
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        self.imports[rel_path].add(node.module)
+        
+        except SyntaxError as e:
+            self._log(f"Syntax error in {file_path}: {e}")
+        except Exception as e:
+            self._log(f"Error analyzing {file_path}: {e}")
+    
+    def _build_call_graph(self):
+        """Build call graph from symbol definitions"""
+        # Simple approach: functions in same file form implicit call graph
+        file_functions = defaultdict(list)
+        
+        for symbol_name, occurrences in self.symbols.items():
+            for occ in occurrences:
+                if occ["type"] == "function":
+                    file_functions[occ["file"]].append(symbol_name)
+        
+        # Create edges: all functions in same file can call each other
+        for file_path, functions in file_functions.items():
+            for func in functions:
+                for other_func in functions:
+                    if func != other_func:
+                        self.call_graph[func].add(other_func)
+    
+    def get_symbols(self, pattern: Optional[str] = None) -> List[Dict]:
+        """Get all symbols, optionally filtered by pattern"""
+        results = []
+        
+        for symbol_name, occurrences in self.symbols.items():
+            if pattern and not re.search(pattern, symbol_name, re.IGNORECASE):
+                continue
+            
+            results.append({
+                "name": symbol_name,
+                "occurrences": occurrences,
+                "count": len(occurrences)
+            })
+        
+        return sorted(results, key=lambda x: x["count"], reverse=True)
+    
+    def get_call_chain(self, symbol: str, depth: int = 3) -> Dict[str, Any]:
+        """Get call chain for a symbol (what calls it, what it calls)"""
+        
+        # Find callers
+        callers = []
+        for caller, callees in self.call_graph.items():
+            if symbol in callees:
+                callers.append(caller)
+        
+        # Find callees
+        callees = list(self.call_graph.get(symbol, []))
+        
+        return {
+            "symbol": symbol,
+            "callers": callers,
+            "callees": callees,
+            "call_graph_depth": depth
+        }
+    
+    def get_impact(self, file_path: str) -> Dict[str, Any]:
+        """Get impact analysis for a file change"""
+        
+        file_rel = str(Path(file_path).relative_to(self.repo_path))
+        
+        # Find all symbols in this file
+        symbols_in_file = []
+        for symbol_name, occurrences in self.symbols.items():
+            for occ in occurrences:
+                if occ["file"] == file_rel:
+                    symbols_in_file.append(symbol_name)
+        
+        # Find all files that import from this file
+        dependents = []
+        for other_file, imports in self.imports.items():
+            # Check if imports from this file
+            if any(file_rel in imp for imp in imports):
+                dependents.append(other_file)
+        
+        # Find all symbols that might be affected
+        affected_symbols = set()
+        for symbol in symbols_in_file:
+            affected_symbols.add(symbol)
+            # Add callers of this symbol
+            for caller, callees in self.call_graph.items():
+                if symbol in callees:
+                    affected_symbols.add(caller)
+        
+        return {
+            "file": file_rel,
+            "symbols_in_file": symbols_in_file,
+            "dependent_files": dependents,
+            "affected_symbols": list(affected_symbols),
+            "impact_radius": {
+                "files": len(dependents),
+                "symbols": len(affected_symbols)
+            }
+        }
+
+
+class GitNexusIntegration:
+    """Integration with GitNexus for advanced code intelligence"""
+    
+    def __init__(self, repo_path: str, verbose: bool = False):
+        self.repo_path = Path(repo_path)
+        self.verbose = verbose
+    
+    def _log(self, msg: str):
+        if self.verbose:
+            print(f"[gitnexus] {msg}", file=sys.stderr)
+    
+    def has_gitnexus(self) -> bool:
+        """Check if gitnexus is installed"""
+        try:
+            subprocess.run(
+                ["npx", "gitnexus", "--version"],
+                capture_output=True,
+                timeout=5
+            )
+            return True
+        except:
+            return False
+    
+    def analyze(self) -> Optional[Dict]:
+        """Run gitnexus analysis if available"""
+        if not self.has_gitnexus():
+            self._log("GitNexus not installed (npm install -g gitnexus)")
+            return None
+        
+        self._log("Running GitNexus analysis...")
+        
+        try:
+            result = subprocess.run(
+                ["npx", "gitnexus", "analyze", "."],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                # Parse output (format depends on gitnexus)
+                return {
+                    "gitnexus_available": True,
+                    "analysis": result.stdout[:5000]  # First 5k chars
+                }
+            else:
+                self._log(f"GitNexus analysis failed: {result.stderr}")
+                return None
+        
+        except Exception as e:
+            self._log(f"Error running GitNexus: {e}")
+            return None
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Code intelligence analysis"
+    )
+    
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    
+    # Analyze subcommand
+    analyze_parser = subparsers.add_parser("analyze", help="Analyze codebase")
+    analyze_parser.add_argument("repo_path")
+    analyze_parser.add_argument("--output", help="Output JSON file")
+    analyze_parser.add_argument("--gitnexus", action="store_true", help="Include GitNexus analysis")
+    
+    # Symbols subcommand
+    symbols_parser = subparsers.add_parser("symbols", help="List symbols")
+    symbols_parser.add_argument("repo_path")
+    symbols_parser.add_argument("--pattern", help="Filter by regex pattern")
+    
+    # Calls subcommand
+    calls_parser = subparsers.add_parser("calls", help="Get call chain")
+    calls_parser.add_argument("repo_path")
+    calls_parser.add_argument("symbol")
+    calls_parser.add_argument("--depth", type=int, default=3, help="Call depth")
+    
+    # Impact subcommand
+    impact_parser = subparsers.add_parser("impact", help="Impact analysis")
+    impact_parser.add_argument("repo_path")
+    impact_parser.add_argument("file")
+    impact_parser.add_argument("--scope", action="store_true", help="Show full impact scope")
+    
+    # Export subcommand
+    export_parser = subparsers.add_parser("export", help="Export analysis")
+    export_parser.add_argument("repo_path")
+    export_parser.add_argument("output_json")
+    
+    # Global options
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    
+    args = parser.parse_args()
+    
+    try:
+        intelligence = CodeIntelligence(args.repo_path, verbose=args.verbose)
+        
+        if args.command == "analyze":
+            analysis = intelligence.analyze()
+            
+            # Add GitNexus if requested
+            if args.gitnexus:
+                gitnexus = GitNexusIntegration(args.repo_path, verbose=args.verbose)
+                gitnexus_result = gitnexus.analyze()
+                if gitnexus_result:
+                    analysis["gitnexus"] = gitnexus_result
+            
+            if args.output:
+                Path(args.output).write_text(json.dumps(analysis, indent=2))
+                print(f"Analysis written to: {args.output}")
+            else:
+                print(json.dumps(analysis, indent=2))
+        
+        elif args.command == "symbols":
+            intelligence.analyze()  # First analyze
+            symbols = intelligence.get_symbols(pattern=args.pattern)
+            print(json.dumps(symbols, indent=2))
+        
+        elif args.command == "calls":
+            intelligence.analyze()  # First analyze
+            chain = intelligence.get_call_chain(args.symbol, depth=args.depth)
+            print(json.dumps(chain, indent=2))
+        
+        elif args.command == "impact":
+            intelligence.analyze()  # First analyze
+            impact = intelligence.get_impact(args.file)
+            print(json.dumps(impact, indent=2))
+        
+        elif args.command == "export":
+            analysis = intelligence.analyze()
+            Path(args.output_json).write_text(json.dumps(analysis, indent=2))
+            print(f"Analysis exported to: {args.output_json}")
+        
+        return 0
+    
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

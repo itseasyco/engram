@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# openclaw-lacp-share — Multi-Agent Memory Sharing (Phase B stubs)
+#
+# Usage:
+#   openclaw-lacp-share list-available --from <agent>
+#   openclaw-lacp-share query --from <agent> --topic <topic>
+#   openclaw-lacp-share grant-access --agent <agent> --to <agent>
+#
+# Part of OpenClaw LACP v2.0.0 — Phase B (Multi-Agent Sharing)
+# These commands are stubs for future implementation.
+
+set -euo pipefail
+
+VERSION="2.0.0"
+SCRIPT_NAME="openclaw-lacp-share"
+
+# Colors
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log_info()  { echo -e "${BLUE}[info]${NC} $*"; }
+log_warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
+
+usage() {
+    cat <<EOF
+${SCRIPT_NAME} v${VERSION} — Multi-Agent Memory Sharing (Phase B)
+
+NOTE: These commands are stubs for Phase B implementation.
+
+COMMANDS:
+  list-available   List shared memory available from an agent
+  query            Query shared facts from another agent
+  grant-access     Grant memory access between agents
+
+OPTIONS:
+  --from <agent>     Source agent name
+  --to <agent>       Target agent name
+  --agent <agent>    Agent name
+  --topic <topic>    Topic to query
+  --help             Show this help
+
+EXAMPLES:
+  $SCRIPT_NAME list-available --from wren
+  $SCRIPT_NAME query --from wren --topic "settlement"
+  $SCRIPT_NAME grant-access --agent wren --to zoe
+EOF
+    exit 0
+}
+
+stub_message() {
+    local command="$1"
+    echo ""
+    log_warn "Command '${command}' is a Phase B stub"
+    echo "  This feature will be implemented in OpenClaw LACP v2.1.0"
+    echo "  See: docs/v2-lcm-integration.md for the roadmap"
+    echo ""
+    echo "  Phase B will include:"
+    echo "    - Cross-agent memory queries"
+    echo "    - Granular access control"
+    echo "    - Shared fact deduplication"
+    echo "    - Agent trust scoring"
+    echo ""
+    exit 0
+}
+
+cmd_list_available() {
+    local from=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from="$2"; shift 2 ;;
+            *)      shift ;;
+        esac
+    done
+    log_info "list-available from=${from:-unspecified}"
+    stub_message "list-available"
+}
+
+cmd_query() {
+    local from="" topic=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from)  from="$2"; shift 2 ;;
+            --topic) topic="$2"; shift 2 ;;
+            *)       shift ;;
+        esac
+    done
+    log_info "query from=${from:-unspecified} topic=${topic:-unspecified}"
+    stub_message "query"
+}
+
+cmd_grant_access() {
+    local agent="" to=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --agent) agent="$2"; shift 2 ;;
+            --to)    to="$2"; shift 2 ;;
+            *)       shift ;;
+        esac
+    done
+    log_info "grant-access agent=${agent:-unspecified} to=${to:-unspecified}"
+    stub_message "grant-access"
+}
+
+# --- Main ---
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        list-available)  cmd_list_available "$@" ;;
+        query)           cmd_query "$@" ;;
+        grant-access)    cmd_grant_access "$@" ;;
+        --help|-h)       usage ;;
+        --version|-v)    echo "${SCRIPT_NAME} v${VERSION}" ;;
+        *)
+            log_warn "Unknown command: $command"
+            usage
+            ;;
+    esac
+}
+
+main "$@"

@@ -1,81 +1,281 @@
-# OpenClaw LACP Fusion Plugin
+# OpenClaw LACP Fusion
 
-A complete, production-ready plugin system for OpenClaw that brings **LACP (Local Agent Control Plane)** capabilities — execution hooks, policy gates, session memory, and evidence verification.
+Persistent 5-layer memory, execution safety, and cryptographic provenance for OpenClaw agents.
 
-> **Based on:** [LACP by 0xNyk](https://github.com/0xNyk/lacp) — adapted and extended for OpenClaw integration
+OpenClaw LACP Fusion is a plugin that brings the [LACP (Local Agent Control Plane)](https://github.com/0xNyk/lacp) architecture into OpenClaw. It gives your agents session memory that persists across conversations, a knowledge graph backed by Obsidian, safety hooks that block dangerous operations, and a tamper-proof provenance chain for every session.
 
-## Features
+## What You Get
 
-### 🔐 Execution Hooks (Phase 1)
-- **session-start** — Git context injection at execution start
-- **pretool-guard** — Blocks dangerous patterns (npm publish, rm -rf, chmod 777, etc.)
-- **stop-quality-gate** — Detects incomplete work (TODOs, test failures, rationalizations)
-- **write-validate** — Validates YAML frontmatter schema on file writes
+- **Session memory** — Per-project, per-agent memory that survives across sessions (5 structured files + git-tracked changes)
+- **Knowledge graph** — Obsidian vault integration for persistent, queryable knowledge
+- **Ingestion pipeline** — Convert URLs, transcripts, and files into structured notes automatically
+- **Code intelligence** — Optional AST-level code analysis via GitNexus
+- **Cryptographic provenance** — SHA-256 hash-chained session history for audit trails
+- **Execution safety** — Hooks that block dangerous commands, enforce quality gates, and validate writes
+- **Policy routing** — 3-tier risk model (safe/review/critical) with cost ceilings and approval gates
 
-### 🛡️ Policy Gates (Phase 2)
-- **Risk-based routing** — Tasks categorized into safe/review/critical tiers
-- **Cost ceilings** — Per-tier spending limits ($1/$10/$100)
-- **Approval caching** — TTL-based approval tracking (30 min default)
-- **Gated execution** — Policy enforcement before task execution
+## v2.0.0 — LCM Bidirectional Integration
 
-### 💾 Session Memory (Phase 3)
-- **Per-project sessions** — Isolated memory per project/agent/session
-- **Execution logging** — JSON metadata (cost, gate decisions, exit codes)
-- **Git history** — Each session gets independent git repo for change tracking
+v2.0.0 adds a bidirectional bridge between LACP persistent memory and LCM session context:
 
-### ✅ Evidence Verification (Phase 4)
-- **Task schemas** — Define task structure and success criteria
-- **Harness contracts** — Specify verification mode (test-based, LLM, heuristic)
-- **Evidence collection** — Artifacts, logs, execution time
-- **Verification engine** — Hybrid mode with all three methods simultaneously
+- **Context injection** — Inject relevant LACP facts into new sessions (`openclaw-lacp-context inject`)
+- **Promotion scoring** — Auto-score and promote high-value LCM facts to LACP (`openclaw-lacp-promote`)
+- **Cross-references** — Bidirectional links between LCM summaries and LACP vault notes
+- **Graph enrichment** — Sync promoted facts to Obsidian graph (`openclaw-brain-graph sync --from-lcm`)
+- **Multi-agent sharing** — Phase B stubs for cross-agent memory queries (`openclaw-lacp-share`)
+
+See [docs/v2-lcm-integration.md](docs/v2-lcm-integration.md) for the full architecture.
 
 ## Quick Start
 
-### Installation
-
 ```bash
-# Download latest release
-wget https://github.com/itseasyco/openclaw-lacp-fusion/releases/download/v1.0.0/openclaw-lacp-fusion-1.0.0.zip
-
-# Extract and install
-unzip openclaw-lacp-fusion-1.0.0.zip
+# Install
+git clone https://github.com/itseasyco/openclaw-lacp-fusion.git
 cd openclaw-lacp-fusion
 bash INSTALL.sh
 
-# Verify
-python3 -m pytest ~/.openclaw/plugins/openclaw-lacp-fusion/hooks/tests/ -v
-```
+# Initialize memory for a project
+~/.openclaw/plugins/openclaw-lacp-fusion/bin/openclaw-memory-init \
+  --project my-project --agent my-agent --session session-001
 
-### Select a Profile
+# Check what was created
+ls ~/.openclaw/data/project-sessions/my-project/my-agent/session-001/
+# → MEMORY.md  debugging.md  patterns.md  architecture.md  preferences.md  context.json
 
-```bash
+# Select a safety profile
 echo "balanced" > ~/.openclaw/plugins/openclaw-lacp-fusion/.profile
 ```
 
-Options: `minimal-stop` (dev), `balanced` (recommended), `hardened-exec` (production)
+## Core Concepts
 
-### Test It
+### The 5 Memory Layers
+
+| Layer | What It Does | Key Tool |
+|---|---|---|
+| **1. Session Memory** | Per-project files that persist across agent sessions | `openclaw-memory-init` |
+| **2. Knowledge Graph** | Obsidian vault for structured, linked knowledge | `openclaw-brain-graph` |
+| **3. Ingestion** | Converts sources (URLs, transcripts, files) into notes | `openclaw-brain-ingest` |
+| **4. Code Intelligence** | AST analysis of your codebase (optional) | `openclaw-brain-code` |
+| **5. Provenance** | SHA-256 hash chain proving session continuity | `openclaw-provenance` |
+
+### Execution Hooks
+
+Four hooks run automatically during agent sessions:
+
+| Hook | When | What |
+|---|---|---|
+| **session-start** | Session begins | Injects git context (branch, recent commits, modified files, test command) |
+| **pretool-guard** | Before tool use | Blocks dangerous patterns (npm publish, rm -rf, chmod 777, data exfiltration) |
+| **stop-quality-gate** | Agent tries to stop | Detects incomplete work, rationalization, uncaught test failures |
+| **write-validate** | File write | Validates YAML frontmatter on knowledge base files |
+
+### Safety Profiles
+
+| Profile | Hooks Enabled | Use Case |
+|---|---|---|
+| `minimal-stop` | stop-quality-gate | Quick dev work, low-risk tasks |
+| `balanced` | session-start + stop-quality-gate | General development (recommended) |
+| `hardened-exec` | All 4 hooks | Production, high-security operations |
+
+### Policy Routing
+
+Tasks are classified into risk tiers with automatic enforcement:
+
+| Tier | Cost Ceiling | Approval | Example |
+|---|---|---|---|
+| **safe** | $1.00 | None | Run tests, lint code |
+| **review** | $10.00 | TTL-cached approval | Deploy to staging |
+| **critical** | $100.00 | Per-run confirmation | Production migration |
+
+## Usage Examples
+
+### Initialize Project Memory
 
 ```bash
-# Check policy routing
-~/.openclaw/plugins/openclaw-lacp-fusion/bin/openclaw-route \
-  --agent wren --channel webchat --task "git commit"
-
-# Run gated execution
-~/.openclaw/plugins/openclaw-lacp-fusion/bin/openclaw-gated-run \
-  --task "Test run" --agent wren --channel webchat --estimated-cost-usd 0.01 \
-  -- echo "Hello from gated execution"
+openclaw-memory-init --project my-app --agent zoe --session dev-001
 ```
 
-## Documentation
+Creates 5 seed files in `~/.openclaw/data/project-sessions/my-app/zoe/dev-001/`:
+- `MEMORY.md` — Project-level memory and context
+- `debugging.md` — Common issues and solutions
+- `patterns.md` — Code patterns and conventions
+- `architecture.md` — System design decisions
+- `preferences.md` — Team and tooling preferences
 
-| Document | Purpose |
-|----------|---------|
-| [COMPLETE-GUIDE.md](./docs/COMPLETE-GUIDE.md) | Full user guide (800+ lines) |
-| [DEPLOYMENT-TO-OPENCLAW.md](./docs/DEPLOYMENT-TO-OPENCLAW.md) | Integration steps |
-| [MEMORY-SCAFFOLDING.md](./docs/MEMORY-SCAFFOLDING.md) | Memory system architecture |
-| [POLICY-GUIDE.md](./docs/POLICY-GUIDE.md) | Policy configuration |
-| [ROUTING-REFERENCE.md](./docs/ROUTING-REFERENCE.md) | Routing engine details |
+### Ingest Knowledge
+
+```bash
+# Ingest a URL into your knowledge graph
+openclaw-brain-ingest --url "https://docs.example.com/api" --title "API Reference" --apply --json
+
+# Ingest a local file
+openclaw-brain-ingest --file ./meeting-notes.md --title "Sprint Planning" --apply --json
+```
+
+### Query Knowledge Graph
+
+```bash
+# Explore your knowledge graph
+openclaw-brain-graph --query "authentication flow" --json
+
+# Expand knowledge connections
+openclaw-brain-graph --expand --apply --json
+```
+
+### Run Gated Execution
+
+```bash
+# Safe task — runs immediately
+openclaw-gated-run \
+  --task "Run tests" --agent zoe --channel engineering \
+  --estimated-cost-usd 0.50 -- npm test
+
+# Review task — checks approval cache
+openclaw-gated-run \
+  --task "Deploy to staging" --agent zoe --channel engineering \
+  --estimated-cost-usd 5.00 -- ./deploy-staging.sh
+
+# Critical task — requires explicit confirmation
+openclaw-gated-run \
+  --task "Production migration" --agent zoe --channel engineering \
+  --estimated-cost-usd 50.00 --confirm-budget -- ./migrate-production.sh
+```
+
+### Check Policy Routing
+
+```bash
+openclaw-route --agent zoe --channel engineering --task "deploy to production"
+# → {"tier": "critical", "cost_ceiling_usd": 100.00, "approval_required": true, ...}
+```
+
+### Verify Provenance
+
+```bash
+# View provenance chain
+openclaw-provenance --project my-app --agent zoe --show
+
+# Verify chain integrity
+openclaw-provenance --project my-app --agent zoe --verify
+```
+
+### Log Execution Results
+
+```bash
+openclaw-memory-append \
+  --project my-app --agent zoe --session dev-001 \
+  --cost 2.50 --exit-code 0 \
+  --learnings "Deployed v2.1.0 — zero downtime migration worked"
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENCLAW_HOME` | `~/.openclaw` | Plugin installation root |
+| `OPENCLAW_VAULT_ROOT` | `/Volumes/Cortex` | Obsidian vault root for knowledge graph |
+| `OPENCLAW_KNOWLEDGE_ROOT` | `~/.openclaw/knowledge` | Knowledge file directory |
+| `OPENCLAW_HOOKS_PROFILE` | `balanced` | Active safety profile |
+| `OPENCLAW_SESSION_ID` | (auto-generated) | Session identifier for approval caching |
+| `OPENCLAW_WRITE_VALIDATE_PATHS` | (none) | Colon-separated paths for write validation |
+| `OPENCLAW_TAXONOMY_PATH` | (none) | Path to taxonomy.json for category validation |
+| `QUALITY_GATE_DEBUG` | `false` | Enable quality gate debug logging |
+| `QUALITY_GATE_MAX_BLOCKS` | `3` | Circuit breaker — max blocks before allowing stop |
+
+### Data Directories
+
+```
+~/.openclaw/
+├── plugins/openclaw-lacp-fusion/
+│   ├── hooks/handlers/          # Hook implementations
+│   ├── hooks/profiles/          # Safety profile configs
+│   ├── bin/                     # CLI tools
+│   ├── data/approval-cache/     # TTL approval tokens
+│   ├── data/project-sessions/   # Per-project memory
+│   └── logs/                    # Execution audit logs
+└── data/project-sessions/       # Session memory storage
+```
+
+## CLI Reference
+
+| Command | Description |
+|---|---|
+| `openclaw-memory-init` | Initialize per-project session memory (5 seed files + git) |
+| `openclaw-memory-append` | Log execution results to session memory |
+| `openclaw-brain-ingest` | Ingest URLs, files, or transcripts into knowledge graph |
+| `openclaw-brain-graph` | Query and expand knowledge graph |
+| `openclaw-brain-code` | Code intelligence and AST analysis |
+| `openclaw-brain-stack` | Manage the full memory stack (init, audit, scaffold, status) |
+| `openclaw-provenance` | View and verify cryptographic session provenance |
+| `openclaw-agent-id` | Manage persistent agent identity |
+| `openclaw-route` | Check policy routing for a task |
+| `openclaw-gated-run` | Execute a command with policy enforcement |
+| `openclaw-verify` | Verify task completion (heuristic, test-based, LLM, or hybrid) |
+
+All commands support `--help` and `--json` output.
+
+For detailed usage, see [docs/COMPLETE-GUIDE.md](./docs/COMPLETE-GUIDE.md).
+
+## Monitoring & Audit
+
+All gated executions are logged to `logs/gated-runs.jsonl`:
+
+```bash
+# Watch executions in real-time
+tail -f ~/.openclaw/plugins/openclaw-lacp-fusion/logs/gated-runs.jsonl | jq .
+
+# Find blocked executions
+grep '"blocked"' ~/.openclaw/plugins/openclaw-lacp-fusion/logs/gated-runs.jsonl | jq .
+```
+
+## Troubleshooting
+
+### Obsidian vault not found
+
+Set `OPENCLAW_VAULT_ROOT` to your vault path:
+
+```bash
+export OPENCLAW_VAULT_ROOT="$HOME/Documents/MyVault"
+```
+
+The knowledge graph features work without Obsidian — they just store notes as markdown files in `OPENCLAW_KNOWLEDGE_ROOT`.
+
+### Memory directory permissions
+
+```bash
+# Fix permissions
+chmod -R 755 ~/.openclaw/data/project-sessions/
+chmod -R 755 ~/.openclaw/plugins/openclaw-lacp-fusion/
+```
+
+### Hook not executing
+
+1. Check your active profile: `cat ~/.openclaw/plugins/openclaw-lacp-fusion/.profile`
+2. Verify the hook is enabled in that profile (e.g., `minimal-stop` only enables stop-quality-gate)
+3. Check handler files exist: `ls ~/.openclaw/plugins/openclaw-lacp-fusion/hooks/handlers/`
+
+### Quality gate keeps blocking
+
+The quality gate has a circuit breaker — after 3 blocks in the same session, it allows stop. If you need to override:
+
+```bash
+export QUALITY_GATE_MAX_BLOCKS=1
+```
+
+### Tests fail after installation
+
+```bash
+# Check prerequisites
+python3 --version   # Need 3.9+
+bash --version      # Need 5.0+
+git --version       # Any version
+
+# Run tests with verbose output
+python3 -m pytest ~/.openclaw/plugins/openclaw-lacp-fusion/hooks/tests/ -v --tb=long
+```
+
+For more, see [plugin/hooks/TROUBLESHOOTING.md](./plugin/hooks/TROUBLESHOOTING.md).
 
 ## Requirements
 
@@ -84,182 +284,37 @@ Options: `minimal-stop` (dev), `balanced` (recommended), `hardened-exec` (produc
 - **Bash:** 5.0+
 - **Git:** Any version
 
-All prerequisites are checked automatically during installation.
-
-## Architecture
-
-```
-OpenClaw LACP Fusion
-├── Phase 1: Hooks
-│   ├── session-start.py       Git context injection
-│   ├── pretool-guard.py       Dangerous pattern blocking
-│   ├── stop-quality-gate.py   Quality gate enforcement
-│   └── write-validate.py      Schema validation
-├── Phase 2: Policy
-│   ├── risk-policy.json       Tier + routing rules
-│   └── openclaw-route         Routing engine
-├── Phase 3: Memory
-│   ├── openclaw-memory-init   Memory initialization
-│   └── openclaw-memory-append Execution logging
-└── Phase 4: Verification
-    ├── task-schema.json       Task definition spec
-    └── openclaw-verify        Verification engine
-```
-
-## Quality Metrics
-
-| Metric | Value |
-|--------|-------|
-| **Tests** | 122/122 passing (100%) |
-| **Documentation** | 2,650+ lines |
-| **Code Quality** | Production-grade |
-| **Security** | Full audit logging + pattern blocking |
-| **Installation** | One-command setup |
-
-## Usage Examples
-
-### Gated Execution
-
-```bash
-# Safe task (no approval needed)
-openclaw-gated-run \
-  --task "Run tests" \
-  --agent zoe \
-  --channel engineering \
-  --estimated-cost-usd 0.50 \
-  -- npm test
-
-# Review task (needs approval)
-openclaw-gated-run \
-  --task "Deploy to staging" \
-  --agent zoe \
-  --channel engineering \
-  --estimated-cost-usd 5.00 \
-  -- ./deploy-staging.sh
-
-# Critical task (needs confirmation)
-openclaw-gated-run \
-  --task "Production migration" \
-  --agent zoe \
-  --channel engineering \
-  --estimated-cost-usd 50.00 \
-  --confirm-budget \
-  -- ./migrate-production.sh
-```
-
-### Session Memory
-
-```bash
-# Initialize new project session
-openclaw-memory-init \
-  --project "my-project" \
-  --agent "zoe" \
-  --session "session-001"
-
-# Append execution results
-openclaw-memory-append \
-  --project "my-project" \
-  --agent "zoe" \
-  --session "session-001" \
-  --cost 2.50 \
-  --exit-code 0 \
-  --learnings "Successfully deployed new feature"
-```
-
-## Monitoring & Audit
-
-All executions logged to `logs/gated-runs.jsonl`:
-
-```bash
-# Tail execution log
-tail -f ~/.openclaw/plugins/openclaw-lacp-fusion/logs/gated-runs.jsonl | jq .
-
-# Find blocked executions
-grep '"gate_decisions":{"blocked":true}' ~/.openclaw/plugins/openclaw-lacp-fusion/logs/gated-runs.jsonl | jq .
-```
+All prerequisites are checked automatically by `INSTALL.sh`.
 
 ## Testing
 
 ```bash
-# Run full test suite
-python3 -m pytest tests/ -v
-
-# Run specific phase
-python3 -m pytest tests/test_phase1_hooks.py -v
+# Full test suite (122 tests)
+python3 -m pytest ~/.openclaw/plugins/openclaw-lacp-fusion/hooks/tests/ -v
 
 # Coverage report
 python3 -m pytest tests/ --cov=. --cov-report=html
 ```
 
-**Current Status:** 122/122 tests passing ✅
+## Documentation
 
-## Troubleshooting
-
-### "Policy gate blocked my task"
-- Check logs: `tail -f logs/gated-runs.jsonl`
-- Verify routing: `bin/openclaw-route --agent <name> --channel <name> --task "<desc>"`
-- Check cost ceiling: Increase or use `--confirm-budget`
-
-### "Hook not executing"
-- Verify profile: `cat ~/.openclaw/plugins/openclaw-lacp-fusion/.profile`
-- Check handler: `ls ~/.openclaw/plugins/openclaw-lacp-fusion/hooks/handlers/`
-- Run tests: `python3 -m pytest tests/`
-
-### "Tests fail after installation"
-- Check environment: `python3 --version`, `bash --version`
-- Check permissions: `ls -la ~/.openclaw/plugins/openclaw-lacp-fusion/`
-- See full error: `python3 -m pytest --tb=long`
+| Document | Description |
+|---|---|
+| [COMPLETE-GUIDE.md](./docs/COMPLETE-GUIDE.md) | Full user guide with all features |
+| [POLICY-GUIDE.md](./docs/POLICY-GUIDE.md) | Policy configuration reference |
+| [MEMORY-LAYERS-COMPLETE.md](./docs/MEMORY-LAYERS-COMPLETE.md) | Deep dive on 5 memory layers |
+| [ROUTING-REFERENCE.md](./docs/ROUTING-REFERENCE.md) | Routing engine details |
+| [DEPLOYMENT-TO-OPENCLAW.md](./docs/DEPLOYMENT-TO-OPENCLAW.md) | Integration steps |
+| [FEATURE-PARITY.md](./FEATURE-PARITY.md) | LACP feature parity audit |
 
 ## Contributing
 
-We welcome contributions! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Write tests for your changes
-4. Ensure all tests pass (`python3 -m pytest tests/ -v`)
-5. Submit a pull request
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, code style, and PR process.
 
 ## License
 
-MIT License — See [LICENSE](./LICENSE) file
-
-## Support
-
-- **Issues:** https://github.com/itseasyco/openclaw-lacp-fusion/issues
-- **Discord:** https://discord.com/invite/clawd
-- **Email:** plugins@openclaw.ai
-
-## Release History
-
-- **1.0.0** (2026-03-18) — Initial release
-  - All 4 phases complete
-  - 122 tests passing
-  - Production ready
-
-## Credits
-
-Built by OpenClaw Community through 11 parallel agents (Phases 1-4) in ~2.5 hours.
-
-- **Phase 1 (Hooks):** Agents A-E
-- **Phase 2 (Policy):** Agents F-H
-- **Phase 3-4 (Memory/Evidence):** Agents I-K
-
----
-
-**Ready to install?** Download the [latest release](https://github.com/itseasyco/openclaw-lacp-fusion/releases) and run `bash INSTALL.sh`
-
-**Want to contribute?** Fork this repo and submit a PR!
-
-**Questions?** See [COMPLETE-GUIDE.md](./docs/COMPLETE-GUIDE.md) or file an issue
-
----
+MIT License — see [LICENSE](./LICENSE).
 
 ## Attribution
 
-This plugin is based on the original [LACP](https://github.com/0xNyk/lacp) project by [0xNyk](https://github.com/0xNyk). 
-
-**Key contributions:**
-- Original LACP architecture and concepts from 0xNyk
-- OpenClaw plugin adaptation, hooks system, and extensions by the Easy Labs + OpenClaw Community team
-- All phases (1-4) built and tested for OpenClaw v0.23.0+
+Based on [LACP](https://github.com/0xNyk/lacp) by [0xNyk](https://github.com/0xNyk). Original architecture and concepts from LACP; adapted and extended for OpenClaw by the Easy Labs + OpenClaw Community team.

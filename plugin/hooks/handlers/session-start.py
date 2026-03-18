@@ -254,6 +254,78 @@ def _format_git_context(git_ctx: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def _inject_lacp_context() -> str | None:
+    """Inject top LACP facts via openclaw-lacp-context auto-inject.
+
+    Calls the CLI to get top-3 relevant facts from LACP persistent memory
+    and returns them as a formatted context string.
+    """
+    # Determine project name from git remote or cwd
+    project = None
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+            cwd=os.getcwd(),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # Extract repo name from URL
+            url = result.stdout.strip()
+            project = url.rstrip("/").split("/")[-1].replace(".git", "")
+    except Exception:
+        pass
+
+    if not project:
+        project = Path(os.getcwd()).name
+
+    # Find the context CLI
+    plugin_bin = Path(__file__).parent.parent / "bin" if Path(__file__).parent.name == "handlers" else None
+    if not plugin_bin:
+        # Try relative to hooks dir
+        plugin_bin = Path(__file__).resolve().parent.parent / "bin"
+
+    context_cmd = plugin_bin / "openclaw-lacp-context" if plugin_bin else None
+
+    if not context_cmd or not context_cmd.exists():
+        # Try in PATH
+        try:
+            subprocess.run(["which", "openclaw-lacp-context"],
+                           capture_output=True, check=True, timeout=3)
+            context_cmd_str = "openclaw-lacp-context"
+        except Exception:
+            return None
+    else:
+        context_cmd_str = str(context_cmd)
+
+    session_id = os.getenv("OPENCLAW_SESSION_ID", os.getenv("CLAUDE_SESSION_ID", "default"))
+
+    try:
+        result = subprocess.run(
+            [context_cmd_str, "auto-inject",
+             "--project", project,
+             "--max-facts", "3",
+             "--session-id", session_id,
+             "--format", "text"],
+            capture_output=True, text=True, timeout=10,
+            cwd=os.getcwd(),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            facts = result.stdout.strip()
+            if facts:
+                lines = ["=== LACP Memory Context ===",
+                         f"Project: {project}",
+                         ""]
+                for line in facts.split("\n"):
+                    if line.strip():
+                        lines.append(f"  • {line.strip()}")
+                lines.append("")
+                return "\n".join(lines)
+    except Exception:
+        pass
+
+    return None
+
+
 def main() -> None:
     payload = _read_payload()
     matcher = payload.get("matcher", "")
@@ -270,6 +342,11 @@ def main() -> None:
     if test_cmd:
         parts.append(f"\nTest command detected: {test_cmd}")
         _cache_test_command(test_cmd)
+
+    # LACP context injection (v2.0.0) — inject top-3 relevant facts
+    lacp_ctx = _inject_lacp_context()
+    if lacp_ctx:
+        parts.append(f"\n{lacp_ctx}")
 
     # Compact-specific reminder (for sessions resuming after compaction)
     if matcher == "compact":

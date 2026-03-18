@@ -1,0 +1,180 @@
+{
+  "id": "openclaw-lacp-fusion",
+  "version": "2.0.0",
+  "description": "Local Agent Control Plane — hooks, policy gates, memory scaffolding, knowledge graph, code intelligence, and provenance tracking",
+  "author": "Easy Labs",
+  "license": "MIT",
+  "repository": "https://github.com/openclaw/plugins/openclaw-lacp-fusion",
+  "uiHints": {
+    "profile": {
+      "label": "Safety Profile",
+      "help": "Hook profile to use: minimal-stop, balanced, or hardened-exec"
+    },
+    "obsidianVault": {
+      "label": "Obsidian Vault Path",
+      "help": "Path to your Obsidian knowledge vault (default: ~/obsidian/vault)"
+    },
+    "knowledgeRoot": {
+      "label": "Knowledge Root",
+      "help": "Directory for LACP knowledge graph data (default: ~/.openclaw/data/knowledge)"
+    },
+    "localFirst": {
+      "label": "Local-First Mode",
+      "help": "When true, all data stays on-device with no external sync (default: true)"
+    },
+    "codeGraphEnabled": {
+      "label": "Code Intelligence",
+      "help": "Enable AST analysis, call graphs, and impact analysis (default: false)"
+    },
+    "provenanceEnabled": {
+      "label": "Provenance Tracking",
+      "help": "Enable hash-chained cryptographic receipts for audit trails (default: true)"
+    },
+    "policyTier": {
+      "label": "Default Policy Tier",
+      "help": "Default risk tier for unmatched tasks: safe, review, or critical (default: review)"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "profile": {
+        "type": "string",
+        "enum": ["minimal-stop", "balanced", "hardened-exec"],
+        "default": "balanced"
+      },
+      "obsidianVault": {
+        "type": "string",
+        "default": "~/obsidian/vault"
+      },
+      "knowledgeRoot": {
+        "type": "string",
+        "default": "~/.openclaw/data/knowledge"
+      },
+      "automationRoot": {
+        "type": "string",
+        "default": "~/.openclaw/data/automation"
+      },
+      "localFirst": {
+        "type": "boolean",
+        "default": true
+      },
+      "codeGraphEnabled": {
+        "type": "boolean",
+        "default": false
+      },
+      "provenanceEnabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "policyTier": {
+        "type": "string",
+        "enum": ["safe", "review", "critical"],
+        "default": "review"
+      },
+      "costCeilingSafeUsd": {
+        "type": "number",
+        "minimum": 0,
+        "default": 1.0
+      },
+      "costCeilingReviewUsd": {
+        "type": "number",
+        "minimum": 0,
+        "default": 10.0
+      },
+      "costCeilingCriticalUsd": {
+        "type": "number",
+        "minimum": 0,
+        "default": 100.0
+      },
+      "approvalCacheTtlMinutes": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 30
+      }
+    }
+  },
+  "hooks": {
+    "session-start": {
+      "handler": "hooks/handlers/session-start.py",
+      "trigger": "session_initialization",
+      "description": "Inject git context and LACP memory at session start"
+    },
+    "pretool-guard": {
+      "handler": "hooks/handlers/pretool-guard.py",
+      "trigger": "pre_tool_use",
+      "description": "Block dangerous patterns before execution"
+    },
+    "stop-quality-gate": {
+      "handler": "hooks/handlers/stop-quality-gate.py",
+      "trigger": "agent_stop",
+      "description": "Detect incomplete work before agent reports done"
+    },
+    "write-validate": {
+      "handler": "hooks/handlers/write-validate.py",
+      "trigger": "file_write",
+      "description": "Validate schema and format before file writes"
+    }
+  },
+  "profiles": {
+    "minimal-stop": {
+      "description": "Lightweight: quality gate only",
+      "hooks": ["stop-quality-gate"]
+    },
+    "balanced": {
+      "description": "Recommended: session context + quality gate",
+      "hooks": ["session-start", "stop-quality-gate"]
+    },
+    "hardened-exec": {
+      "description": "Maximum safety: all hooks enabled",
+      "hooks": ["session-start", "pretool-guard", "stop-quality-gate", "write-validate"]
+    }
+  },
+  "slots": {
+    "safetyEngine": "openclaw-lacp-fusion"
+  },
+  "capabilities": [
+    "execution-hooks",
+    "risk-policy-routing",
+    "session-memory",
+    "knowledge-graph",
+    "code-intelligence",
+    "provenance-tracking",
+    "task-verification",
+    "context-injection"
+  ],
+  "requirements": {
+    "openclaw": ">=0.23.0",
+    "python": ">=3.9",
+    "bash": ">=5.0"
+  },
+  "dependencies": {
+    "optional": {
+      "obsidian": "Knowledge graph (Layer 2)",
+      "qmd": "Semantic search indexing",
+      "smart-connections": "MCP semantic search",
+      "gitnexus": "Advanced code intelligence (Layer 4)"
+    }
+  },
+  "bin": {
+    "openclaw-agent-id": "bin/openclaw-agent-id",
+    "openclaw-brain-code": "bin/openclaw-brain-code",
+    "openclaw-brain-doctor": "bin/openclaw-brain-doctor",
+    "openclaw-brain-expand": "bin/openclaw-brain-expand",
+    "openclaw-brain-graph": "bin/openclaw-brain-graph",
+    "openclaw-brain-ingest": "bin/openclaw-brain-ingest",
+    "openclaw-brain-stack": "bin/openclaw-brain-stack",
+    "openclaw-gated-run": "bin/openclaw-gated-run",
+    "openclaw-lacp-validate": "bin/openclaw-lacp-validate",
+    "openclaw-memory-append": "bin/openclaw-memory-append",
+    "openclaw-memory-init": "bin/openclaw-memory-init",
+    "openclaw-obsidian": "bin/openclaw-obsidian",
+    "openclaw-provenance": "bin/openclaw-provenance",
+    "openclaw-route": "bin/openclaw-route",
+    "openclaw-verify": "bin/openclaw-verify"
+  }
+}

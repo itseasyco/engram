@@ -1,0 +1,693 @@
+#!/usr/bin/env bash
+# openclaw-lacp-context — Inject LACP facts into LCM context windows
+#
+# Usage:
+#   openclaw-lacp-context inject --project <project> [--agent <agent>] [--depth <n>] [--topic <topic>]
+#   openclaw-lacp-context query --topic <topic> [--min-score <n>]
+#   openclaw-lacp-context list --project <project>
+#
+# Part of OpenClaw LACP v2.0.0 — LCM Bidirectional Integration
+
+set -eo pipefail
+
+VERSION="2.0.0"
+SCRIPT_NAME="openclaw-lacp-context"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Defaults
+VAULT_ROOT="${OPENCLAW_VAULT_ROOT:-$HOME/.openclaw/vault}"
+MEMORY_ROOT="${OPENCLAW_MEMORY_ROOT:-$HOME/.openclaw/memory}"
+INJECTION_LOG="${OPENCLAW_INJECTION_LOG:-$HOME/.openclaw/logs/injections.jsonl}"
+GATED_RUNS_LOG="${OPENCLAW_GATED_RUNS_LOG:-$HOME/.openclaw/logs/gated-runs.jsonl}"
+DEPTH=2
+MIN_SCORE=50
+MAX_FACTS=3
+OUTPUT_FORMAT="text"
+
+log_info()  { echo -e "${BLUE}[info]${NC} $*"; }
+log_ok()    { echo -e "${GREEN}[ok]${NC} $*"; }
+log_warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
+log_error() { echo -e "${RED}[error]${NC} $*" >&2; }
+
+usage() {
+    cat <<EOF
+${SCRIPT_NAME} v${VERSION} — Inject LACP facts into LCM context
+
+COMMANDS:
+  inject       Inject relevant LACP facts at session start
+  auto-inject  Auto-inject top-N facts (for session-start hook)
+  query        Query facts interactively by topic
+  list         List available contexts for a project
+  history      Show injection history
+
+OPTIONS:
+  --project <name>     Project name (e.g., easy-api)
+  --agent <name>       Agent name (e.g., wren)
+  --depth <n>          Traversal depth for graph links (default: 2)
+  --topic <topic>      Topic to filter by
+  --max-facts <n>      Max facts to inject (default: 3)
+  --min-score <n>      Minimum relevance score (default: 50)
+  --format <fmt>       Output format: text, json, markdown (default: text)
+  --session-id <id>    Session ID for tracking
+  --help               Show this help
+
+EXAMPLES:
+  $SCRIPT_NAME inject --project easy-api --agent wren --topic "embedded-checkout"
+  $SCRIPT_NAME auto-inject --project easy-api --max-facts 3 --session-id sess_abc
+  $SCRIPT_NAME query --topic "settlement" --min-score 75
+  $SCRIPT_NAME list --project easy-api
+  $SCRIPT_NAME history --project easy-api --since 2026-03-18
+EOF
+    exit 0
+}
+
+# Generate a project slug from name
+project_slug() {
+    echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-'
+}
+
+# Load Layer 1 facts (MEMORY.md, patterns, context.json)
+load_layer1_facts() {
+    local project="$1"
+    local topic="${2:-}"
+    local slug
+    slug=$(project_slug "$project")
+    local project_memory="${MEMORY_ROOT}/${slug}"
+    local facts=()
+
+    # Load MEMORY.md
+    local memory_file="${project_memory}/MEMORY.md"
+    if [[ -f "$memory_file" ]]; then
+        while IFS= read -r line; do
+            if [[ -n "$line" && ! "$line" =~ ^#  ]]; then
+                if [[ -z "$topic" ]] || grep -qi "$topic" <<< "$line" 2>/dev/null; then
+                    facts+=("$line")
+                fi
+            fi
+        done < "$memory_file"
+    fi
+
+    # Load patterns.md
+    local patterns_file="${project_memory}/patterns.md"
+    if [[ -f "$patterns_file" ]]; then
+        while IFS= read -r line; do
+            if [[ -n "$line" && ! "$line" =~ ^# ]]; then
+                if [[ -z "$topic" ]] || grep -qi "$topic" <<< "$line" 2>/dev/null; then
+                    facts+=("$line")
+                fi
+            fi
+        done < "$patterns_file"
+    fi
+
+    # Load context.json keys
+    local context_file="${project_memory}/context.json"
+    if [[ -f "$context_file" ]] && command -v jq &>/dev/null; then
+        local context_facts
+        context_facts=$(jq -r 'to_entries[] | "\(.key): \(.value)"' "$context_file" 2>/dev/null || true)
+        while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+                if [[ -z "$topic" ]] || grep -qi "$topic" <<< "$line" 2>/dev/null; then
+                    facts+=("$line")
+                fi
+            fi
+        done <<< "$context_facts"
+    fi
+
+    if [[ ${#facts[@]} -gt 0 ]]; then
+        printf '%s\n' "${facts[@]}"
+    fi
+}
+
+# Load Layer 2 links (Obsidian wikilinks)
+load_layer2_links() {
+    local project="$1"
+    local topic="${2:-}"
+    local depth="${3:-2}"
+    local slug
+    slug=$(project_slug "$project")
+    local vault_dir="${VAULT_ROOT}/${slug}"
+    local links=()
+
+    if [[ ! -d "$vault_dir" ]]; then
+        return
+    fi
+
+    # Find markdown files matching topic
+    local search_pattern="*.md"
+    local found_files
+    if [[ -n "$topic" ]]; then
+        found_files=$(find "$vault_dir" -name "$search_pattern" -maxdepth "$depth" -exec grep -li "$topic" {} \; 2>/dev/null || true)
+    else
+        found_files=$(find "$vault_dir" -name "$search_pattern" -maxdepth "$depth" 2>/dev/null || true)
+    fi
+
+    while IFS= read -r file; do
+        if [[ -n "$file" && -f "$file" ]]; then
+            local title
+            title=$(basename "$file" .md)
+            # Extract wikilinks from file
+            local file_links
+            file_links=$(grep -o '\[\[[^]]*\]\]' "$file" 2>/dev/null | head -10 || true)
+            if [[ -n "$file_links" ]]; then
+                links+=("${title}: ${file_links}")
+            else
+                links+=("${title}")
+            fi
+        fi
+    done <<< "$found_files"
+
+    if [[ ${#links[@]} -gt 0 ]]; then
+        printf '%s\n' "${links[@]}"
+    fi
+}
+
+# Score facts by relevance to topic
+score_fact() {
+    local fact="$1"
+    local topic="$2"
+    local score=50
+
+    # Exact topic match
+    if echo "$fact" | grep -qi "\b${topic}\b"; then
+        score=$((score + 30))
+    # Partial match
+    elif echo "$fact" | grep -qi "$topic"; then
+        score=$((score + 15))
+    fi
+
+    # Length bonus (more detail = likely more useful)
+    local len=${#fact}
+    if [[ $len -gt 100 ]]; then
+        score=$((score + 10))
+    elif [[ $len -gt 50 ]]; then
+        score=$((score + 5))
+    fi
+
+    echo "$score"
+}
+
+# Format output
+format_output() {
+    local format="$1"
+    shift
+    local facts=("$@")
+
+    case "$format" in
+        json)
+            echo "["
+            local first=true
+            for fact in "${facts[@]}"; do
+                if [[ "$first" == "true" ]]; then
+                    first=false
+                else
+                    echo ","
+                fi
+                # Escape JSON
+                local escaped
+                escaped=$(echo "$fact" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g')
+                echo "  \"${escaped}\""
+            done
+            echo "]"
+            ;;
+        markdown)
+            echo "## LACP Context Injection"
+            echo ""
+            for fact in "${facts[@]}"; do
+                echo "- ${fact}"
+            done
+            ;;
+        text|*)
+            for fact in "${facts[@]}"; do
+                echo "$fact"
+            done
+            ;;
+    esac
+}
+
+# --- Commands ---
+
+cmd_inject() {
+    local project="" agent="" topic=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  project="$2"; shift 2 ;;
+            --agent)    agent="$2"; shift 2 ;;
+            --depth)    DEPTH="$2"; shift 2 ;;
+            --topic)    topic="$2"; shift 2 ;;
+            --format)   OUTPUT_FORMAT="$2"; shift 2 ;;
+            *)          log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$project" ]]; then
+        log_error "Missing required --project"
+        exit 1
+    fi
+
+    log_info "Injecting LACP context for project=${project} agent=${agent:-any} topic=${topic:-all}"
+
+    # Gather facts from Layer 1
+    local layer1_facts
+    layer1_facts=$(load_layer1_facts "$project" "$topic" 2>/dev/null || true)
+
+    # Gather links from Layer 2
+    local layer2_links
+    layer2_links=$(load_layer2_links "$project" "$topic" "$DEPTH" 2>/dev/null || true)
+
+    # Combine and score
+    local all_facts=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && all_facts+=("$line")
+    done <<< "$layer1_facts"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && all_facts+=("$line")
+    done <<< "$layer2_links"
+
+    if [[ ${#all_facts[@]} -eq 0 ]]; then
+        log_warn "No facts found for project=${project} topic=${topic:-all}"
+        if [[ "$OUTPUT_FORMAT" == "json" ]]; then echo "[]"; fi
+        exit 0
+    fi
+
+    # Score and filter if topic provided
+    local scored_facts=()
+    if [[ -n "$topic" ]]; then
+        for fact in "${all_facts[@]}"; do
+            local score
+            score=$(score_fact "$fact" "$topic")
+            if [[ $score -ge $MIN_SCORE ]]; then
+                scored_facts+=("$fact")
+            fi
+        done
+    else
+        scored_facts=("${all_facts[@]}")
+    fi
+
+    if [[ ${#scored_facts[@]} -eq 0 ]]; then
+        log_warn "No matching facts above threshold"
+        if [[ "$OUTPUT_FORMAT" == "json" ]]; then echo "[]"; fi
+        exit 0
+    fi
+
+    local count=${#scored_facts[@]}
+    log_ok "Injecting ${count} facts into LCM context"
+
+    format_output "$OUTPUT_FORMAT" "${scored_facts[@]}"
+}
+
+cmd_query() {
+    local topic="" project=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --topic)      topic="$2"; shift 2 ;;
+            --project)    project="$2"; shift 2 ;;
+            --min-score)  MIN_SCORE="$2"; shift 2 ;;
+            --format)     OUTPUT_FORMAT="$2"; shift 2 ;;
+            *)            log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$topic" ]]; then
+        log_error "Missing required --topic"
+        exit 1
+    fi
+
+    log_info "Querying LACP facts for topic=${topic} min-score=${MIN_SCORE}"
+
+    # Search across all projects if no project specified
+    local search_dirs=()
+    if [[ -n "$project" ]]; then
+        local slug
+        slug=$(project_slug "$project")
+        search_dirs=("${MEMORY_ROOT}/${slug}" "${VAULT_ROOT}/${slug}")
+    else
+        if [[ -d "$MEMORY_ROOT" ]]; then
+            for d in "${MEMORY_ROOT}"/*/; do
+                [[ -d "$d" ]] && search_dirs+=("$d")
+            done
+        fi
+        if [[ -d "$VAULT_ROOT" ]]; then
+            for d in "${VAULT_ROOT}"/*/; do
+                [[ -d "$d" ]] && search_dirs+=("$d")
+            done
+        fi
+    fi
+
+    local results=()
+    for dir in "${search_dirs[@]}"; do
+        if [[ -d "$dir" ]]; then
+            local matches
+            matches=$(grep -ril "$topic" "$dir" 2>/dev/null | head -20 || true)
+            while IFS= read -r file; do
+                if [[ -n "$file" && -f "$file" ]]; then
+                    local matching_lines
+                    matching_lines=$(grep -i "$topic" "$file" 2>/dev/null | head -5 || true)
+                    while IFS= read -r line; do
+                        [[ -n "$line" ]] && results+=("$(basename "$file" .md): $line")
+                    done <<< "$matching_lines"
+                fi
+            done <<< "$matches"
+        fi
+    done
+
+    if [[ ${#results[@]} -eq 0 ]]; then
+        log_warn "No facts found for topic=${topic}"
+        exit 0
+    fi
+
+    log_ok "Found ${#results[@]} matching facts"
+    format_output "$OUTPUT_FORMAT" "${results[@]}"
+}
+
+cmd_list() {
+    local project=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  project="$2"; shift 2 ;;
+            --format)   OUTPUT_FORMAT="$2"; shift 2 ;;
+            *)          log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$project" ]]; then
+        log_error "Missing required --project"
+        exit 1
+    fi
+
+    local slug
+    slug=$(project_slug "$project")
+
+    log_info "Available LACP contexts for project=${project}"
+
+    echo ""
+    echo "=== Layer 1: Session Memory ==="
+    local mem_dir="${MEMORY_ROOT}/${slug}"
+    if [[ -d "$mem_dir" ]]; then
+        local count
+        count=$(find "$mem_dir" -name "*.md" -o -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Path: ${mem_dir}"
+        echo "  Files: ${count}"
+        if [[ -f "${mem_dir}/MEMORY.md" ]]; then
+            local lines
+            lines=$(wc -l < "${mem_dir}/MEMORY.md" | tr -d ' ')
+            echo "  MEMORY.md: ${lines} lines"
+        fi
+    else
+        echo "  (not initialized)"
+    fi
+
+    echo ""
+    echo "=== Layer 2: Knowledge Graph ==="
+    local vault_dir="${VAULT_ROOT}/${slug}"
+    if [[ -d "$vault_dir" ]]; then
+        local count
+        count=$(find "$vault_dir" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Path: ${vault_dir}"
+        echo "  Notes: ${count}"
+        local link_count
+        link_count=$(grep -r '\[\[' "$vault_dir" 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Wikilinks: ${link_count}"
+    else
+        echo "  (not initialized)"
+    fi
+
+    echo ""
+    log_ok "Context listing complete"
+}
+
+# Log injection event
+log_injection() {
+    local project="$1"
+    local agent="$2"
+    local session_id="$3"
+    local fact_count="$4"
+    local topic="$5"
+
+    mkdir -p "$(dirname "$INJECTION_LOG")"
+    mkdir -p "$(dirname "$GATED_RUNS_LOG")"
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local entry
+    if command -v jq &>/dev/null; then
+        entry=$(jq -nc \
+            --arg ts "$timestamp" \
+            --arg proj "$project" \
+            --arg agent "$agent" \
+            --arg sid "$session_id" \
+            --arg count "$fact_count" \
+            --arg topic "$topic" \
+            --arg ver "$VERSION" \
+            '{timestamp: $ts, event: "context_inject", project: $proj, agent: $agent, session_id: $sid, facts_injected: ($count|tonumber), topic: $topic, version: $ver}')
+    else
+        entry="{\"timestamp\":\"${timestamp}\",\"event\":\"context_inject\",\"project\":\"${project}\",\"agent\":\"${agent}\",\"session_id\":\"${session_id}\",\"facts_injected\":${fact_count},\"topic\":\"${topic}\",\"version\":\"${VERSION}\"}"
+    fi
+
+    echo "$entry" >> "$INJECTION_LOG"
+    echo "$entry" >> "$GATED_RUNS_LOG"
+}
+
+# Write injection metadata to context.json
+write_injection_metadata() {
+    local project="$1"
+    local session_id="$2"
+    local fact_count="$3"
+    local facts_json="$4"
+
+    local slug
+    slug=$(project_slug "$project")
+    local project_dir="${MEMORY_ROOT}/${slug}"
+    mkdir -p "$project_dir"
+
+    local context_file="${project_dir}/context.json"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    if command -v jq &>/dev/null; then
+        if [[ -f "$context_file" ]]; then
+            # Update existing context.json
+            local updated
+            updated=$(jq \
+                --arg ts "$timestamp" \
+                --arg sid "$session_id" \
+                --arg count "$fact_count" \
+                --argjson facts "$facts_json" \
+                '. + {last_injection: $ts, last_session_id: $sid, injected_facts_count: ($count|tonumber), injected_facts: $facts}' \
+                "$context_file" 2>/dev/null)
+            if [[ -n "$updated" ]]; then
+                echo "$updated" > "$context_file"
+            fi
+        else
+            # Create new context.json
+            jq -n \
+                --arg ts "$timestamp" \
+                --arg sid "$session_id" \
+                --arg count "$fact_count" \
+                --argjson facts "$facts_json" \
+                '{last_injection: $ts, last_session_id: $sid, injected_facts_count: ($count|tonumber), injected_facts: $facts}' \
+                > "$context_file"
+        fi
+    fi
+}
+
+# Auto-inject top-N facts for session-start hook integration
+cmd_auto_inject() {
+    local project="" agent="" topic="" session_id=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)    project="$2"; shift 2 ;;
+            --agent)      agent="$2"; shift 2 ;;
+            --topic)      topic="$2"; shift 2 ;;
+            --max-facts)  MAX_FACTS="$2"; shift 2 ;;
+            --session-id) session_id="$2"; shift 2 ;;
+            --format)     OUTPUT_FORMAT="$2"; shift 2 ;;
+            *)            log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ -z "$project" ]]; then
+        log_error "Missing required --project"
+        exit 1
+    fi
+
+    [[ -z "$session_id" ]] && session_id="${OPENCLAW_SESSION_ID:-$(date +%s)}"
+
+    # Gather facts from Layer 1
+    local layer1_facts
+    layer1_facts=$(load_layer1_facts "$project" "$topic" 2>/dev/null || true)
+
+    # Gather links from Layer 2
+    local layer2_links
+    layer2_links=$(load_layer2_links "$project" "$topic" "$DEPTH" 2>/dev/null || true)
+
+    # Combine
+    local all_facts=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && all_facts+=("$line")
+    done <<< "$layer1_facts"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && all_facts+=("$line")
+    done <<< "$layer2_links"
+
+    if [[ ${#all_facts[@]} -eq 0 ]]; then
+        # No facts to inject — still log the attempt
+        log_injection "$project" "${agent:-unknown}" "$session_id" "0" "${topic:-all}"
+        exit 0
+    fi
+
+    # Score and sort by relevance if topic provided
+    local scored_facts=()
+    if [[ -n "$topic" ]]; then
+        # Create scored pairs and sort
+        local scored_pairs=()
+        for fact in "${all_facts[@]}"; do
+            local score
+            score=$(score_fact "$fact" "$topic")
+            if [[ $score -ge $MIN_SCORE ]]; then
+                scored_pairs+=("${score}|${fact}")
+            fi
+        done
+
+        # Sort by score descending and take top N
+        local sorted
+        sorted=$(printf '%s\n' "${scored_pairs[@]}" | sort -t'|' -k1 -rn | head -"$MAX_FACTS")
+        while IFS='|' read -r _ fact; do
+            [[ -n "$fact" ]] && scored_facts+=("$fact")
+        done <<< "$sorted"
+    else
+        # Take first N facts
+        local i=0
+        for fact in "${all_facts[@]}"; do
+            if [[ $i -ge $MAX_FACTS ]]; then break; fi
+            scored_facts+=("$fact")
+            i=$((i + 1))
+        done
+    fi
+
+    if [[ ${#scored_facts[@]} -eq 0 ]]; then
+        log_injection "$project" "${agent:-unknown}" "$session_id" "0" "${topic:-all}"
+        exit 0
+    fi
+
+    # Build facts JSON for metadata
+    local facts_json="["
+    local first=true
+    for fact in "${scored_facts[@]}"; do
+        if [[ "$first" == "true" ]]; then
+            first=false
+        else
+            facts_json+=","
+        fi
+        local escaped
+        escaped=$(echo "$fact" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))' 2>/dev/null || echo "\"$fact\"")
+        facts_json+="$escaped"
+    done
+    facts_json+="]"
+
+    # Write injection metadata
+    write_injection_metadata "$project" "$session_id" "${#scored_facts[@]}" "$facts_json"
+
+    # Log injection event
+    log_injection "$project" "${agent:-unknown}" "$session_id" "${#scored_facts[@]}" "${topic:-all}"
+
+    # Output injected facts
+    format_output "$OUTPUT_FORMAT" "${scored_facts[@]}"
+}
+
+# Show injection history
+cmd_history() {
+    local project="" since="" count=20
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  project="$2"; shift 2 ;;
+            --since)    since="$2"; shift 2 ;;
+            --count)    count="$2"; shift 2 ;;
+            --format)   OUTPUT_FORMAT="$2"; shift 2 ;;
+            *)          log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ ! -f "$INJECTION_LOG" ]]; then
+        log_warn "No injection history found"
+        exit 0
+    fi
+
+    log_info "Injection history${project:+ for project=${project}}${since:+ since ${since}}"
+
+    local shown=0
+    while IFS= read -r line; do
+        if [[ -z "$line" ]]; then continue; fi
+
+        local show=true
+
+        # Filter by project
+        if [[ -n "$project" ]] && command -v jq &>/dev/null; then
+            local entry_proj
+            entry_proj=$(echo "$line" | jq -r '.project // ""' 2>/dev/null || true)
+            if [[ -n "$entry_proj" && "$entry_proj" != "$project" ]]; then
+                show=false
+            fi
+        fi
+
+        # Filter by date
+        if [[ -n "$since" ]] && command -v jq &>/dev/null; then
+            local ts
+            ts=$(echo "$line" | jq -r '.timestamp // ""' 2>/dev/null || true)
+            if [[ -n "$ts" && "$ts" < "$since" ]]; then
+                show=false
+            fi
+        fi
+
+        if [[ "$show" == "true" ]]; then
+            if command -v jq &>/dev/null; then
+                echo "$line" | jq -c '{timestamp, project, agent, facts_injected, topic}' 2>/dev/null || echo "$line"
+            else
+                echo "$line"
+            fi
+            shown=$((shown + 1))
+            if [[ $shown -ge $count ]]; then break; fi
+        fi
+    done < "$INJECTION_LOG"
+
+    echo ""
+    log_ok "Shown: ${shown} injection events"
+}
+
+# --- Main ---
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        inject)       cmd_inject "$@" ;;
+        auto-inject)  cmd_auto_inject "$@" ;;
+        query)        cmd_query "$@" ;;
+        list)         cmd_list "$@" ;;
+        history)      cmd_history "$@" ;;
+        --help|-h) usage ;;
+        --version|-v) echo "${SCRIPT_NAME} v${VERSION}" ;;
+        *)
+            log_error "Unknown command: $command"
+            usage
+            ;;
+    esac
+}
+
+main "$@"

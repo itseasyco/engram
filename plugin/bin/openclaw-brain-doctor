@@ -1,0 +1,497 @@
+#!/usr/bin/env bash
+#
+# openclaw-brain-doctor — Comprehensive health check for all 5 memory layers
+# Checks vault integrity, MCP connectivity, coverage gaps, and configuration
+#
+
+set -euo pipefail
+
+PROG=$(basename "$0")
+VERSION="1.0.0"
+
+SESSION_MEMORY_ROOT="${SESSION_MEMORY_ROOT:-$HOME/.openclaw/projects}"
+LACP_OBSIDIAN_VAULT="${LACP_OBSIDIAN_VAULT:-$HOME/obsidian/vault}"
+PROVENANCE_ROOT="${PROVENANCE_ROOT:-$HOME/.openclaw/provenance}"
+AGENT_ID_STORE="${AGENT_ID_STORE:-$HOME/.openclaw/agent-ids}"
+LACP_KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/.openclaw/data/knowledge}"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+log_ok() { echo -e "${GREEN}✓${NC} $*"; }
+log_warn() { echo -e "${YELLOW}○${NC} $*"; }
+log_fail() { echo -e "${RED}✗${NC} $*"; }
+
+path_to_slug() {
+  local path="$1"
+  path="${path/#\~/$HOME}"
+  path="$(cd "$path" 2>/dev/null && pwd)" || path="$1"
+  slug=$(echo "$path" | sed 's|^/||; s|/|-|g; s|-$||')
+  echo "$slug"
+}
+
+# ============================================================================
+# Layer 1: Session Memory Check
+# ============================================================================
+
+check_layer1() {
+  local project="$1"
+  local verbose="$2"
+  local slug
+  slug=$(path_to_slug "$project")
+  local memory_dir="$SESSION_MEMORY_ROOT/$slug/memory"
+  local errors=0
+  local warnings=0
+
+  echo ""
+  echo -e "${BLUE}Layer 1: Session Memory${NC}"
+
+  local seed_files=("MEMORY.md" "debugging.md" "patterns.md" "architecture.md" "preferences.md")
+  for file in "${seed_files[@]}"; do
+    if [ -f "$memory_dir/$file" ]; then
+      local size
+      size=$(wc -c < "$memory_dir/$file" | tr -d ' ')
+      if [ "$size" -lt 10 ]; then
+        log_warn "$file (empty — $size bytes)"
+        ((warnings++))
+      else
+        log_ok "$file ($size bytes)"
+      fi
+    else
+      log_fail "$file (missing)"
+      ((errors++))
+    fi
+  done
+
+  # Check memory index
+  if [ -f "$memory_dir/.memory-index.json" ]; then
+    log_ok ".memory-index.json"
+  else
+    log_warn ".memory-index.json (missing — optional)"
+    ((warnings++))
+  fi
+
+  # Check archive directory
+  if [ -d "$memory_dir/archive" ]; then
+    local archive_count
+    archive_count=$(find "$memory_dir/archive" -type f 2>/dev/null | wc -l | tr -d ' ')
+    log_ok "archive/ ($archive_count entries)"
+  else
+    log_warn "archive/ (not created)"
+    ((warnings++))
+  fi
+
+  if [ "$verbose" = "1" ]; then
+    echo "  Memory root: $memory_dir"
+    echo "  Slug: $slug"
+  fi
+
+  echo "  Result: $errors errors, $warnings warnings"
+  return "$errors"
+}
+
+# ============================================================================
+# Layer 2: Knowledge Graph Check
+# ============================================================================
+
+check_layer2() {
+  local project="$1"
+  local verbose="$2"
+  local errors=0
+  local warnings=0
+
+  echo ""
+  echo -e "${BLUE}Layer 2: Knowledge Graph${NC}"
+
+  if [ -d "$LACP_OBSIDIAN_VAULT" ]; then
+    log_ok "Obsidian vault exists at $LACP_OBSIDIAN_VAULT"
+
+    # Check vault structure
+    local expected_dirs=("01_Projects" "02_Concepts" "03_People" "04_Systems" "05_Inbox")
+    for dir in "${expected_dirs[@]}"; do
+      if [ -d "$LACP_OBSIDIAN_VAULT/$dir" ]; then
+        log_ok "$dir/"
+      else
+        log_warn "$dir/ (missing)"
+        ((warnings++))
+      fi
+    done
+
+    # Check index
+    if [ -f "$LACP_OBSIDIAN_VAULT/00_Index.md" ]; then
+      log_ok "00_Index.md"
+    else
+      log_warn "00_Index.md (missing)"
+      ((warnings++))
+    fi
+  else
+    log_warn "Obsidian vault not found at $LACP_OBSIDIAN_VAULT"
+    ((warnings++))
+  fi
+
+  # Check MCP connectivity
+  if command -v qmd &>/dev/null; then
+    log_ok "QMD available"
+  else
+    log_warn "QMD not installed (optional)"
+    ((warnings++))
+  fi
+
+  if [ "$verbose" = "1" ]; then
+    echo "  Vault path: $LACP_OBSIDIAN_VAULT"
+    echo "  Knowledge root: $LACP_KNOWLEDGE_ROOT"
+  fi
+
+  echo "  Result: $errors errors, $warnings warnings"
+  return "$errors"
+}
+
+# ============================================================================
+# Layer 3: Ingestion Pipeline Check
+# ============================================================================
+
+check_layer3() {
+  local project="$1"
+  local verbose="$2"
+  local slug
+  slug=$(path_to_slug "$project")
+  local ingest_dir="$SESSION_MEMORY_ROOT/$slug/memory/inbox"
+  local errors=0
+  local warnings=0
+
+  echo ""
+  echo -e "${BLUE}Layer 3: Ingestion Pipeline${NC}"
+
+  if [ -d "$ingest_dir/queue-generated" ]; then
+    local note_count
+    note_count=$(find "$ingest_dir/queue-generated" -name "*.md" -not -name "index.md" 2>/dev/null | wc -l | tr -d ' ')
+    log_ok "queue-generated/ ($note_count notes)"
+  else
+    log_fail "queue-generated/ (missing)"
+    ((errors++))
+  fi
+
+  if [ -d "$ingest_dir/processed" ]; then
+    local processed_count
+    processed_count=$(find "$ingest_dir/processed" -type f 2>/dev/null | wc -l | tr -d ' ')
+    log_ok "processed/ ($processed_count files)"
+  else
+    log_warn "processed/ (not created)"
+    ((warnings++))
+  fi
+
+  # Check index
+  if [ -f "$ingest_dir/queue-generated/index.md" ]; then
+    log_ok "index.md exists"
+  else
+    log_warn "index.md (missing)"
+    ((warnings++))
+  fi
+
+  # Check ingest script availability
+  local bin_dir
+  bin_dir="$(cd "$(dirname "$0")" && pwd)"
+  if [ -x "$bin_dir/openclaw-brain-ingest" ]; then
+    log_ok "openclaw-brain-ingest available"
+  else
+    log_warn "openclaw-brain-ingest not found"
+    ((warnings++))
+  fi
+
+  if [ "$verbose" = "1" ]; then
+    echo "  Ingest dir: $ingest_dir"
+  fi
+
+  echo "  Result: $errors errors, $warnings warnings"
+  return "$errors"
+}
+
+# ============================================================================
+# Layer 4: Code Intelligence Check
+# ============================================================================
+
+check_layer4() {
+  local project="$1"
+  local verbose="$2"
+  local slug
+  slug=$(path_to_slug "$project")
+  local code_graph_dir="$SESSION_MEMORY_ROOT/$slug/code-graph"
+  local errors=0
+  local warnings=0
+
+  echo ""
+  echo -e "${BLUE}Layer 4: Code Intelligence${NC}"
+
+  if [ -d "$code_graph_dir" ]; then
+    log_ok "Code graph directory exists"
+
+    local expected_files=("symbols.json" "call-chains.json" "clusters.json" "execution-flows.json" "impact-analysis.json")
+    for file in "${expected_files[@]}"; do
+      if [ -f "$code_graph_dir/$file" ]; then
+        log_ok "$file"
+      else
+        log_warn "$file (missing)"
+        ((warnings++))
+      fi
+    done
+  else
+    log_warn "Code intelligence not initialized (optional)"
+    ((warnings++))
+  fi
+
+  # Check GitNexus
+  if command -v gitnexus &>/dev/null; then
+    log_ok "GitNexus available"
+  else
+    log_warn "GitNexus not installed (optional)"
+    ((warnings++))
+  fi
+
+  if [ "$verbose" = "1" ]; then
+    echo "  Code graph dir: $code_graph_dir"
+  fi
+
+  echo "  Result: $errors errors, $warnings warnings"
+  return "$errors"
+}
+
+# ============================================================================
+# Layer 5: Agent Identity & Provenance Check
+# ============================================================================
+
+check_layer5() {
+  local project="$1"
+  local verbose="$2"
+  local slug
+  slug=$(path_to_slug "$project")
+  local errors=0
+  local warnings=0
+
+  echo ""
+  echo -e "${BLUE}Layer 5: Agent Identity & Provenance${NC}"
+
+  # Agent identity
+  local identity_file="$SESSION_MEMORY_ROOT/$slug/provenance/agent-identity.json"
+  if [ -f "$identity_file" ]; then
+    local agent_id
+    agent_id=$(grep -o '"agent_id": "[^"]*' "$identity_file" 2>/dev/null | cut -d'"' -f4 || echo "unknown")
+    log_ok "Agent identity: $agent_id"
+  else
+    log_warn "Agent identity not registered"
+    ((warnings++))
+  fi
+
+  # Provenance chain
+  local chain_file="$PROVENANCE_ROOT/$slug/chain.jsonl"
+  if [ -f "$chain_file" ]; then
+    local receipt_count
+    receipt_count=$(grep -v '^#' "$chain_file" | grep -v '^$' | wc -l | tr -d ' ')
+    log_ok "Provenance chain: $receipt_count receipts"
+
+    # Quick integrity check
+    local bin_dir
+    bin_dir="$(cd "$(dirname "$0")" && pwd)"
+    if [ -x "$bin_dir/openclaw-provenance" ]; then
+      if bash "$bin_dir/openclaw-provenance" verify --project "$project" > /dev/null 2>&1; then
+        log_ok "Chain integrity: VERIFIED"
+      else
+        log_fail "Chain integrity: FAILED"
+        ((errors++))
+      fi
+    fi
+  else
+    log_warn "No provenance chain found"
+    ((warnings++))
+  fi
+
+  # Agent ID store
+  if [ -d "$AGENT_ID_STORE" ]; then
+    local id_count
+    id_count=$(find "$AGENT_ID_STORE" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+    log_ok "Agent ID store: $id_count identities"
+  else
+    log_warn "Agent ID store not found"
+    ((warnings++))
+  fi
+
+  if [ "$verbose" = "1" ]; then
+    echo "  Identity file: $identity_file"
+    echo "  Chain file: $chain_file"
+    echo "  Agent store: $AGENT_ID_STORE"
+  fi
+
+  echo "  Result: $errors errors, $warnings warnings"
+  return "$errors"
+}
+
+# ============================================================================
+# MCP Connectivity Check
+# ============================================================================
+
+check_mcp() {
+  local verbose="$1"
+  local warnings=0
+
+  echo ""
+  echo -e "${BLUE}MCP Connectivity${NC}"
+
+  local mcp_tools=("qmd" "obsidian" "web_fetch")
+  for tool in "${mcp_tools[@]}"; do
+    if command -v "$tool" &>/dev/null; then
+      log_ok "$tool"
+    else
+      log_warn "$tool (not available)"
+      ((warnings++))
+    fi
+  done
+
+  echo "  Result: 0 errors, $warnings warnings"
+}
+
+# ============================================================================
+# Configuration Check
+# ============================================================================
+
+check_config() {
+  local verbose="$1"
+  local errors=0
+  local warnings=0
+
+  echo ""
+  echo -e "${BLUE}Configuration${NC}"
+
+  local config_file="$HOME/.openclaw/plugins/openclaw-lacp-fusion/config/.openclaw-lacp.env"
+  if [ -f "$config_file" ]; then
+    log_ok "Config file: $config_file"
+  else
+    log_warn "Config file not found (using defaults)"
+    ((warnings++))
+  fi
+
+  # Check required env vars
+  local env_vars=("SESSION_MEMORY_ROOT" "LACP_OBSIDIAN_VAULT" "PROVENANCE_ROOT" "AGENT_ID_STORE")
+  for var in "${env_vars[@]}"; do
+    if [ -n "${!var:-}" ]; then
+      if [ "$verbose" = "1" ]; then
+        log_ok "$var = ${!var}"
+      fi
+    else
+      log_warn "$var (using default)"
+      ((warnings++))
+    fi
+  done
+
+  echo "  Result: $errors errors, $warnings warnings"
+}
+
+# ============================================================================
+# Summary
+# ============================================================================
+
+print_summary() {
+  local total_errors="$1"
+  local project="$2"
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  if [ "$total_errors" -eq 0 ]; then
+    echo -e "${GREEN}✓ Health check passed${NC} — all layers operational"
+  else
+    echo -e "${RED}✗ Health check found $total_errors error(s)${NC}"
+    echo "  Run with --verbose for details"
+  fi
+  echo "  Project: $project"
+  echo "  Checked: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+usage() {
+  cat <<EOF
+$PROG v$VERSION — Comprehensive Health Check for OpenClaw LACP Memory Stack
+
+USAGE:
+  $PROG [OPTIONS]
+
+OPTIONS:
+  --project PATH        Project directory (default: current)
+  --verbose             Show detailed status and paths
+  --layer NUM           Check specific layer only (1-5)
+  --json                Output results as JSON
+  --help                Show this help
+
+EXAMPLES:
+  # Full health check
+  $PROG --project ~/repos/easy-api
+
+  # Verbose check with paths
+  $PROG --project ~/repos/easy-api --verbose
+
+  # Check specific layer
+  $PROG --project ~/repos/easy-api --layer 5
+
+EOF
+}
+
+main() {
+  local project="."
+  local verbose=0
+  local layer=""
+  local json_output=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --project) project="$2"; shift 2 ;;
+      --verbose) verbose=1; shift ;;
+      --layer) layer="$2"; shift 2 ;;
+      --json) json_output=1; shift ;;
+      --help|-h|help) usage; exit 0 ;;
+      *) echo "Unknown option: $1"; usage; exit 1 ;;
+    esac
+  done
+
+  log_info "OpenClaw LACP Brain Doctor v$VERSION"
+  log_info "Project: $project"
+
+  local total_errors=0
+
+  if [ -z "$layer" ] || [ "$layer" = "1" ]; then
+    check_layer1 "$project" "$verbose" || total_errors=$((total_errors + $?))
+  fi
+
+  if [ -z "$layer" ] || [ "$layer" = "2" ]; then
+    check_layer2 "$project" "$verbose" || total_errors=$((total_errors + $?))
+  fi
+
+  if [ -z "$layer" ] || [ "$layer" = "3" ]; then
+    check_layer3 "$project" "$verbose" || total_errors=$((total_errors + $?))
+  fi
+
+  if [ -z "$layer" ] || [ "$layer" = "4" ]; then
+    check_layer4 "$project" "$verbose" || total_errors=$((total_errors + $?))
+  fi
+
+  if [ -z "$layer" ] || [ "$layer" = "5" ]; then
+    check_layer5 "$project" "$verbose" || total_errors=$((total_errors + $?))
+  fi
+
+  if [ -z "$layer" ]; then
+    check_mcp "$verbose"
+    check_config "$verbose"
+  fi
+
+  print_summary "$total_errors" "$project"
+
+  if [ "$total_errors" -gt 0 ]; then
+    exit 1
+  fi
+}
+
+main "$@"

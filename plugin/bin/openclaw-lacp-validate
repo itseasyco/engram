@@ -1,0 +1,368 @@
+#!/bin/bash
+set -euo pipefail
+
+# openclaw-lacp-validate — Comprehensive setup validation for LACP Fusion
+# Usage: openclaw-lacp-validate [--fix] [--verbose] [--json]
+
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+PLUGIN_NAME="openclaw-lacp-fusion"
+PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
+GATEWAY_CONFIG="$OPENCLAW_HOME/openclaw.json"
+
+# Parse flags
+FIX=false
+VERBOSE=false
+JSON_OUTPUT=false
+for arg in "$@"; do
+    case "$arg" in
+        --fix) FIX=true ;;
+        --verbose) VERBOSE=true ;;
+        --json) JSON_OUTPUT=true ;;
+        --help|-h)
+            echo "Usage: openclaw-lacp-validate [--fix] [--verbose] [--json]"
+            echo ""
+            echo "Validates the LACP Fusion plugin installation."
+            echo ""
+            echo "Options:"
+            echo "  --fix      Attempt to fix issues automatically"
+            echo "  --verbose  Show detailed output for each check"
+            echo "  --json     Output results as JSON"
+            echo ""
+            exit 0
+            ;;
+    esac
+done
+
+# Colors (disabled for JSON output)
+if [ "$JSON_OUTPUT" = "true" ]; then
+    RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
+else
+    RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
+    BLUE='\033[0;34m' BOLD='\033[1m' NC='\033[0m'
+fi
+
+PASS=0
+WARN=0
+FAIL=0
+RESULTS=()
+
+check_pass() {
+    ((PASS++))
+    RESULTS+=("{\"check\":\"$1\",\"status\":\"pass\",\"detail\":\"$2\"}")
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "  ${GREEN}✓${NC} $1"
+    [ "$VERBOSE" = "true" ] && [ "$JSON_OUTPUT" != "true" ] && echo -e "    $2"
+}
+
+check_warn() {
+    ((WARN++))
+    RESULTS+=("{\"check\":\"$1\",\"status\":\"warn\",\"detail\":\"$2\"}")
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "  ${YELLOW}!${NC} $1"
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "    ${YELLOW}$2${NC}"
+}
+
+check_fail() {
+    ((FAIL++))
+    RESULTS+=("{\"check\":\"$1\",\"status\":\"fail\",\"detail\":\"$2\"}")
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "  ${RED}✗${NC} $1"
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "    ${RED}$2${NC}"
+}
+
+# ─── Section 1: Core Installation ────────────────────────────────────────────
+
+section_core() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}Core Installation${NC}"
+
+    # OpenClaw home
+    if [ -d "$OPENCLAW_HOME" ]; then
+        check_pass "OpenClaw home" "$OPENCLAW_HOME"
+    else
+        check_fail "OpenClaw home" "Not found at $OPENCLAW_HOME"
+        return
+    fi
+
+    # Gateway config
+    if [ -f "$GATEWAY_CONFIG" ]; then
+        check_pass "Gateway config" "$GATEWAY_CONFIG"
+    else
+        check_fail "Gateway config" "Not found at $GATEWAY_CONFIG"
+    fi
+
+    # Plugin directory
+    if [ -d "$PLUGIN_PATH" ]; then
+        check_pass "Plugin directory" "$PLUGIN_PATH"
+    else
+        check_fail "Plugin directory" "Not found at $PLUGIN_PATH"
+        if [ "$FIX" = "true" ]; then
+            mkdir -p "$PLUGIN_PATH"
+            echo -e "    ${GREEN}Fixed: created $PLUGIN_PATH${NC}"
+        fi
+    fi
+
+    # Plugin manifest
+    if [ -f "$PLUGIN_PATH/openclaw.plugin.json" ]; then
+        check_pass "Plugin manifest" "openclaw.plugin.json present"
+    else
+        check_fail "Plugin manifest" "openclaw.plugin.json missing from $PLUGIN_PATH"
+    fi
+}
+
+# ─── Section 2: Gateway Registration ─────────────────────────────────────────
+
+section_gateway() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}Gateway Registration${NC}"
+
+    if ! command -v jq &>/dev/null; then
+        check_warn "jq available" "jq not installed — cannot validate gateway config"
+        return
+    fi
+
+    if [ ! -f "$GATEWAY_CONFIG" ]; then
+        check_fail "Gateway config" "File missing"
+        return
+    fi
+
+    # plugins.allow
+    if jq -e '.plugins.allow | index("openclaw-lacp-fusion")' "$GATEWAY_CONFIG" &>/dev/null; then
+        check_pass "Plugin in allow list" "plugins.allow contains openclaw-lacp-fusion"
+    else
+        check_fail "Plugin in allow list" "Not in plugins.allow"
+        if [ "$FIX" = "true" ]; then
+            local tmp
+            tmp=$(mktemp)
+            jq '.plugins.allow += ["openclaw-lacp-fusion"]' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
+            echo -e "    ${GREEN}Fixed: added to plugins.allow${NC}"
+        fi
+    fi
+
+    # plugins.entries
+    if jq -e '.plugins.entries["openclaw-lacp-fusion"].enabled == true' "$GATEWAY_CONFIG" &>/dev/null; then
+        check_pass "Plugin entry enabled" "plugins.entries.openclaw-lacp-fusion.enabled = true"
+    else
+        check_fail "Plugin entry" "Not found or not enabled in plugins.entries"
+    fi
+
+    # Config values
+    if jq -e '.plugins.entries["openclaw-lacp-fusion"].config.profile' "$GATEWAY_CONFIG" &>/dev/null; then
+        local profile
+        profile=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.profile' "$GATEWAY_CONFIG")
+        check_pass "Profile configured" "profile = $profile"
+    else
+        check_warn "Profile configured" "No profile set (will use default: balanced)"
+    fi
+}
+
+# ─── Section 3: Hooks ────────────────────────────────────────────────────────
+
+section_hooks() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}Hooks (4 handlers)${NC}"
+
+    local handlers=("session-start" "pretool-guard" "stop-quality-gate" "write-validate")
+
+    for handler in "${handlers[@]}"; do
+        local handler_path="$PLUGIN_PATH/hooks/handlers/${handler}.py"
+        if [ -f "$handler_path" ]; then
+            # Syntax check
+            if python3 -c "import py_compile; py_compile.compile('$handler_path', doraise=True)" 2>/dev/null; then
+                check_pass "$handler" "Handler present and syntax valid"
+            else
+                check_warn "$handler" "Handler present but has syntax errors"
+            fi
+        else
+            check_fail "$handler" "Handler missing: $handler_path"
+        fi
+    done
+
+    # Profiles
+    for profile in minimal-stop balanced hardened-exec; do
+        if [ -f "$PLUGIN_PATH/hooks/profiles/${profile}.json" ]; then
+            check_pass "Profile: $profile" "Present"
+        else
+            check_warn "Profile: $profile" "Missing"
+        fi
+    done
+
+    # Dangerous patterns rules
+    if [ -f "$PLUGIN_PATH/hooks/rules/dangerous-patterns.yaml" ]; then
+        check_pass "Dangerous patterns rules" "Present"
+    else
+        check_warn "Dangerous patterns rules" "Missing (pretool-guard may not work)"
+    fi
+}
+
+# ─── Section 4: Bin Scripts ──────────────────────────────────────────────────
+
+section_bin() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}Bin Scripts${NC}"
+
+    local core_bins=(
+        "openclaw-memory-init"
+        "openclaw-memory-append"
+        "openclaw-gated-run"
+        "openclaw-route"
+        "openclaw-verify"
+        "openclaw-brain-graph"
+        "openclaw-brain-ingest"
+        "openclaw-agent-id"
+        "openclaw-provenance"
+    )
+
+    local found=0
+    local missing=0
+    for bin in "${core_bins[@]}"; do
+        if [ -x "$PLUGIN_PATH/bin/$bin" ]; then
+            ((found++))
+        elif [ -f "$PLUGIN_PATH/bin/$bin" ]; then
+            check_warn "$bin" "Present but not executable"
+            if [ "$FIX" = "true" ]; then
+                chmod +x "$PLUGIN_PATH/bin/$bin"
+                echo -e "    ${GREEN}Fixed: chmod +x${NC}"
+            fi
+            ((found++))
+        else
+            [ "$VERBOSE" = "true" ] && check_warn "$bin" "Not found"
+            ((missing++))
+        fi
+    done
+
+    if [ "$missing" -eq 0 ]; then
+        check_pass "Core bin scripts" "All $found present and executable"
+    else
+        check_warn "Core bin scripts" "$found found, $missing missing"
+    fi
+}
+
+# ─── Section 5: Data Directories ────────────────────────────────────────────
+
+section_data() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}Data Directories${NC}"
+
+    local dirs=(
+        "$OPENCLAW_HOME/data/knowledge:Knowledge graph"
+        "$OPENCLAW_HOME/data/automation:Automation"
+        "$OPENCLAW_HOME/provenance:Provenance chains"
+        "$OPENCLAW_HOME/agent-ids:Agent identities"
+    )
+
+    for entry in "${dirs[@]}"; do
+        local dir="${entry%%:*}"
+        local label="${entry##*:}"
+        if [ -d "$dir" ]; then
+            check_pass "$label" "$dir"
+        else
+            check_warn "$label" "Directory missing: $dir"
+            if [ "$FIX" = "true" ]; then
+                mkdir -p "$dir"
+                echo -e "    ${GREEN}Fixed: created $dir${NC}"
+            fi
+        fi
+    done
+}
+
+# ─── Section 6: Knowledge Layer ──────────────────────────────────────────────
+
+section_knowledge() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}Knowledge Layer${NC}"
+
+    # Load config to find vault path
+    local vault_path=""
+    if command -v jq &>/dev/null && [ -f "$GATEWAY_CONFIG" ]; then
+        vault_path=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.obsidianVault // empty' "$GATEWAY_CONFIG" 2>/dev/null)
+    fi
+    # Expand tilde
+    vault_path="${vault_path/#\~/$HOME}"
+    [ -z "$vault_path" ] && vault_path="$HOME/obsidian/vault"
+
+    if [ -d "$vault_path" ]; then
+        check_pass "Obsidian vault" "$vault_path (accessible)"
+    else
+        check_warn "Obsidian vault" "$vault_path (not found — Layer 2 won't work)"
+    fi
+
+    # QMD
+    if command -v qmd &>/dev/null; then
+        check_pass "QMD semantic search" "Available"
+    else
+        check_warn "QMD semantic search" "Not installed (optional, enables semantic search)"
+    fi
+
+    # GitNexus (optional)
+    if command -v gitnexus &>/dev/null; then
+        check_pass "GitNexus" "Available (code intelligence enhanced)"
+    else
+        check_warn "GitNexus" "Not installed (optional, use --with-gitnexus to enable)"
+    fi
+}
+
+# ─── Section 7: MCP Integration ─────────────────────────────────────────────
+
+section_mcp() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}MCP Integration (optional)${NC}"
+
+    # Check for MCP config references
+    local mcp_config="$OPENCLAW_HOME/config/mcp.json"
+    if [ -f "$mcp_config" ]; then
+        check_pass "MCP config" "$mcp_config"
+    else
+        check_warn "MCP config" "Not found (MCP integrations may need manual setup)"
+    fi
+}
+
+# ─── Output results ─────────────────────────────────────────────────────────
+
+output_results() {
+    if [ "$JSON_OUTPUT" = "true" ]; then
+        echo "{"
+        echo "  \"plugin\": \"$PLUGIN_NAME\","
+        echo "  \"pass\": $PASS,"
+        echo "  \"warn\": $WARN,"
+        echo "  \"fail\": $FAIL,"
+        echo "  \"status\": \"$([ $FAIL -eq 0 ] && echo "ready" || echo "issues")\","
+        echo "  \"results\": ["
+        local first=true
+        for r in "${RESULTS[@]}"; do
+            [ "$first" = "true" ] && first=false || echo ","
+            echo -n "    $r"
+        done
+        echo ""
+        echo "  ]"
+        echo "}"
+        return
+    fi
+
+    echo ""
+    echo -e "${BOLD}Summary${NC}"
+    echo -e "  ${GREEN}✓${NC} $PASS passed"
+    [ "$WARN" -gt 0 ] && echo -e "  ${YELLOW}!${NC} $WARN warnings"
+    [ "$FAIL" -gt 0 ] && echo -e "  ${RED}✗${NC} $FAIL failures"
+    echo ""
+
+    if [ "$FAIL" -eq 0 ] && [ "$WARN" -eq 0 ]; then
+        echo -e "${GREEN}${BOLD}Status: Ready to use${NC}"
+    elif [ "$FAIL" -eq 0 ]; then
+        echo -e "${YELLOW}${BOLD}Status: Ready (with warnings)${NC}"
+        echo -e "  Run with ${BOLD}--fix${NC} to auto-resolve fixable issues"
+    else
+        echo -e "${RED}${BOLD}Status: Issues found${NC}"
+        echo -e "  Run ${BOLD}INSTALL.sh${NC} to fix, or ${BOLD}--fix${NC} to auto-resolve"
+    fi
+}
+
+# ─── Main ────────────────────────────────────────────────────────────────────
+
+main() {
+    [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}openclaw-lacp-validate${NC} — LACP Fusion setup validation\n"
+
+    section_core
+    section_gateway
+    section_hooks
+    section_bin
+    section_data
+    section_knowledge
+    section_mcp
+    output_results
+
+    # Exit code: 0 if no failures, 1 if failures
+    [ "$FAIL" -eq 0 ] && exit 0 || exit 1
+}
+
+main

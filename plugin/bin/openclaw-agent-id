@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+#
+# openclaw-agent-id — Layer 5a: Agent Identity Management
+# Persistent agent IDs per (hostname, project) pair with keychain integration
+#
+
+set -euo pipefail
+
+PROG=$(basename "$0")
+AGENT_ID_STORE="${AGENT_ID_STORE:-$HOME/.openclaw/agent-ids}"
+SESSION_MEMORY_ROOT="${SESSION_MEMORY_ROOT:-$HOME/.openclaw/projects}"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}[✓]${NC} $*" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+path_to_slug() {
+  local path="$1"
+  path="${path/#\~/$HOME}"
+  path="$(cd "$path" 2>/dev/null && pwd)" || path="$1"
+  slug=$(echo "$path" | sed 's|^/||; s|/|-|g; s|-$||')
+  echo "$slug"
+}
+
+# Generate new agent ID (SHA-256 hash of random data)
+generate_agent_id() {
+  openssl rand -hex 16 | shasum -a 256 | cut -d' ' -f1
+}
+
+# Register new agent identity
+register_agent() {
+  local project="${1:-.}"
+  local hostname
+  hostname=$(hostname)
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  mkdir -p "$AGENT_ID_STORE"
+  
+  local agent_id
+  agent_id=$(generate_agent_id)
+  
+  local agent_file="$AGENT_ID_STORE/${hostname}-${slug}.json"
+  
+  if [ -f "$agent_file" ]; then
+    log_warn "Agent already registered: $agent_file"
+    return 0
+  fi
+  
+  cat > "$agent_file" <<EOF
+{
+  "agent_id": "$agent_id",
+  "hostname": "$hostname",
+  "project_slug": "$slug",
+  "project_path": "$project",
+  "registered_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "last_seen": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "active",
+  "key_store": "system"
+}
+EOF
+  
+  # Try to store key in keychain (macOS)
+  if command -v security >/dev/null 2>&1; then
+    # Generate a dummy key for now (actual signing key would go here)
+    security add-generic-password \
+      -a "$agent_id" \
+      -s "openclaw-agent-key-$agent_id" \
+      -w "$agent_id-secret-key" \
+      -U 2>/dev/null || log_warn "Could not store in keychain"
+  fi
+  
+  log_success "Agent registered: $agent_id"
+  log_info "  Hostname: $hostname"
+  log_info "  Project: $project"
+  
+  echo "$agent_id"
+}
+
+# Show current agent identity
+show_agent() {
+  local project="${1:-.}"
+  local hostname
+  hostname=$(hostname)
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  local agent_file="$AGENT_ID_STORE/${hostname}-${slug}.json"
+  
+  if [ ! -f "$agent_file" ]; then
+    log_warn "No agent registered for this project. Run: $PROG register"
+    register_agent "$project"
+    agent_file="$AGENT_ID_STORE/${hostname}-${slug}.json"
+  fi
+  
+  cat "$agent_file"
+}
+
+# List all registered agents
+list_agents() {
+  local project="${1:-}"
+  
+  if [ ! -d "$AGENT_ID_STORE" ]; then
+    log_info "No agents registered yet"
+    return 0
+  fi
+  
+  log_info "Registered agents:"
+  echo ""
+  
+  for agent_file in "$AGENT_ID_STORE"/*.json; do
+    if [ ! -f "$agent_file" ]; then
+      continue
+    fi
+    
+    local basename_file=$(basename "$agent_file" .json)
+    
+    # Only show agents for matching project if specified
+    if [ -n "$project" ]; then
+      local slug
+      slug=$(path_to_slug "$project")
+      if [[ ! "$basename_file" =~ "$slug" ]]; then
+        continue
+      fi
+    fi
+    
+    local agent_id
+    agent_id=$(grep -o '"agent_id": "[^"]*' "$agent_file" | cut -d'"' -f4)
+    local hostname
+    hostname=$(grep -o '"hostname": "[^"]*' "$agent_file" | cut -d'"' -f4)
+    local status
+    status=$(grep -o '"status": "[^"]*' "$agent_file" | cut -d'"' -f4)
+    
+    printf "  %-40s %-20s %s\n" "$agent_id" "$hostname" "[$status]"
+  done
+  
+  echo ""
+}
+
+# Revoke an agent (mark inactive)
+revoke_agent() {
+  local agent_id="$1"
+  
+  if [ -z "$agent_id" ]; then
+    log_error "Missing agent ID"
+    exit 1
+  fi
+  
+  # Find matching agent file
+  local found=0
+  for agent_file in "$AGENT_ID_STORE"/*.json; do
+    if [ ! -f "$agent_file" ]; then
+      continue
+    fi
+    
+    local file_agent_id
+    file_agent_id=$(grep -o '"agent_id": "[^"]*' "$agent_file" | cut -d'"' -f4)
+    
+    if [ "$file_agent_id" = "$agent_id" ]; then
+      # Update status
+      sed -i.bak 's/"status": "active"/"status": "revoked"/' "$agent_file"
+      rm -f "$agent_file.bak"
+      
+      log_success "Agent revoked: $agent_id"
+      found=1
+      break
+    fi
+  done
+  
+  if [ $found -eq 0 ]; then
+    log_error "Agent not found: $agent_id"
+    exit 1
+  fi
+}
+
+# Touch/refresh agent activity
+touch_agent() {
+  local project="${1:-.}"
+  local hostname
+  hostname=$(hostname)
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  local agent_file="$AGENT_ID_STORE/${hostname}-${slug}.json"
+  
+  if [ ! -f "$agent_file" ]; then
+    log_warn "Agent not registered"
+    register_agent "$project"
+    return
+  fi
+  
+  # Update last_seen
+  local timestamp
+  timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  
+  # Use sed for cross-platform compatibility
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "s/\"last_seen\": \"[^\"]*\"/\"last_seen\": \"$timestamp\"/" "$agent_file"
+  else
+    sed -i "s/\"last_seen\": \"[^\"]*\"/\"last_seen\": \"$timestamp\"/" "$agent_file"
+  fi
+  
+  log_success "Agent touched: $(date)"
+}
+
+usage() {
+  cat <<EOF
+$PROG — Layer 5a: Agent Identity Management
+
+USAGE:
+  $PROG show [--project PATH] [--json]        Show current agent identity
+  $PROG list [--project PATH]                 List all registered agents
+  $PROG register [--project PATH]             Register new agent
+  $PROG revoke AGENT_ID                       Revoke an agent
+  $PROG touch [--project PATH]                Refresh activity timestamp
+  $PROG help                                  Show this help
+
+OPTIONS:
+  --project PATH        Project directory (default: current)
+  --json                Output as JSON
+
+EXAMPLES:
+  # Show current agent
+  $PROG show --project ~/repos/easy-api
+
+  # List all agents
+  $PROG list
+
+  # Register new agent
+  $PROG register --project ~/repos/easy-api
+
+  # Revoke agent (security event)
+  $PROG revoke a7d3e2f9c1b4a6d9...
+
+  # Touch session (keep-alive)
+  $PROG touch
+
+EOF
+}
+
+main() {
+  if [ $# -eq 0 ]; then
+    usage
+    exit 0
+  fi
+  
+  local cmd="$1"
+  shift
+  
+  case "$cmd" in
+    show)
+      local project="."
+      local json_out=0
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          --json) json_out=1; shift ;;
+          *) shift ;;
+        esac
+      done
+      
+      if [ $json_out -eq 1 ]; then
+        show_agent "$project"
+      else
+        local agent_file="$AGENT_ID_STORE/$(hostname)-$(path_to_slug "$project").json"
+        if [ -f "$agent_file" ]; then
+          echo ""
+          echo "Agent Identity:"
+          grep -o '"[^"]*": "[^"]*' "$agent_file" | while read -r line; do
+            echo "  $line"
+          done
+          echo ""
+        else
+          show_agent "$project" > /dev/null
+        fi
+      fi
+      ;;
+    
+    list)
+      local project=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      list_agents "$project"
+      ;;
+    
+    register)
+      local project="."
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      register_agent "$project"
+      ;;
+    
+    revoke)
+      if [ $# -eq 0 ]; then
+        log_error "Missing agent ID"
+        exit 1
+      fi
+      revoke_agent "$1"
+      ;;
+    
+    touch)
+      local project="."
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      touch_agent "$project"
+      ;;
+    
+    help|--help|-h)
+      usage
+      ;;
+    
+    *)
+      log_error "Unknown command: $cmd"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

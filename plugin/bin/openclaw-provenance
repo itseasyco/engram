@@ -1,0 +1,467 @@
+#!/usr/bin/env bash
+#
+# openclaw-provenance — Layer 5b: Cryptographic Session Receipts & Audit Trail
+# SHA-256 hash-chained session receipts for tamper detection and audit trails
+#
+
+set -euo pipefail
+
+PROG=$(basename "$0")
+PROVENANCE_ROOT="${PROVENANCE_ROOT:-$HOME/.openclaw/provenance}"
+SESSION_MEMORY_ROOT="${SESSION_MEMORY_ROOT:-$HOME/.openclaw/projects}"
+AGENT_ID_STORE="${AGENT_ID_STORE:-$HOME/.openclaw/agent-ids}"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}[✓]${NC} $*" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+path_to_slug() {
+  local path="$1"
+  path="${path/#\~/$HOME}"
+  path="$(cd "$path" 2>/dev/null && pwd)" || path="$1"
+  slug=$(echo "$path" | sed 's|^/||; s|/|-|g; s|-$||')
+  echo "$slug"
+}
+
+# Get previous hash from chain
+get_previous_hash() {
+  local chain_file="$1"
+  
+  if [ ! -f "$chain_file" ]; then
+    echo "0000000000000000000000000000000000000000000000000000000000000000"
+    return
+  fi
+  
+  # Get last hash from chain (skip comments)
+  tail -100 "$chain_file" | grep -v '^#' | tail -1 | grep -o '"next_hash": "[^"]*' | cut -d'"' -f4
+}
+
+# Compute receipt hash (prev_hash + execution data)
+compute_hash() {
+  local prev_hash="$1"
+  local execution_json="$2"
+  
+  # Combine and hash
+  if command -v sha256sum &>/dev/null; then
+    echo -n "${prev_hash}${execution_json}" | sha256sum | cut -d' ' -f1
+  else
+    echo -n "${prev_hash}${execution_json}" | shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# Start a session (creates receipt with prev_hash)
+start_session() {
+  local project="${1:-.}"
+  local agent_id="$2"
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  local provenance_dir="$PROVENANCE_ROOT/$slug"
+  mkdir -p "$provenance_dir"
+  
+  local chain_file="$provenance_dir/chain.jsonl"
+  
+  # Get previous hash
+  local prev_hash
+  prev_hash=$(get_previous_hash "$chain_file")
+  
+  # Generate session ID
+  local session_id
+  session_id="$(date +%Y-%m-%d)-$(openssl rand -hex 4)"
+  
+  log_info "Starting session: $session_id"
+  log_info "  Project: $project"
+  log_info "  Agent: $agent_id"
+  log_info "  Prev hash: $prev_hash"
+  
+  # Store current session ID
+  echo "$session_id" > "$provenance_dir/.current-session"
+  
+  # Store for end_session
+  mkdir -p "$provenance_dir/.sessions"
+  cat > "$provenance_dir/.sessions/$session_id.tmp" <<EOF
+{
+  "session_id": "$session_id",
+  "agent_id": "$agent_id",
+  "prev_hash": "$prev_hash",
+  "start_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "start_timestamp": $(date +%s)
+}
+EOF
+  
+  log_success "Session started: $session_id"
+  echo "$session_id"
+}
+
+# End a session (signs + seals receipt)
+end_session() {
+  local session_id="$1"
+  local exit_code="${2:-0}"
+  local files_modified="${3:-0}"
+  local project="${4:-.}"
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  local provenance_dir="$PROVENANCE_ROOT/$slug"
+  local session_file="$provenance_dir/.sessions/$session_id.tmp"
+  
+  if [ ! -f "$session_file" ]; then
+    log_error "Session not found: $session_id"
+    exit 1
+  fi
+  
+  # Read session data
+  local prev_hash agent_id start_time start_timestamp
+  prev_hash=$(grep -o '"prev_hash": "[^"]*' "$session_file" | cut -d'"' -f4)
+  agent_id=$(grep -o '"agent_id": "[^"]*' "$session_file" | cut -d'"' -f4)
+  start_time=$(grep -o '"start_time": "[^"]*' "$session_file" | cut -d'"' -f4)
+  start_timestamp=$(grep -o '"start_timestamp": [0-9]*' "$session_file" | cut -d' ' -f2)
+  
+  local end_time end_timestamp duration
+  end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  end_timestamp=$(date +%s)
+  duration=$((end_timestamp - start_timestamp))
+  
+  log_info "Ending session: $session_id"
+  log_info "  Exit code: $exit_code"
+  log_info "  Duration: ${duration}s"
+  log_info "  Files modified: $files_modified"
+  
+  # Build execution JSON
+  local execution_json
+  execution_json=$(cat <<EOF
+{"start_time":"$start_time","end_time":"$end_time","duration_seconds":$duration,"exit_code":$exit_code,"files_modified":$files_modified}
+EOF
+)
+  
+  # Compute next hash
+  local next_hash
+  next_hash=$(compute_hash "$prev_hash" "$execution_json")
+  
+  # Build receipt
+  local receipt
+  receipt=$(cat <<EOF
+{"session_id":"$session_id","agent_id":"$agent_id","prev_hash":"$prev_hash","execution":$execution_json,"signature":"sig-$next_hash","next_hash":"$next_hash"}
+EOF
+)
+  
+  # Append to chain
+  local chain_file="$provenance_dir/chain.jsonl"
+  mkdir -p "$provenance_dir"
+  echo "$receipt" >> "$chain_file"
+  
+  # Clean up temp file
+  rm -f "$session_file"
+  
+  log_success "Session sealed: $next_hash"
+  
+  # Output receipt
+  echo "$receipt" | jq .
+}
+
+# Verify chain integrity
+verify_chain() {
+  local project="${1:-.}"
+  local since="${2:-}"
+  local until="${3:-}"
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  local chain_file="$PROVENANCE_ROOT/$slug/chain.jsonl"
+  
+  if [ ! -f "$chain_file" ]; then
+    log_warn "No provenance chain found for project: $project"
+    return 1
+  fi
+  
+  log_info "Verifying provenance chain..."
+  
+  local prev_hash="0000000000000000000000000000000000000000000000000000000000000000"
+  local line_num=0
+  local errors=0
+  
+  while IFS= read -r line; do
+    # Skip comments
+    if [[ "$line" =~ ^# ]]; then
+      continue
+    fi
+    
+    [ -z "$line" ] && continue
+    
+    ((line_num++))
+    
+    # Extract fields
+    local receipt_prev_hash receipt_next_hash session_id
+    receipt_prev_hash=$(echo "$line" | jq -r '.prev_hash // empty' 2>/dev/null || echo "")
+    receipt_next_hash=$(echo "$line" | jq -r '.next_hash // empty' 2>/dev/null || echo "")
+    session_id=$(echo "$line" | jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown")
+    
+    if [ -z "$receipt_prev_hash" ] || [ -z "$receipt_next_hash" ]; then
+      log_warn "Line $line_num: malformed receipt"
+      ((errors++))
+      continue
+    fi
+    
+    # Verify hash chain continuity
+    if [ "$prev_hash" != "$receipt_prev_hash" ]; then
+      log_error "Line $line_num ($session_id): hash mismatch!"
+      log_error "  Expected prev: $prev_hash"
+      log_error "  Got prev: $receipt_prev_hash"
+      ((errors++))
+    else
+      log_success "Line $line_num ($session_id): hash verified"
+    fi
+    
+    prev_hash="$receipt_next_hash"
+  done < "$chain_file"
+  
+  echo ""
+  if [ $errors -eq 0 ]; then
+    log_success "Chain verified: all $line_num receipts intact"
+    return 0
+  else
+    log_error "Chain verification FAILED: $errors errors found"
+    return 1
+  fi
+}
+
+# Export audit trail
+export_audit_trail() {
+  local project="${1:-.}"
+  local format="${2:-jsonl}"
+  local output="${3:-audit-trail.$format}"
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  local chain_file="$PROVENANCE_ROOT/$slug/chain.jsonl"
+  
+  if [ ! -f "$chain_file" ]; then
+    log_error "No provenance chain found"
+    exit 1
+  fi
+  
+  log_info "Exporting audit trail..."
+  log_info "  Format: $format"
+  log_info "  Output: $output"
+  
+  case "$format" in
+    jsonl)
+      cp "$chain_file" "$output"
+      ;;
+    json)
+      # Convert JSONL to JSON array
+      {
+        echo "["
+        grep -v '^#' "$chain_file" | sed '$ ! s/$/,/'
+        echo "]"
+      } > "$output"
+      ;;
+    csv)
+      {
+        echo "session_id,agent_id,prev_hash,start_time,end_time,duration_seconds,exit_code,files_modified,next_hash"
+        grep -v '^#' "$chain_file" | jq -r '[.session_id, .agent_id, .prev_hash, .execution.start_time, .execution.end_time, .execution.duration_seconds, .execution.exit_code, .execution.files_modified, .next_hash] | @csv' 2>/dev/null
+      } > "$output"
+      ;;
+    *)
+      log_error "Unknown format: $format"
+      exit 1
+      ;;
+  esac
+  
+  log_success "Audit trail exported: $output ($(wc -l < "$output") lines)"
+}
+
+# Check tamper status
+check_status() {
+  local project="${1:-.}"
+  
+  local slug
+  slug=$(path_to_slug "$project")
+  
+  local chain_file="$PROVENANCE_ROOT/$slug/chain.jsonl"
+  
+  if [ ! -f "$chain_file" ]; then
+    echo "Status: No provenance data"
+    return
+  fi
+  
+  local line_count
+  line_count=$(grep -v '^#' "$chain_file" | grep -v '^$' | wc -l)
+  
+  local last_session
+  last_session=$(tail -1 "$chain_file" | jq -r '.session_id // "unknown"' 2>/dev/null)
+  
+  local last_time
+  last_time=$(tail -1 "$chain_file" | jq -r '.execution.end_time // "unknown"' 2>/dev/null)
+  
+  echo "Provenance Status"
+  echo "  Project: $project"
+  echo "  Sessions: $line_count"
+  echo "  Last session: $last_session"
+  echo "  Last activity: $last_time"
+  
+  # Quick verification
+  if verify_chain "$project" > /dev/null 2>&1; then
+    echo "  Integrity: ✓ VERIFIED"
+  else
+    echo "  Integrity: ✗ FAILED (possible tampering)"
+  fi
+}
+
+usage() {
+  cat <<EOF
+$PROG — Layer 5b: Cryptographic Provenance
+
+USAGE:
+  $PROG start [--project PATH] [--agent-id ID]   Start session receipt
+  $PROG end SESSION_ID [OPTIONS]                  End and seal receipt
+  $PROG verify [--project PATH]                   Verify chain integrity
+  $PROG export [--project PATH] [OPTIONS]         Export audit trail
+  $PROG status [--project PATH]                   Check provenance status
+  $PROG help                                      Show this help
+
+START OPTIONS:
+  --project PATH        Project directory (default: current)
+  --agent-id ID         Agent ID (optional)
+
+END OPTIONS:
+  --exit-code NUM       Process exit code (default: 0)
+  --files-modified NUM  Number of files changed (default: 0)
+  --project PATH        Project directory (default: current)
+
+EXPORT OPTIONS:
+  --format FORMAT       jsonl, json, csv (default: jsonl)
+  --output FILE         Output file (default: audit-trail.FORMAT)
+
+EXAMPLES:
+  # Start session
+  SESSION=\$($PROG start --project ~/repos/easy-api --agent-id abc123)
+  
+  # Do work...
+  
+  # End session
+  $PROG end \$SESSION --exit-code 0 --files-modified 3
+  
+  # Verify integrity
+  $PROG verify --project ~/repos/easy-api
+  
+  # Export for compliance
+  $PROG export --project ~/repos/easy-api --format csv --output audit.csv
+
+EOF
+}
+
+main() {
+  if [ $# -eq 0 ]; then
+    usage
+    exit 0
+  fi
+  
+  local cmd="$1"
+  shift
+  
+  case "$cmd" in
+    start)
+      local project="."
+      local agent_id=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          --agent-id) agent_id="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      start_session "$project" "$agent_id"
+      ;;
+    
+    end)
+      if [ $# -eq 0 ]; then
+        log_error "Missing session ID"
+        exit 1
+      fi
+      local session_id="$1"
+      shift
+      
+      local exit_code=0
+      local files_modified=0
+      local project="."
+      
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --exit-code) exit_code="$2"; shift 2 ;;
+          --files-modified) files_modified="$2"; shift 2 ;;
+          --project) project="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      
+      end_session "$session_id" "$exit_code" "$files_modified" "$project"
+      ;;
+    
+    verify)
+      local project="."
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      verify_chain "$project"
+      ;;
+    
+    export)
+      local project="."
+      local format="jsonl"
+      local output=""
+      
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          --format) format="$2"; shift 2 ;;
+          --output) output="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      
+      if [ -z "$output" ]; then
+        output="audit-trail.$format"
+      fi
+      
+      export_audit_trail "$project" "$format" "$output"
+      ;;
+    
+    status)
+      local project="."
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project) project="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      check_status "$project"
+      ;;
+    
+    help|--help|-h)
+      usage
+      ;;
+    
+    *)
+      log_error "Unknown command: $cmd"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
