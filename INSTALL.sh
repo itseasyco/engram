@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # OpenClaw LACP Fusion Plugin Installer
-# Version: 2.2.0
+# Version: 2.0.0
+# Interactive CLI wizard for configuring and installing the plugin
 # Installs to ~/.openclaw/extensions/openclaw-lacp-fusion/
-# Registers in ~/.openclaw/openclaw.json gateway config
 
 PLUGIN_NAME="openclaw-lacp-fusion"
-PLUGIN_VERSION="2.2.0"
+PLUGIN_VERSION="2.0.0"
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
 GATEWAY_CONFIG="$OPENCLAW_HOME/openclaw.json"
@@ -18,7 +18,9 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 log_info()    { echo -e "${BLUE}i${NC}  $1"; }
@@ -47,18 +49,162 @@ detect_environment() {
     esac
 
     # Detect default Obsidian vault path
-    if [ -d "$HOME/obsidian/vault" ]; then
-        DETECTED_VAULT="$HOME/obsidian/vault"
-    elif [ -d "/Volumes/Cortex" ]; then
+    if [ -d "/Volumes/Cortex" ]; then
         DETECTED_VAULT="/Volumes/Cortex"
+    elif [ -d "$HOME/obsidian/vault" ]; then
+        DETECTED_VAULT="$HOME/obsidian/vault"
     elif [ -d "$HOME/Documents/Obsidian" ]; then
         DETECTED_VAULT="$HOME/Documents/Obsidian"
     else
         DETECTED_VAULT="$HOME/obsidian/vault"
     fi
+}
 
-    log_info "Detected OS: $DETECTED_OS"
-    log_info "Detected vault: $DETECTED_VAULT"
+# ─── Interactive wizard ──────────────────────────────────────────────────────
+
+prompt_value() {
+    local prompt="$1"
+    local default="$2"
+    local result
+
+    echo -en "  ${CYAN}?${NC} ${prompt} ${DIM}[${default}]${NC}: "
+    read -r result
+    echo "${result:-$default}"
+}
+
+prompt_choice() {
+    local prompt="$1"
+    shift
+    local options=("$@")
+    local default="${options[0]}"
+
+    echo -e "  ${CYAN}?${NC} ${prompt}"
+    for i in "${!options[@]}"; do
+        if [ "$i" -eq 0 ]; then
+            echo -e "    ${GREEN}>${NC} ${BOLD}${options[$i]}${NC} ${DIM}(default)${NC}"
+        else
+            echo -e "      ${options[$i]}"
+        fi
+    done
+    echo -en "    Choice: "
+    read -r choice
+
+    if [ -z "$choice" ]; then
+        echo "$default"
+    else
+        # Match by number or exact text
+        for opt in "${options[@]}"; do
+            if [ "$choice" = "$opt" ]; then
+                echo "$opt"
+                return
+            fi
+        done
+        echo "$default"
+    fi
+}
+
+prompt_yes_no() {
+    local prompt="$1"
+    local default="${2:-y}"
+
+    if [ "$default" = "y" ]; then
+        echo -en "  ${CYAN}?${NC} ${prompt} ${DIM}[Y/n]${NC}: "
+    else
+        echo -en "  ${CYAN}?${NC} ${prompt} ${DIM}[y/N]${NC}: "
+    fi
+    read -r answer
+    answer="${answer:-$default}"
+
+    case "$answer" in
+        [yY]|[yY][eE][sS]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+run_wizard() {
+    echo ""
+    echo -e "${BOLD}Configuration Wizard${NC}"
+    echo -e "${DIM}Press Enter to accept defaults shown in brackets.${NC}"
+    echo ""
+
+    # 1. Obsidian vault path
+    echo -e "${BOLD}Obsidian Vault${NC}"
+    echo -e "  ${DIM}Your Obsidian vault stores knowledge graph data (Layer 2).${NC}"
+    echo -e "  ${DIM}If you don't use Obsidian, a directory will be created for you.${NC}"
+    WIZARD_VAULT=$(prompt_value "Vault path" "$DETECTED_VAULT")
+    echo ""
+
+    # 2. Context engine
+    echo -e "${BOLD}Context Engine${NC}"
+    echo -e "  ${DIM}Controls how LACP stores and retrieves context facts.${NC}"
+    echo -e "  ${DIM}  auto          — auto-detect (uses lossless-claw if available, else file-based)${NC}"
+    echo -e "  ${DIM}  file-based    — JSON files on disk (no extra dependencies)${NC}"
+    echo -e "  ${DIM}  lossless-claw — native LCM database (~/.openclaw/lcm.db required)${NC}"
+    WIZARD_CONTEXT_ENGINE=$(prompt_choice "Context engine" "auto" "file-based" "lossless-claw")
+    echo ""
+
+    # 3. Safety profile
+    echo -e "${BOLD}Safety Profile${NC}"
+    echo -e "  ${DIM}Controls which execution hooks are active.${NC}"
+    echo -e "  ${DIM}  balanced      — session context + quality gate (recommended)${NC}"
+    echo -e "  ${DIM}  minimal-stop  — quality gate only (lightweight)${NC}"
+    echo -e "  ${DIM}  hardened-exec — all 4 hooks enabled (maximum safety)${NC}"
+    WIZARD_PROFILE=$(prompt_choice "Profile" "balanced" "minimal-stop" "hardened-exec")
+    echo ""
+
+    # 4. Advanced config (optional)
+    WIZARD_ADVANCED=false
+    if prompt_yes_no "Configure advanced options?" "n"; then
+        WIZARD_ADVANCED=true
+        echo ""
+        echo -e "${BOLD}Advanced Configuration${NC}"
+
+        WIZARD_POLICY_TIER=$(prompt_choice "Default policy tier" "review" "safe" "critical")
+        WIZARD_CODE_GRAPH=$(prompt_yes_no "Enable code intelligence (AST analysis)?" "n" && echo "true" || echo "false")
+        WIZARD_PROVENANCE=$(prompt_yes_no "Enable provenance tracking?" "y" && echo "true" || echo "false")
+        WIZARD_LOCAL_FIRST=$(prompt_yes_no "Local-first mode (no external sync)?" "y" && echo "true" || echo "false")
+    else
+        WIZARD_POLICY_TIER="review"
+        WIZARD_CODE_GRAPH="false"
+        WIZARD_PROVENANCE="true"
+        WIZARD_LOCAL_FIRST="true"
+    fi
+
+    # Resolve context engine "auto"
+    if [ "$WIZARD_CONTEXT_ENGINE" = "auto" ]; then
+        if [ -f "$OPENCLAW_HOME/lcm.db" ]; then
+            WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
+        else
+            WIZARD_CONTEXT_ENGINE_RESOLVED="file-based"
+        fi
+    else
+        WIZARD_CONTEXT_ENGINE_RESOLVED="$WIZARD_CONTEXT_ENGINE"
+    fi
+
+    # 5. Confirmation
+    echo ""
+    echo -e "${BOLD}Installation Summary${NC}"
+    echo -e "  ┌─────────────────────────────────────────────────────────────┐"
+    echo -e "  │  Plugin:          openclaw-lacp-fusion v${PLUGIN_VERSION}               │"
+    echo -e "  │  Install path:    ${DIM}${PLUGIN_PATH}${NC}  │"
+    echo -e "  │  Obsidian vault:  ${DIM}${WIZARD_VAULT}${NC}"
+    echo -e "  │  Context engine:  ${WIZARD_CONTEXT_ENGINE_RESOLVED}"
+    echo -e "  │  Safety profile:  ${WIZARD_PROFILE}"
+    echo -e "  │  Policy tier:     ${WIZARD_POLICY_TIER}"
+    echo -e "  │  Code graph:      ${WIZARD_CODE_GRAPH}"
+    echo -e "  │  Provenance:      ${WIZARD_PROVENANCE}"
+    echo -e "  │  Local-first:     ${WIZARD_LOCAL_FIRST}"
+    echo -e "  └─────────────────────────────────────────────────────────────┘"
+    echo ""
+
+    if ! prompt_yes_no "Proceed with installation?" "y"; then
+        echo ""
+        log_info "Installation cancelled."
+        exit 0
+    fi
+
+    # Export wizard values for use by installation steps
+    DETECTED_VAULT="$WIZARD_VAULT"
 }
 
 # ─── Step 1: Prerequisites ───────────────────────────────────────────────────
@@ -69,27 +215,17 @@ check_prerequisites() {
 
     # OpenClaw home
     if [ ! -d "$OPENCLAW_HOME" ]; then
-        log_error "OpenClaw not found at $OPENCLAW_HOME"
-        echo "  Set OPENCLAW_HOME=/path/to/.openclaw and try again"
-        exit 1
+        log_warning "OpenClaw directory not found at $OPENCLAW_HOME — will be created"
+        mkdir -p "$OPENCLAW_HOME"
     fi
-    log_success "OpenClaw found at $OPENCLAW_HOME"
+    log_success "OpenClaw home: $OPENCLAW_HOME"
 
-    # Gateway config
+    # Gateway config (create minimal if missing)
     if [ ! -f "$GATEWAY_CONFIG" ]; then
-        log_error "Gateway config not found at $GATEWAY_CONFIG"
-        echo "  Run 'openclaw configure' first to generate the config"
-        exit 1
+        log_warning "Gateway config not found — creating minimal config"
+        echo '{"plugins":{"allow":[],"entries":{},"installs":{}}}' > "$GATEWAY_CONFIG"
     fi
-    log_success "Gateway config found"
-
-    # Bash version
-    if [ "${BASH_VERSINFO[0]}" -lt 5 ]; then
-        log_error "Bash 5.0+ required (you have ${BASH_VERSION})"
-        fail=1
-    else
-        log_success "Bash ${BASH_VERSION}"
-    fi
+    log_success "Gateway config: $GATEWAY_CONFIG"
 
     # Python 3.9+
     if ! command -v python3 &>/dev/null; then
@@ -228,11 +364,19 @@ generate_env_config() {
         return
     fi
 
+    # Map context engine to env value
+    local context_engine_env=""
+    if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ]; then
+        context_engine_env="LACP_CONTEXT_ENGINE=lossless-claw"
+    else
+        context_engine_env="LACP_CONTEXT_ENGINE=file-based"
+    fi
+
     cat > "$env_file" << ENVEOF
 # ============================================================================
 # OpenClaw LACP Fusion — Environment Configuration
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-# OS: $DETECTED_OS
+# OS: $DETECTED_OS | Installer: v${PLUGIN_VERSION} (wizard)
 # ============================================================================
 
 # Layer 2: Knowledge Graph
@@ -240,16 +384,20 @@ LACP_OBSIDIAN_VAULT=$DETECTED_VAULT
 LACP_KNOWLEDGE_ROOT=$OPENCLAW_HOME/data/knowledge
 LACP_AUTOMATION_ROOT=$OPENCLAW_HOME/data/automation
 
+# Context Engine
+$context_engine_env
+
 # Layer 5: Provenance
 PROVENANCE_ROOT=$OPENCLAW_HOME/provenance
 AGENT_ID_STORE=$OPENCLAW_HOME/agent-ids
 
 # Feature Flags
-LACP_LOCAL_FIRST=true
+LACP_LOCAL_FIRST=$WIZARD_LOCAL_FIRST
 LACP_WITH_GITNEXUS=false
+CODE_GRAPH_ENABLED=$WIZARD_CODE_GRAPH
 
 # Hooks
-OPENCLAW_HOOKS_PROFILE=balanced
+OPENCLAW_HOOKS_PROFILE=$WIZARD_PROFILE
 
 # To customize further, see the full template at:
 # $PLUGIN_PATH/config/.openclaw-lacp.env.template
@@ -281,6 +429,12 @@ update_gateway_config() {
         return
     fi
 
+    # Resolve context engine for JSON (null for file-based)
+    local ce_json="null"
+    if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ]; then
+        ce_json='"lossless-claw"'
+    fi
+
     # Add to plugins.allow if not present
     local tmp
     tmp=$(mktemp)
@@ -294,19 +448,27 @@ update_gateway_config() {
     ' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
     log_success "Added to plugins.allow"
 
-    # Add plugin entry
+    # Add plugin entry with wizard values
     tmp=$(mktemp)
-    jq --arg vault "$DETECTED_VAULT" --arg kr "$OPENCLAW_HOME/data/knowledge" '
+    jq --arg vault "$DETECTED_VAULT" \
+       --arg kr "$OPENCLAW_HOME/data/knowledge" \
+       --arg profile "$WIZARD_PROFILE" \
+       --arg tier "$WIZARD_POLICY_TIER" \
+       --argjson cg "$WIZARD_CODE_GRAPH" \
+       --argjson prov "$WIZARD_PROVENANCE" \
+       --argjson lf "$WIZARD_LOCAL_FIRST" \
+       --argjson ce "$ce_json" '
       .plugins.entries["openclaw-lacp-fusion"] = {
         "enabled": true,
         "config": {
-          "profile": "balanced",
+          "profile": $profile,
           "obsidianVault": $vault,
           "knowledgeRoot": $kr,
-          "localFirst": true,
-          "provenanceEnabled": true,
-          "codeGraphEnabled": false,
-          "policyTier": "review"
+          "localFirst": $lf,
+          "provenanceEnabled": $prov,
+          "codeGraphEnabled": $cg,
+          "policyTier": $tier,
+          "contextEngine": $ce
         }
       }
     ' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
@@ -409,35 +571,24 @@ run_validation() {
 # ─── Step 8: Summary ────────────────────────────────────────────────────────
 
 print_summary() {
-    log_step 8 "Installation summary"
+    log_step 8 "Installation complete"
 
     cat << EOF
 
 ${GREEN}✓ openclaw-lacp-fusion v${PLUGIN_VERSION} installed${NC}
 
-${BOLD}What was configured:${NC}
-  ${GREEN}✓${NC} Plugin installed to $PLUGIN_PATH
-  ${GREEN}✓${NC} Gateway config updated ($GATEWAY_CONFIG)
-  ${GREEN}✓${NC} Knowledge directories created
-  ${GREEN}✓${NC} Obsidian vault at $DETECTED_VAULT
-  ${GREEN}✓${NC} Safety profile: balanced
+${BOLD}Configuration:${NC}
+  ${GREEN}✓${NC} Plugin:       $PLUGIN_PATH
+  ${GREEN}✓${NC} Vault:        $DETECTED_VAULT
+  ${GREEN}✓${NC} Engine:       $WIZARD_CONTEXT_ENGINE_RESOLVED
+  ${GREEN}✓${NC} Profile:      $WIZARD_PROFILE
+  ${GREEN}✓${NC} Policy tier:  $WIZARD_POLICY_TIER
 
 ${BOLD}Next steps:${NC}
   1. Restart OpenClaw:     openclaw gateway restart
-  2. Init project memory:  $PLUGIN_PATH/bin/openclaw-memory-init ~/my-project agent-name webchat
-  3. Validate setup:       $PLUGIN_PATH/bin/openclaw-lacp-validate
-  4. Test context query:   $PLUGIN_PATH/bin/openclaw-brain-graph query "test"
-
-${BOLD}Configuring lossless-claw integration (optional):${NC}
-  To use the native LCM database instead of file-based context:
-
-  1. Ensure lossless-claw is installed and ~/.openclaw/lcm.db exists
-  2. Add contextEngine to your openclaw.json:
-     jq '.plugins.entries["openclaw-lacp-fusion"].config.contextEngine = "lossless-claw"' \\
-       $GATEWAY_CONFIG > /tmp/oc.json && mv /tmp/oc.json $GATEWAY_CONFIG
-  3. Verify connection:
-     $PLUGIN_PATH/bin/openclaw-lacp-promote discover --backend lossless-claw --limit 5
-  4. See plugin/config/example-openclaw-lacp.lossless-claw.json for full config
+  2. Init project memory:  openclaw-memory-init ~/my-project agent-name webchat
+  3. Validate setup:       openclaw-lacp-validate
+  4. Test context query:   openclaw-brain-graph query "test"
 
 ${BOLD}Locations:${NC}
   Config:  $PLUGIN_PATH/config/.openclaw-lacp.env
@@ -450,10 +601,6 @@ ${BOLD}Profiles:${NC}
   balanced       — session context + quality gate (default)
   hardened-exec  — all 4 hooks enabled (maximum safety)
 
-  Change profile:
-    jq '.plugins.entries["openclaw-lacp-fusion"].config.profile = "hardened-exec"' \\
-      $GATEWAY_CONFIG > /tmp/oc.json && mv /tmp/oc.json $GATEWAY_CONFIG
-
 EOF
 }
 
@@ -462,11 +609,19 @@ EOF
 main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║  OpenClaw LACP Fusion Installer v${PLUGIN_VERSION}                          ║"
+    echo "║          OpenClaw LACP Fusion Installer v${PLUGIN_VERSION}                    ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 
     detect_environment
+    log_info "Detected OS: $DETECTED_OS"
+
+    # Run interactive wizard
+    run_wizard
+
+    echo ""
+    log_info "Starting installation..."
+
     check_prerequisites
     setup_plugin_directory
     create_data_directories
@@ -476,7 +631,7 @@ main() {
     run_validation
     print_summary
 
-    log_success "Installation complete!"
+    log_success "Done! Run 'openclaw gateway restart' to activate the plugin."
     exit 0
 }
 
