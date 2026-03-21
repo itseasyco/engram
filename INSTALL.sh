@@ -622,6 +622,15 @@ _link_openclaw_sdk() {
     if [ -n "$sdk_path" ]; then
         ln -s "$sdk_path" "$target_dir/openclaw"
         log_success "OpenClaw SDK linked from $sdk_path"
+
+        # Also link @sinclair/typebox (used by agent tool schemas)
+        local typebox_path
+        typebox_path=$(dirname "$sdk_path")/@sinclair/typebox
+        if [ -d "$typebox_path" ]; then
+            mkdir -p "$target_dir/@sinclair"
+            ln -s "$typebox_path" "$target_dir/@sinclair/typebox"
+            log_success "@sinclair/typebox linked"
+        fi
     else
         log_warning "Could not find OpenClaw SDK — index.ts may fail to load"
         log_info "  Fix manually: ln -s \$(find ~/.openclaw/extensions -path '*/node_modules/openclaw' -maxdepth 3 | head -1) $target_dir/openclaw"
