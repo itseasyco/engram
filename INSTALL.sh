@@ -204,11 +204,157 @@ prompt_browse_directory() {
     fi
 }
 
+# ─── Dependency installers ───────────────────────────────────────────────────
+
+check_and_install_obsidian_headless() {
+    if command -v ob &>/dev/null; then
+        local ob_ver
+        ob_ver=$(ob --version 2>/dev/null || echo "unknown")
+        log_success "obsidian-headless found (ob $ob_ver)"
+        return 0
+    fi
+
+    log_warning "obsidian-headless (ob) not found"
+    echo -e "  ${DIM}Required for Connected and Curator modes (vault sync via ob sync).${NC}"
+    echo ""
+
+    if prompt_yes_no "Install obsidian-headless globally? (npm install -g obsidian-headless)" "y"; then
+        echo ""
+        if [ "$HAS_GUM" = "true" ]; then
+            if gum spin --spinner dot --title "Installing obsidian-headless..." -- npm install -g obsidian-headless 2>/dev/null; then
+                log_success "obsidian-headless installed"
+            else
+                log_error "obsidian-headless installation failed"
+                return 1
+            fi
+        else
+            log_info "Installing obsidian-headless (this may take a moment)..."
+            if npm install -g obsidian-headless 2>&1 | tail -3; then
+                log_success "obsidian-headless installed"
+            else
+                log_error "obsidian-headless installation failed"
+                return 1
+            fi
+        fi
+
+        if command -v ob &>/dev/null; then
+            local ob_ver
+            ob_ver=$(ob --version 2>/dev/null || echo "unknown")
+            log_success "Verified: ob $ob_ver"
+            return 0
+        else
+            log_error "ob command not found after install. Check your PATH"
+            return 1
+        fi
+    else
+        log_info "Skipped obsidian-headless installation"
+        return 1
+    fi
+}
+
+check_and_install_gitnexus() {
+    if npx gitnexus --version &>/dev/null 2>&1; then
+        local gn_ver
+        gn_ver=$(npx gitnexus --version 2>/dev/null || echo "unknown")
+        log_success "GitNexus found ($gn_ver)"
+        return 0
+    fi
+
+    log_warning "GitNexus not found"
+    echo -e "  ${DIM}GitNexus provides Layer 4 code intelligence (AST analysis, dependency graphs).${NC}"
+    echo ""
+
+    if prompt_yes_no "Install GitNexus globally? (npm install -g gitnexus)" "y"; then
+        echo ""
+        if [ "$HAS_GUM" = "true" ]; then
+            if gum spin --spinner dot --title "Installing GitNexus..." -- npm install -g gitnexus 2>/dev/null; then
+                log_success "GitNexus installed"
+            else
+                log_error "GitNexus installation failed"
+                return 1
+            fi
+        else
+            log_info "Installing GitNexus (this may take a moment)..."
+            if npm install -g gitnexus 2>&1 | tail -3; then
+                log_success "GitNexus installed"
+            else
+                log_error "GitNexus installation failed"
+                return 1
+            fi
+        fi
+
+        if npx gitnexus --version &>/dev/null 2>&1; then
+            log_success "Verified: GitNexus ready"
+            return 0
+        else
+            log_error "gitnexus command not found after install"
+            return 1
+        fi
+    else
+        log_info "Skipped GitNexus installation"
+        return 1
+    fi
+}
+
+check_and_install_lossless_claw() {
+    if [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ]; then
+        log_success "lossless-claw found at $OPENCLAW_HOME/extensions/lossless-claw"
+        return 0
+    fi
+
+    log_warning "lossless-claw not found"
+    echo -e "  ${DIM}lossless-claw provides the native LCM database context engine.${NC}"
+    echo ""
+
+    if prompt_yes_no "Install lossless-claw? (openclaw plugins install @martian-engineering/lossless-claw)" "y"; then
+        echo ""
+        if [ "$HAS_GUM" = "true" ]; then
+            if gum spin --spinner dot --title "Installing lossless-claw..." -- openclaw plugins install @martian-engineering/lossless-claw 2>/dev/null; then
+                log_success "lossless-claw installed"
+            else
+                log_error "lossless-claw installation failed"
+                return 1
+            fi
+        else
+            log_info "Installing lossless-claw (this may take a moment)..."
+            if openclaw plugins install @martian-engineering/lossless-claw 2>&1 | tail -5; then
+                log_success "lossless-claw installed"
+            else
+                log_error "lossless-claw installation failed"
+                return 1
+            fi
+        fi
+
+        if [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ]; then
+            log_success "Verified: lossless-claw extension present"
+        else
+            log_error "lossless-claw directory not found after install"
+            return 1
+        fi
+
+        if [ -f "$OPENCLAW_HOME/lcm.db" ]; then
+            log_success "Verified: lcm.db exists"
+        else
+            log_info "lcm.db not yet created. Will be initialized on first use"
+        fi
+
+        return 0
+    else
+        log_info "Skipped lossless-claw installation"
+        return 1
+    fi
+}
+
 run_wizard() {
     echo ""
     echo -e "${BOLD}Configuration Wizard${NC}"
     echo -e "${DIM}Press Enter to accept defaults shown in brackets.${NC}"
     echo ""
+
+    # Mode defaults
+    WIZARD_MODE="standalone"
+    WIZARD_CURATOR_URL=""
+    WIZARD_CURATOR_TOKEN=""
 
     # 1. Obsidian vault path
     echo -e "${BOLD}Obsidian Vault${NC}"
@@ -301,7 +447,64 @@ run_wizard() {
     echo -e "  ${GREEN}✓${NC} Safety profile: $WIZARD_PROFILE"
     echo ""
 
-    # 4. Advanced config (optional)
+    # 4. Operating mode
+    echo -e "${BOLD}Operating Mode${NC}"
+    echo -e "  ${DIM}Controls how this node participates in the knowledge network.${NC}"
+    echo -e "  ${DIM}Standalone is the default. Everything runs locally.${NC}"
+    echo ""
+    local mode_choice
+    mode_choice=$(prompt_choice "Mode" \
+        "standalone — local vault, all brain commands active (default)" \
+        "connected  — sync to shared vault, mutations delegated to curator" \
+        "curator    — server node: connectors, mycelium, git backup, invites")
+    WIZARD_MODE="${mode_choice%%[[:space:]]*}"
+    echo -e "  ${GREEN}✓${NC} Operating mode: $WIZARD_MODE"
+    echo ""
+
+    # Connected mode: collect curator URL and invite token
+    if [ "$WIZARD_MODE" = "connected" ]; then
+        echo -e "${BOLD}Curator Connection${NC}"
+        echo -e "  ${DIM}Your curator admin should have given you a URL and invite token.${NC}"
+        echo ""
+        WIZARD_CURATOR_URL=$(prompt_value "Curator URL" "https://curator.example.com")
+        WIZARD_CURATOR_TOKEN=$(prompt_value "Invite token" "")
+        if [ -z "$WIZARD_CURATOR_TOKEN" ]; then
+            log_warning "No invite token provided. You can set this later via openclaw-lacp-connect join"
+        fi
+        echo -e "  ${GREEN}✓${NC} Curator URL: $WIZARD_CURATOR_URL"
+        echo ""
+    fi
+
+    # Curator mode: placeholder flags
+    if [ "$WIZARD_MODE" = "curator" ]; then
+        echo -e "${BOLD}Curator Server Setup${NC}"
+        echo -e "  ${DIM}Full curator configuration (connectors, schedule, git backup, invites)${NC}"
+        echo -e "  ${DIM}will be available in a future release. Setting curator flags for now.${NC}"
+        echo ""
+        log_info "Curator mode flags will be written to config."
+        echo ""
+    fi
+
+    # Dependency: obsidian-headless (required for connected/curator)
+    if [ "$WIZARD_MODE" = "connected" ] || [ "$WIZARD_MODE" = "curator" ]; then
+        echo -e "${BOLD}Required Dependency: obsidian-headless${NC}"
+        echo ""
+        if ! check_and_install_obsidian_headless; then
+            echo ""
+            log_warning "Cannot proceed with $WIZARD_MODE mode without obsidian-headless."
+            log_info "Falling back to standalone mode. You can switch later with:"
+            log_info "  1. npm install -g obsidian-headless"
+            log_info "  2. openclaw-lacp-connect join --token <token>"
+            echo ""
+            WIZARD_MODE="standalone"
+            WIZARD_CURATOR_URL=""
+            WIZARD_CURATOR_TOKEN=""
+            echo -e "  ${YELLOW}!${NC} Mode changed to: standalone"
+            echo ""
+        fi
+    fi
+
+    # 5. Advanced config (optional)
     WIZARD_ADVANCED=false
     if prompt_yes_no "Configure advanced options?" "n"; then
         WIZARD_ADVANCED=true
@@ -315,7 +518,22 @@ run_wizard() {
             "critical — all operations require approval")
         WIZARD_POLICY_TIER="${tier_choice%%[[:space:]]*}"
 
-        WIZARD_CODE_GRAPH=$(prompt_yes_no "Enable code intelligence (AST analysis)?" "n" && echo "true" || echo "false")
+        WIZARD_CODE_GRAPH="false"
+        if prompt_yes_no "Enable code intelligence (AST analysis)?" "n"; then
+            echo ""
+            echo -e "${BOLD}Dependency: GitNexus${NC}"
+            echo ""
+            if check_and_install_gitnexus; then
+                WIZARD_CODE_GRAPH="true"
+                log_success "Code intelligence enabled with GitNexus"
+            else
+                echo ""
+                log_warning "GitNexus not available. Code intelligence disabled"
+                log_info "Install later: npm install -g gitnexus"
+                WIZARD_CODE_GRAPH="false"
+            fi
+            echo ""
+        fi
         WIZARD_PROVENANCE=$(prompt_yes_no "Enable provenance tracking?" "y" && echo "true" || echo "false")
         WIZARD_LOCAL_FIRST=$(prompt_yes_no "Local-first mode (no external sync)?" "y" && echo "true" || echo "false")
 
@@ -378,10 +596,25 @@ run_wizard() {
         WIZARD_DISABLED_RULES=()
     fi
 
-    # Resolve context engine "auto"
-    if [ "$WIZARD_CONTEXT_ENGINE" = "auto" ]; then
-        if [ -f "$OPENCLAW_HOME/lcm.db" ]; then
+    # Resolve context engine with dependency detection
+    if [ "$WIZARD_CONTEXT_ENGINE" = "lossless-claw" ]; then
+        echo -e "${BOLD}Dependency: lossless-claw${NC}"
+        echo ""
+        if check_and_install_lossless_claw; then
             WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
+        else
+            echo ""
+            log_warning "lossless-claw not available. Falling back to file-based context engine"
+            log_info "Install later: openclaw plugins install @martian-engineering/lossless-claw"
+            WIZARD_CONTEXT_ENGINE_RESOLVED="file-based"
+        fi
+        echo ""
+    elif [ "$WIZARD_CONTEXT_ENGINE" = "auto" ]; then
+        if [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ] && [ -f "$OPENCLAW_HOME/lcm.db" ]; then
+            WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
+        elif [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ]; then
+            WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
+            log_info "lossless-claw extension found (lcm.db will be created on first use)"
         else
             WIZARD_CONTEXT_ENGINE_RESOLVED="file-based"
         fi
@@ -717,6 +950,12 @@ LACP_LOCAL_FIRST=$WIZARD_LOCAL_FIRST
 LACP_WITH_GITNEXUS=false
 CODE_GRAPH_ENABLED=$WIZARD_CODE_GRAPH
 
+# Operating Mode
+LACP_MODE=$WIZARD_MODE
+LACP_MUTATIONS_ENABLED=$([ "$WIZARD_MODE" = "connected" ] && echo "false" || echo "true")
+$([ "$WIZARD_MODE" != "standalone" ] && [ -n "$WIZARD_CURATOR_URL" ] && echo "LACP_CURATOR_URL=$WIZARD_CURATOR_URL")
+$([ "$WIZARD_MODE" = "connected" ] && [ -n "$WIZARD_CURATOR_TOKEN" ] && echo "LACP_CURATOR_TOKEN=$WIZARD_CURATOR_TOKEN")
+
 # Hooks
 OPENCLAW_HOOKS_PROFILE=$WIZARD_PROFILE
 
@@ -801,6 +1040,12 @@ update_gateway_config() {
     ' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
     log_success "Added to plugins.allow"
 
+    # Compute mutations flag
+    local mutations_enabled="true"
+    if [ "$WIZARD_MODE" = "connected" ]; then
+        mutations_enabled="false"
+    fi
+
     # Add plugin entry with wizard values
     tmp=$(mktemp)
     jq --arg vault "$DETECTED_VAULT" \
@@ -810,7 +1055,10 @@ update_gateway_config() {
        --argjson cg "$WIZARD_CODE_GRAPH" \
        --argjson prov "$WIZARD_PROVENANCE" \
        --argjson lf "$WIZARD_LOCAL_FIRST" \
-       --argjson ce "$ce_json" '
+       --argjson ce "$ce_json" \
+       --arg mode "$WIZARD_MODE" \
+       --arg mutations "$mutations_enabled" \
+       --arg curatorUrl "$WIZARD_CURATOR_URL" '
       .plugins.entries["openclaw-lacp-fusion"] = {
         "enabled": true,
         "config": {
@@ -821,7 +1069,10 @@ update_gateway_config() {
           "provenanceEnabled": $prov,
           "codeGraphEnabled": $cg,
           "policyTier": $tier,
-          "contextEngine": $ce
+          "contextEngine": $ce,
+          "mode": $mode,
+          "mutationsEnabled": $mutations,
+          "curatorUrl": (if $curatorUrl == "" then null else $curatorUrl end)
         }
       }
     ' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
