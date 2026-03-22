@@ -256,6 +256,179 @@ expand_layer5() {
 }
 
 # ============================================================================
+# Mycelium consolidation (calls Python modules)
+# ============================================================================
+
+PLUGIN_DIR="${OPENCLAW_PLUGIN_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+run_consolidation() {
+  local project="$1"
+  local dry_run_flag="$2"
+  local json_flag="$3"
+
+  echo ""
+  echo -e "${BLUE}Running Mycelium Consolidation Pipeline${NC}"
+
+  local vault="${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}"
+  if [ ! -d "$vault" ]; then
+    log_warn "Vault not found at $vault — skipping consolidation"
+    return 0
+  fi
+
+  # Step 1: Run consolidation (prune, merge, reinforce, heal)
+  log_info "Step 1/3: Running consolidation..."
+  local consolidate_args="--vault '$vault'"
+  if [ "$dry_run_flag" = "1" ]; then
+    consolidate_args="$consolidate_args --dry-run"
+  fi
+
+  local consolidation_result
+  consolidation_result=$(python3 -c "
+import json, sys, os
+sys.path.insert(0, '$PLUGIN_DIR')
+from plugin.lib.consolidation import run_consolidation
+result = run_consolidation(
+    vault_path='$vault',
+    apply=$( [ "$dry_run_flag" = "1" ] && echo "False" || echo "True" ),
+    dry_run=$( [ "$dry_run_flag" = "1" ] && echo "True" || echo "False" ),
+)
+print(json.dumps(result, indent=2, default=str))
+" 2>&1) || {
+    log_error "Consolidation failed"
+    echo "$consolidation_result" >&2
+    return 1
+  }
+
+  if [ "$json_flag" = "1" ]; then
+    echo "$consolidation_result"
+  else
+    local pruned
+    pruned=$(echo "$consolidation_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pruned',0))" 2>/dev/null || echo "?")
+    local healed
+    healed=$(echo "$consolidation_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('healed_count',0))" 2>/dev/null || echo "?")
+    local reinforced
+    reinforced=$(echo "$consolidation_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reinforced_count',0))" 2>/dev/null || echo "?")
+    echo "  Pruned: $pruned | Healed: $healed | Reinforced: $reinforced"
+  fi
+  log_success "Consolidation complete"
+
+  # Step 2: Generate FSRS review queue
+  log_info "Step 2/3: Generating FSRS review queue..."
+  local review_result
+  review_result=$(python3 -c "
+import json, sys
+sys.path.insert(0, '$PLUGIN_DIR')
+from plugin.lib.review_queue import write_review_queue
+result = write_review_queue(vault_path='$vault')
+print(json.dumps(result, indent=2, default=str))
+" 2>&1) || {
+    log_warn "Review queue generation failed (non-fatal)"
+    echo "$review_result" >&2
+  }
+
+  if [ -n "$review_result" ]; then
+    local review_count
+    review_count=$(echo "$review_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('count',0))" 2>/dev/null || echo "?")
+    echo "  Review queue: $review_count items"
+    log_success "Review queue generated"
+  fi
+
+  # Step 3: Detect knowledge gaps
+  log_info "Step 3/3: Detecting knowledge gaps..."
+  local gaps_result
+  gaps_result=$(python3 -c "
+import json, sys
+sys.path.insert(0, '$PLUGIN_DIR')
+from plugin.lib.knowledge_gaps import write_gap_report
+result = write_gap_report(vault_path='$vault')
+print(json.dumps(result, indent=2, default=str))
+" 2>&1) || {
+    log_warn "Knowledge gap detection failed (non-fatal)"
+    echo "$gaps_result" >&2
+  }
+
+  if [ -n "$gaps_result" ]; then
+    local sparse
+    sparse=$(echo "$gaps_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('gaps',{}).get('sparse_categories',[])))" 2>/dev/null || echo "?")
+    local missing
+    missing=$(echo "$gaps_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('gaps',{}).get('missing_bridges',[])))" 2>/dev/null || echo "?")
+    echo "  Gaps: $sparse sparse categories, $missing missing bridges"
+    log_success "Knowledge gaps report generated"
+  fi
+}
+
+run_activation() {
+  local project="$1"
+  local json_flag="$2"
+
+  echo ""
+  echo -e "${BLUE}Running Spreading Activation${NC}"
+
+  local vault="${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}"
+  if [ ! -d "$vault" ]; then
+    log_warn "Vault not found at $vault — skipping activation"
+    return 0
+  fi
+
+  local activation_result
+  activation_result=$(python3 -c "
+import json, sys
+sys.path.insert(0, '$PLUGIN_DIR')
+from plugin.lib.consolidation import _load_vault_notes
+from plugin.lib.mycelium import (
+    compute_retrieval_strength,
+    spreading_activation,
+    reinforce_access_paths,
+)
+
+items = _load_vault_notes('$vault')
+
+# Build seeds from recently-accessed notes (high retrieval strength)
+recent_seeds = {}
+for node_id, data in items.items():
+    edge_count = len(data.get('edges', []))
+    r = compute_retrieval_strength(data, edge_count=edge_count)
+    if r > 0.7:
+        recent_seeds[node_id] = r
+
+# Run spreading activation
+activations = {}
+if recent_seeds:
+    activations = spreading_activation(recent_seeds, items, alpha=0.7, max_hops=3)
+
+# Reinforce accessed paths
+total_reinforced = 0
+for node_id in recent_seeds:
+    result = reinforce_access_paths(node_id, items)
+    total_reinforced += result.get('reinforced_count', 0)
+
+output = {
+    'seeds': len(recent_seeds),
+    'activated_nodes': len(activations),
+    'reinforced_edges': total_reinforced,
+}
+print(json.dumps(output, indent=2))
+" 2>&1) || {
+    log_error "Activation failed"
+    echo "$activation_result" >&2
+    return 1
+  }
+
+  if [ "$json_flag" = "1" ]; then
+    echo "$activation_result"
+  else
+    local seeds
+    seeds=$(echo "$activation_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('seeds',0))" 2>/dev/null || echo "?")
+    local activated
+    activated=$(echo "$activation_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('activated_nodes',0))" 2>/dev/null || echo "?")
+    local reinforced
+    reinforced=$(echo "$activation_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reinforced_edges',0))" 2>/dev/null || echo "?")
+    echo "  Seeds: $seeds | Activated: $activated | Reinforced: $reinforced"
+  fi
+  log_success "Activation complete"
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -271,7 +444,10 @@ OPTIONS:
   --layer NUM           Expand specific layer (1-5, default: all)
   --max-tokens NUM      Token budget for summaries (default: 5000)
   --archive-days NUM    Archive entries older than N days (default: 90)
+  --consolidate         Run mycelium consolidation pipeline (prune, merge, reinforce, heal)
+  --activate            Run spreading activation from recently-accessed notes
   --dry-run             Show what would be done without changes
+  --json                Output results as JSON
   --help                Show this help
 
 EXAMPLES:
@@ -280,6 +456,9 @@ EXAMPLES:
 
   # Expand just Layer 1 with custom token budget
   $PROG --project ~/repos/easy-api --layer 1 --max-tokens 8000
+
+  # Run full consolidation + activation
+  $PROG --project ~/repos/easy-api --consolidate --activate
 
   # Archive old entries
   $PROG --project ~/repos/easy-api --archive-days 60
@@ -293,6 +472,9 @@ main() {
   local max_tokens=5000
   local archive_days=90
   local dry_run=0
+  local consolidate=0
+  local activate=0
+  local json_output=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -301,6 +483,9 @@ main() {
       --max-tokens) max_tokens="$2"; shift 2 ;;
       --archive-days) archive_days="$2"; shift 2 ;;
       --dry-run) dry_run=1; shift ;;
+      --consolidate) consolidate=1; shift ;;
+      --activate) activate=1; shift ;;
+      --json) json_output=1; shift ;;
       --help|-h|help) usage; exit 0 ;;
       *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
@@ -314,20 +499,33 @@ main() {
     log_warn "DRY RUN — no changes will be made"
   fi
 
-  if [ -z "$layer" ] || [ "$layer" = "1" ]; then
-    expand_layer1 "$project" "$max_tokens"
+  # Standard layer expansion (unless only --consolidate/--activate requested)
+  if [ "$consolidate" = "0" ] && [ "$activate" = "0" ]; then
+    if [ -z "$layer" ] || [ "$layer" = "1" ]; then
+      expand_layer1 "$project" "$max_tokens"
+    fi
+
+    if [ -z "$layer" ] || [ "$layer" = "2" ]; then
+      expand_layer2 "$project" "$max_tokens"
+    fi
+
+    if [ -z "$layer" ] || [ "$layer" = "3" ]; then
+      expand_layer3 "$project" "$max_tokens"
+    fi
+
+    if [ -z "$layer" ] || [ "$layer" = "5" ]; then
+      expand_layer5 "$project" "$max_tokens"
+    fi
   fi
 
-  if [ -z "$layer" ] || [ "$layer" = "2" ]; then
-    expand_layer2 "$project" "$max_tokens"
+  # Mycelium consolidation
+  if [ "$consolidate" = "1" ]; then
+    run_consolidation "$project" "$dry_run" "$json_output"
   fi
 
-  if [ -z "$layer" ] || [ "$layer" = "3" ]; then
-    expand_layer3 "$project" "$max_tokens"
-  fi
-
-  if [ -z "$layer" ] || [ "$layer" = "5" ]; then
-    expand_layer5 "$project" "$max_tokens"
+  # Spreading activation
+  if [ "$activate" = "1" ]; then
+    run_activation "$project" "$json_output"
   fi
 
   echo ""

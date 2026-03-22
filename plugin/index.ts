@@ -285,7 +285,76 @@ const lacpPlugin = {
       { optional: true },
     );
 
-    const toolCount = 6;
+    // Brain resolve: resolve contradictions/supersessions in knowledge notes
+    api.registerTool({
+      name: "lacp_brain_resolve",
+      description:
+        "Resolve contradiction or supersession state for a canonical memory note. " +
+        "Use this when you find conflicting information in the knowledge vault — " +
+        "mark notes as superseded, validated, stale, or archived with a reason.",
+      parameters: Type.Object({
+        id: Type.String({ description: "Canonical note ID to resolve" }),
+        resolution: Type.String({
+          description: 'Resolution: "superseded", "contradiction_resolved", "validated", "stale", "archived"',
+          enum: ["superseded", "contradiction_resolved", "validated", "stale", "archived"],
+        }),
+        reason: Type.String({ description: "Why this resolution was applied" }),
+        superseded_by: Type.Optional(Type.String({ description: "ID of replacement note (for superseded resolution)" })),
+        dry_run: Type.Optional(Type.Boolean({ description: "Preview changes without writing. Default: false" })),
+      }),
+      async execute(_id, params: any) {
+        const args = [
+          "--id", params.id,
+          "--resolution", params.resolution,
+          "--reason", params.reason,
+          "--json",
+        ];
+        if (params.superseded_by) args.push("--superseded-by", params.superseded_by);
+        if (params.dry_run) args.push("--dry-run");
+        const result = await runCli("openclaw-brain-resolve", args);
+        return textResult(result.stdout || `brain-resolve failed: ${result.stderr}`);
+      },
+    });
+
+    // Memory KPI: vault quality metrics
+    api.registerTool({
+      name: "lacp_memory_kpi",
+      description:
+        "Report memory-quality KPIs for the Obsidian knowledge vault — " +
+        "total notes, canonical notes, schema coverage, source backing, " +
+        "contradiction count, and staleness. Use this to assess vault health.",
+      parameters: Type.Object({
+        vault: Type.Optional(Type.String({ description: "Vault path (default: from config)" })),
+      }),
+      async execute(_id, params: any) {
+        const args = ["--json"];
+        if (params.vault) args.push("--vault", params.vault);
+        const result = await runCli("openclaw-memory-kpi", args);
+        return textResult(result.stdout || `memory-kpi failed: ${result.stderr}`);
+      },
+    });
+
+    // Vault optimize: apply memory-centric Obsidian graph defaults
+    api.registerTool({
+      name: "lacp_vault_optimize",
+      description:
+        "Apply memory-centric graph physics defaults to the Obsidian vault — " +
+        "tune link distance, repel strength, node sizing, and color groups " +
+        "for optimal knowledge graph visualization. Hides archive/trash paths.",
+      parameters: Type.Object({
+        vault: Type.Optional(Type.String({ description: "Vault path (default: from config)" })),
+        dry_run: Type.Optional(Type.Boolean({ description: "Preview changes without writing. Default: false" })),
+      }),
+      async execute(_id, params: any) {
+        const args = ["--json"];
+        if (params.vault) args.push("--vault", params.vault);
+        if (params.dry_run) args.push("--dry-run");
+        const result = await runCli("openclaw-obsidian-optimize", args);
+        return textResult(result.stdout || `vault-optimize failed: ${result.stderr}`);
+      },
+    });
+
+    const toolCount = 9;
     api.logger.info(
       `[lacp] Plugin loaded (version=${process.env.npm_package_version ?? "2.2.0"}, hooks=4, tools=${toolCount})`,
     );
