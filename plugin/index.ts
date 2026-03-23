@@ -188,7 +188,7 @@ const lacpPlugin = {
 
     // Memory query: search LACP persistent memory for relevant facts
     api.registerTool({
-      name: "lacp_memory_query",
+      name: "engram_memory_query",
       description:
         "Search LACP persistent memory for relevant facts about a project or topic. " +
         "Returns previously learned knowledge, decisions, patterns, and context " +
@@ -211,7 +211,7 @@ const lacpPlugin = {
 
     // Ingest: add files, URLs, or transcripts to the knowledge graph
     api.registerTool({
-      name: "lacp_ingest",
+      name: "engram_ingest",
       description:
         "Ingest a file, URL, or transcript into the LACP knowledge graph (Obsidian vault). " +
         "Use this to permanently store useful information — meeting notes, documentation, " +
@@ -240,7 +240,7 @@ const lacpPlugin = {
 
     // Guard status: check current guard rules, recent blocks, and allowlist
     api.registerTool({
-      name: "lacp_guard_status",
+      name: "engram_guard_status",
       description:
         "Check the current state of the pretool guard — active rules, recent blocks, " +
         "and allowlisted commands. Use this to understand what safety rules are in place " +
@@ -272,7 +272,7 @@ const lacpPlugin = {
 
     // Promote: promote a fact from session memory to persistent LACP memory
     api.registerTool({
-      name: "lacp_promote_fact",
+      name: "engram_promote_fact",
       description:
         "Promote an important fact, decision, or learning to LACP persistent memory. " +
         "Use this when you discover something that should be remembered across sessions — " +
@@ -304,7 +304,7 @@ const lacpPlugin = {
     // Vault status: check Obsidian vault health and statistics
     api.registerTool(
       {
-        name: "lacp_vault_status",
+        name: "engram_vault_status",
         description:
           "Check the health and statistics of the Obsidian knowledge vault — " +
           "total notes, broken links, orphan notes, and vault size. " +
@@ -326,7 +326,7 @@ const lacpPlugin = {
     // Knowledge graph: index session memory into the knowledge graph
     api.registerTool(
       {
-        name: "lacp_graph_index",
+        name: "engram_graph_index",
         description:
           "Index session memory into the knowledge graph and optionally update " +
           "QMD vector embeddings. Use this after a productive session to ensure " +
@@ -349,7 +349,7 @@ const lacpPlugin = {
 
     // Brain resolve: resolve contradictions/supersessions in knowledge notes
     api.registerTool({
-      name: "lacp_brain_resolve",
+      name: "engram_brain_resolve",
       description:
         "Resolve contradiction or supersession state for a canonical memory note. " +
         "Use this when you find conflicting information in the knowledge vault — " +
@@ -380,7 +380,7 @@ const lacpPlugin = {
 
     // Memory KPI: vault quality metrics
     api.registerTool({
-      name: "lacp_memory_kpi",
+      name: "engram_memory_kpi",
       description:
         "Report memory-quality KPIs for the Obsidian knowledge vault — " +
         "total notes, canonical notes, schema coverage, source backing, " +
@@ -398,7 +398,7 @@ const lacpPlugin = {
 
     // Vault optimize: apply memory-centric Obsidian graph defaults
     api.registerTool({
-      name: "lacp_vault_optimize",
+      name: "engram_vault_optimize",
       description:
         "Apply memory-centric graph physics defaults to the Obsidian vault — " +
         "tune link distance, repel strength, node sizing, and color groups " +
