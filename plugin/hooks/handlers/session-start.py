@@ -411,13 +411,15 @@ def main() -> None:
         "\n=== Engram Memory Tools ===\n"
         "You have access to persistent memory tools. Use them:\n"
         "- engram_memory_query: Search for relevant context before starting work\n"
-        "- engram_promote_fact: When you discover something other agents should know "
-        "(architectural decisions, bug patterns, API behaviors, conventions)\n"
-        "- engram_ingest: When given docs, URLs, or files to remember permanently\n"
+        "- engram_promote_fact: When you discover something important, promote it "
+        "immediately so all agents benefit (decisions, patterns, conventions)\n"
+        "- engram_save_session: At end of session, save your session memory with "
+        "summary, decisions, tasks, and facts promoted\n"
+        "- engram_ingest: When given docs, URLs, files, or video to remember permanently\n"
         "- engram_guard_status: If a command was blocked and you need to understand why\n"
         "\n"
-        "Your session context was auto-injected above. Facts you promote will be "
-        "available to all agents in future sessions."
+        "Promote facts immediately when you discover them. Save your session at the end. "
+        "Everything goes into the shared vault so no agent starts from zero."
     )
 
     system_message = "\n".join(parts)

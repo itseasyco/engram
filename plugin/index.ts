@@ -422,7 +422,47 @@ const lacpPlugin = {
       },
     });
 
-    const toolCount = 9;
+    // Save session memory to daily folder structure
+    api.registerTool({
+      name: "engram_save_session",
+      description:
+        "Save a session memory to the daily folder in the knowledge vault. " +
+        "Call this at the end of a session to record what happened — summary, " +
+        "key decisions, tasks completed/pending, and facts promoted. " +
+        "Creates a per-agent session file linked in the daily index.",
+      parameters: Type.Object({
+        agent_name: Type.String({ description: "Your agent name (e.g., Wren, Zoe, Vijay)" }),
+        summary: Type.String({ description: "Brief summary of what happened in this session" }),
+        key_decisions: Type.Optional(Type.Array(Type.String(), { description: "Key decisions made" })),
+        tasks_completed: Type.Optional(Type.Array(Type.String(), { description: "Tasks completed" })),
+        tasks_pending: Type.Optional(Type.Array(Type.String(), { description: "Tasks still pending" })),
+        facts_promoted: Type.Optional(Type.Array(Type.String(), { description: "Facts promoted to Engram this session" })),
+        files_modified: Type.Optional(Type.Array(Type.String(), { description: "Files modified" })),
+      }),
+      async execute(_id, params: any) {
+        const script = join(pluginDir, "lib", "session_writer.py");
+        const payload = JSON.stringify(params);
+        try {
+          const result = execFileSync("python3", ["-c", `
+import json, sys, os
+sys.path.insert(0, os.path.join("${pluginDir}", "lib"))
+from session_writer import write_session_memory
+params = json.loads('''${payload.replace(/'/g, "\\'")}''')
+result = write_session_memory(**params)
+print(json.dumps(result, indent=2))
+`], {
+            encoding: "utf-8",
+            timeout: 10_000,
+            env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir },
+          });
+          return textResult(result.trim());
+        } catch (err: any) {
+          return textResult(`Session save failed: ${err.stderr || err.message}`);
+        }
+      },
+    });
+
+    const toolCount = 10;
     api.logger.info(
       `[lacp] Plugin loaded (version=${process.env.npm_package_version ?? "2.2.0"}, hooks=4, tools=${toolCount})`,
     );
