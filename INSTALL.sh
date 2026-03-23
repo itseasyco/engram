@@ -647,6 +647,11 @@ run_wizard() {
             "safe     — auto-approve safe operations" \
             "critical — all operations require approval")
         WIZARD_POLICY_TIER=$(extract_first_word "$tier_choice")
+        if [ -z "$WIZARD_POLICY_TIER" ]; then
+            WIZARD_POLICY_TIER="review"
+        fi
+        echo -e "  ${GREEN}✓${NC} Policy tier: $WIZARD_POLICY_TIER"
+        echo ""
 
         WIZARD_CODE_GRAPH="false"
         if prompt_yes_no "Enable code intelligence (AST analysis)?" "n"; then
@@ -684,120 +689,30 @@ run_wizard() {
 
         if prompt_yes_no "Configure individual guard rules?" "n"; then
             echo ""
-            echo -e "  ${DIM}Select rules to change. Default level: ${WIZARD_GUARD_LEVEL}${NC}"
-            echo -e "  ${DIM}Use arrow keys to navigate, space to select, enter to confirm.${NC}"
-            echo ""
+            # Generate guard-rules.json with current defaults first
+            local guard_config="$PLUGIN_PATH/config/guard-rules.json"
+            if [ -f "$SCRIPT_DIR/plugin/config/guard-rules.json" ] && [ ! -f "$guard_config" ]; then
+                mkdir -p "$PLUGIN_PATH/config"
+                cp "$SCRIPT_DIR/plugin/config/guard-rules.json" "$guard_config"
+            fi
 
-            local -a all_rules=(
-                "npm-publish          — Package registry publishing"
-                "git-reset-hard       — git reset --hard (destructive)"
-                "git-clean-force      — git clean -f (destructive)"
-                "chmod-777            — chmod 777 (overly permissive)"
-                "docker-privileged    — docker run --privileged"
-                "curl-pipe-interpreter — curl/wget piped to interpreter"
-                "fork-bomb            — Fork bomb detection"
-                "scp-rsync-root       — scp/rsync to /root"
-                "data-exfiltration    — Exfiltration from sensitive files"
-                "env-files            — .env file access"
-                "config-toml          — config.toml access"
-                "secrets-directory    — secrets/ directory access"
-                "claude-settings      — .claude/settings.json access"
-                "authorized-keys      — authorized_keys access"
-                "pem-key-files        — PEM/key file access"
-                "gnupg-directory      — .gnupg/ directory access"
-            )
+            if [ -f "$guard_config" ]; then
+                # Set default level before launching TUI
+                if command -v jq &>/dev/null && [ -n "$WIZARD_GUARD_LEVEL" ]; then
+                    local tmp
+                    tmp=$(mktemp)
+                    jq --arg level "$WIZARD_GUARD_LEVEL" '.defaults.block_level = $level' "$guard_config" > "$tmp" && mv "$tmp" "$guard_config"
+                fi
 
+                # Launch interactive TUI
+                python3 "$SCRIPT_DIR/plugin/lib/guard_tui.py" "$guard_config"
+                echo ""
+                log_success "Guard rules configured"
+            else
+                log_warning "Guard config not found — will use factory defaults"
+            fi
             WIZARD_DISABLED_RULES=()
             WIZARD_RULE_OVERRIDES=()
-
-            if [ "$HAS_GUM" = "true" ] || true; then
-                # Show all rules with numbers
-                echo -e "  Current rules (all default to: ${BOLD}${WIZARD_GUARD_LEVEL}${NC}):"
-                echo ""
-                for i in "${!all_rules[@]}"; do
-                    printf "    %2d. %s\n" "$((i + 1))" "${all_rules[$i]}"
-                done
-                echo ""
-                echo -e "  ${CYAN}?${NC} Enter rule numbers to customize (comma-separated), or press enter to skip:" >&2
-                read -r rule_nums
-
-                local selected=""
-                if [ -n "$rule_nums" ]; then
-                    IFS=',' read -ra nums <<< "$rule_nums"
-                    for num in "${nums[@]}"; do
-                        num=$(echo "$num" | tr -d ' ')
-                        local idx=$((num - 1))
-                        if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#all_rules[@]}" ]; then
-                            selected="${selected}${all_rules[$idx]}"$'\n'
-                        fi
-                    done
-                fi
-
-                if [ -n "$selected" ]; then
-                    echo ""
-                    echo -e "  For each rule, enter: ${BOLD}b${NC}=block  ${BOLD}w${NC}=warn  ${BOLD}l${NC}=log  ${BOLD}d${NC}=disable  ${BOLD}enter${NC}=keep default"
-                    echo ""
-                    while IFS= read -r rule_line; do
-                        [ -z "$rule_line" ] && continue
-                        local rule_id
-                        rule_id=$(echo "$rule_line" | awk '{print $1}')
-
-                        echo -en "    ${BOLD}${rule_id}${NC} [${WIZARD_GUARD_LEVEL}]: " >&2
-                        local input
-                        read -r input
-                        local chosen_level=""
-                        case "$input" in
-                            b|block)   chosen_level="block" ;;
-                            w|warn)    chosen_level="warn" ;;
-                            l|log)     chosen_level="log" ;;
-                            d|disable) chosen_level="disable" ;;
-                            *)         chosen_level="$WIZARD_GUARD_LEVEL" ;;
-                        esac
-
-                        if [ "$chosen_level" = "disable" ]; then
-                            WIZARD_DISABLED_RULES+=("$rule_id")
-                            echo -e "      ${YELLOW}!${NC} disabled"
-                        elif [ "$chosen_level" != "$WIZARD_GUARD_LEVEL" ]; then
-                            WIZARD_RULE_OVERRIDES+=("${rule_id}:${chosen_level}")
-                            echo -e "      ${GREEN}✓${NC} ${chosen_level}"
-                        else
-                            echo -e "      ${DIM}default${NC}"
-                        fi
-                    done <<< "$selected"
-                fi
-            else
-                # Fallback: numbered list, type numbers to select
-                echo "  Rules (enter numbers separated by spaces to customize, or press enter to skip):"
-                for i in "${!all_rules[@]}"; do
-                    local num=$((i + 1))
-                    printf "    %2d) %s\n" "$num" "${all_rules[$i]}"
-                done
-                echo -en "  Selection: "
-                read -r selections
-
-                for sel in $selections; do
-                    local idx=$((sel - 1))
-                    if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#all_rules[@]}" ]; then
-                        local rule_id
-                        rule_id=$(echo "${all_rules[$idx]}" | awk '{print $1}')
-                        echo -en "  ${rule_id} — block/warn/log/disable [block]: "
-                        read -r chosen_level
-                        chosen_level="${chosen_level:-block}"
-                        if [ "$chosen_level" = "disable" ]; then
-                            WIZARD_DISABLED_RULES+=("$rule_id")
-                        elif [ "$chosen_level" != "$WIZARD_GUARD_LEVEL" ]; then
-                            WIZARD_RULE_OVERRIDES+=("${rule_id}:${chosen_level}")
-                        fi
-                    fi
-                done
-            fi
-
-            local changes=$(( ${#WIZARD_DISABLED_RULES[@]} + ${#WIZARD_RULE_OVERRIDES[@]} ))
-            if [ "$changes" -eq 0 ]; then
-                echo -e "  ${GREEN}✓${NC} All rules at default level ($WIZARD_GUARD_LEVEL)"
-            else
-                echo -e "  ${GREEN}✓${NC} ${changes} rule(s) customized"
-            fi
         else
             WIZARD_DISABLED_RULES=()
             WIZARD_RULE_OVERRIDES=()
@@ -1336,27 +1251,27 @@ run_validation() {
 
     # Check plugin manifest
     if [ -f "$PLUGIN_PATH/openclaw.plugin.json" ]; then
-        ((pass++))
+        (( pass++ )) || true
         log_success "openclaw.plugin.json present"
         # Verify kind and name fields
         if [ "$HAS_JQ" = "true" ]; then
             if jq -e '.kind' "$PLUGIN_PATH/openclaw.plugin.json" &>/dev/null && \
                jq -e '.name' "$PLUGIN_PATH/openclaw.plugin.json" &>/dev/null; then
-                ((pass++))
+                (( pass++ )) || true
                 log_success "Manifest has required 'kind' and 'name' fields"
             else
                 log_warning "Manifest missing 'kind' or 'name' field — gateway may reject"
-                ((fail++))
+                (( fail++ )) || true
             fi
         fi
     else
         log_error "Missing openclaw.plugin.json"
-        ((fail++))
+        (( fail++ )) || true
     fi
 
     # Check package.json with required fields
     if [ -f "$PLUGIN_PATH/package.json" ]; then
-        ((pass++))
+        (( pass++ )) || true
         log_success "package.json present"
         if [ "$HAS_JQ" = "true" ]; then
             local pkg_ok=true
@@ -1364,43 +1279,43 @@ run_validation() {
             jq -e '.main == "index.ts"' "$PLUGIN_PATH/package.json" &>/dev/null || pkg_ok=false
             jq -e '.openclaw.extensions' "$PLUGIN_PATH/package.json" &>/dev/null || pkg_ok=false
             if [ "$pkg_ok" = "true" ]; then
-                ((pass++))
+                (( pass++ )) || true
                 log_success "package.json has required fields (type, main, openclaw.extensions)"
             else
                 log_warning "package.json missing required fields — gateway may not discover plugin"
-                ((fail++))
+                (( fail++ )) || true
             fi
         fi
     else
         log_error "Missing package.json"
-        ((fail++))
+        (( fail++ )) || true
     fi
 
     # Check index.ts entry point
     if [ -f "$PLUGIN_PATH/index.ts" ]; then
-        ((pass++))
+        (( pass++ )) || true
         log_success "index.ts entry point present"
     else
         log_error "Missing index.ts — gateway cannot load plugin"
-        ((fail++))
+        (( fail++ )) || true
     fi
 
     # Check OpenClaw SDK symlink
     if [ -d "$PLUGIN_PATH/node_modules/openclaw" ] || [ -L "$PLUGIN_PATH/node_modules/openclaw" ]; then
-        ((pass++))
+        (( pass++ )) || true
         log_success "OpenClaw SDK linked in node_modules"
     else
         log_warning "OpenClaw SDK not found in node_modules — index.ts imports will fail"
-        ((fail++))
+        (( fail++ )) || true
     fi
 
     # Check hooks handlers
     for handler in session-start pretool-guard stop-quality-gate write-validate; do
         if [ -f "$PLUGIN_PATH/hooks/handlers/${handler}.py" ]; then
-            ((pass++))
+            (( pass++ )) || true
         else
             log_warning "Missing hook handler: ${handler}.py"
-            ((fail++))
+            (( fail++ )) || true
         fi
     done
 
@@ -1408,16 +1323,16 @@ run_validation() {
     local bin_count
     bin_count=$(ls -1 "$PLUGIN_PATH/bin"/openclaw-* 2>/dev/null | wc -l | tr -d ' ')
     if [ "$bin_count" -gt 0 ]; then
-        ((pass++))
+        (( pass++ )) || true
         log_success "$bin_count bin scripts installed"
     else
         log_warning "No bin scripts found"
-        ((fail++))
+        (( fail++ )) || true
     fi
 
     # Check guard config
     if [ -f "$PLUGIN_PATH/config/guard-rules.json" ]; then
-        ((pass++))
+        (( pass++ )) || true
         log_success "Guard config present"
     else
         log_warning "Guard config missing — will use factory defaults"
@@ -1426,29 +1341,29 @@ run_validation() {
     # Check gateway registration
     if [ "$HAS_JQ" = "true" ]; then
         if jq -e '.plugins.entries["openclaw-lacp-fusion"].enabled' "$GATEWAY_CONFIG" &>/dev/null; then
-            ((pass++))
+            (( pass++ )) || true
             log_success "Plugin registered in gateway config"
         else
             log_warning "Plugin not registered in gateway config"
-            ((fail++))
+            (( fail++ )) || true
         fi
 
         # Verify gateway config is valid JSON
         if jq '.' "$GATEWAY_CONFIG" &>/dev/null; then
-            ((pass++))
+            (( pass++ )) || true
             log_success "Gateway config is valid JSON"
         else
             log_error "Gateway config has JSON syntax errors"
-            ((fail++))
+            (( fail++ )) || true
         fi
     fi
 
     # Check data directories
     for dir in "$OPENCLAW_HOME/data/knowledge" "$OPENCLAW_HOME/provenance"; do
         if [ -d "$dir" ]; then
-            ((pass++))
+            (( pass++ )) || true
         else
-            ((fail++))
+            (( fail++ )) || true
         fi
     done
 
@@ -1465,35 +1380,38 @@ run_validation() {
 print_summary() {
     log_step 8 "Installation complete"
 
-    cat << EOF
-
-${GREEN}✓ openclaw-lacp-fusion v${PLUGIN_VERSION} installed${NC}
-
-${BOLD}Configuration:${NC}
-  ${GREEN}✓${NC} Plugin:       $PLUGIN_PATH
-  ${GREEN}✓${NC} Vault:        $DETECTED_VAULT
-  ${GREEN}✓${NC} Engine:       $WIZARD_CONTEXT_ENGINE_RESOLVED
-  ${GREEN}✓${NC} Profile:      $WIZARD_PROFILE
-  ${GREEN}✓${NC} Policy tier:  $WIZARD_POLICY_TIER
-
-${BOLD}Next steps:${NC}
-  1. Restart OpenClaw:     openclaw gateway restart
-  2. Init project memory:  openclaw-memory-init ~/my-project agent-name webchat
-  3. Validate setup:       openclaw-lacp-validate
-  4. Test context query:   openclaw-brain-graph query "test"
-
-${BOLD}Locations:${NC}
-  Config:  $PLUGIN_PATH/config/.openclaw-lacp.env
-  Gateway: $GATEWAY_CONFIG
-  Logs:    $PLUGIN_PATH/logs/
-  Docs:    $PLUGIN_PATH/docs/
-
-${BOLD}Profiles:${NC}
-  minimal-stop   — quality gate only (lightweight)
-  balanced       — session context + quality gate (default)
-  hardened-exec  — all 4 hooks enabled (maximum safety)
-
-EOF
+    echo ""
+    echo -e "${GREEN}✓ Engram v${PLUGIN_VERSION} installed${NC}"
+    echo ""
+    echo -e "${BOLD}Configuration:${NC}"
+    echo -e "  ${GREEN}✓${NC} Plugin:       $PLUGIN_PATH"
+    echo -e "  ${GREEN}✓${NC} Vault:        $DETECTED_VAULT"
+    echo -e "  ${GREEN}✓${NC} Engine:       $WIZARD_CONTEXT_ENGINE_RESOLVED"
+    echo -e "  ${GREEN}✓${NC} Profile:      $WIZARD_PROFILE"
+    echo -e "  ${GREEN}✓${NC} Policy tier:  $WIZARD_POLICY_TIER"
+    echo -e "  ${GREEN}✓${NC} Mode:         $WIZARD_MODE"
+    echo ""
+    echo -e "${BOLD}Next steps:${NC}"
+    echo "  1. Restart OpenClaw:     openclaw gateway restart"
+    echo "  2. Check status:         engram status"
+    echo "  3. Run diagnostics:      engram doctor"
+    echo "  4. Query memory:         engram memory query <topic>"
+    echo ""
+    echo -e "${BOLD}Locations:${NC}"
+    echo "  Config:  $PLUGIN_PATH/config/.openclaw-lacp.env"
+    echo "  Gateway: $GATEWAY_CONFIG"
+    echo "  Logs:    $PLUGIN_PATH/logs/"
+    echo "  Docs:    $PLUGIN_PATH/docs/"
+    echo ""
+    echo -e "${BOLD}Profiles:${NC}"
+    echo "  autonomous    — all hooks, warn-only (agents keep working)"
+    echo "  balanced      — session context + quality gate (default)"
+    echo "  context-only  — just git context injection"
+    echo "  guard-rail    — safety gates, no context injection"
+    echo "  minimal-stop  — quality gate only (lightweight)"
+    echo "  hardened-exec — all hooks, blocks dangerous ops"
+    echo "  full-audit    — all hooks, strict mode, verbose logging"
+    echo ""
 }
 
 # ─── Main ────────────────────────────────────────────────────────────────────
