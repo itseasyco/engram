@@ -406,12 +406,22 @@ def main() -> None:
             "Git context and test command have been injected above."
         )
 
-    if parts:
-        system_message = "\n".join(parts)
-        print(json.dumps({"systemMessage": system_message}))
-    else:
-        # No context to inject
-        print(json.dumps({"systemMessage": "Session started."}))
+    # Always inject Engram tool guidance so agents know what's available
+    parts.append(
+        "\n=== Engram Memory Tools ===\n"
+        "You have access to persistent memory tools. Use them:\n"
+        "- lacp_memory_query: Search for relevant context before starting work\n"
+        "- lacp_promote_fact: When you discover something other agents should know "
+        "(architectural decisions, bug patterns, API behaviors, conventions)\n"
+        "- lacp_ingest: When given docs, URLs, or files to remember permanently\n"
+        "- lacp_guard_status: If a command was blocked and you need to understand why\n"
+        "\n"
+        "Your session context was auto-injected above. Facts you promote will be "
+        "available to all agents in future sessions."
+    )
+
+    system_message = "\n".join(parts)
+    print(json.dumps({"systemMessage": system_message}))
 
 
 if __name__ == "__main__":
