@@ -345,6 +345,94 @@ check_and_install_lossless_claw() {
     fi
 }
 
+check_and_install_qmd() {
+    if command -v qmd &>/dev/null; then
+        local qmd_ver
+        qmd_ver=$(qmd --version 2>/dev/null || echo "unknown")
+        log_success "QMD found ($qmd_ver)"
+        return 0
+    fi
+
+    log_warning "QMD not found"
+    echo -e "  ${DIM}QMD provides semantic vector search over your vault for better memory retrieval.${NC}"
+    echo ""
+
+    if prompt_yes_no "Install QMD? (npm install -g @tobilu/qmd)" "y"; then
+        echo ""
+        if [ "$HAS_GUM" = "true" ]; then
+            if gum spin --spinner dot --title "Installing QMD..." -- npm install -g @tobilu/qmd 2>/dev/null; then
+                log_success "QMD installed"
+            else
+                log_error "QMD installation failed"
+                return 1
+            fi
+        else
+            log_info "Installing QMD (this may take a moment)..."
+            if npm install -g @tobilu/qmd 2>&1 | tail -3; then
+                log_success "QMD installed"
+            else
+                log_error "QMD installation failed"
+                return 1
+            fi
+        fi
+
+        if command -v qmd &>/dev/null; then
+            log_success "Verified: QMD ready"
+            return 0
+        else
+            log_error "qmd command not found after install"
+            return 1
+        fi
+    else
+        log_info "Skipped QMD installation"
+        return 1
+    fi
+}
+
+check_and_install_obsidian_cli() {
+    if command -v obsidian &>/dev/null; then
+        local obs_ver
+        obs_ver=$(obsidian --version 2>/dev/null || echo "unknown")
+        log_success "Obsidian CLI found ($obs_ver)"
+        return 0
+    fi
+
+    log_warning "Obsidian CLI not found"
+    echo -e "  ${DIM}Obsidian CLI lets you manage your vault from the terminal (open, create notes, run commands).${NC}"
+    echo ""
+
+    if prompt_yes_no "Install Obsidian CLI? (npm install -g obsidian-cli)" "n"; then
+        echo ""
+        if [ "$HAS_GUM" = "true" ]; then
+            if gum spin --spinner dot --title "Installing Obsidian CLI..." -- npm install -g obsidian-cli 2>/dev/null; then
+                log_success "Obsidian CLI installed"
+            else
+                log_error "Obsidian CLI installation failed"
+                return 1
+            fi
+        else
+            log_info "Installing Obsidian CLI (this may take a moment)..."
+            if npm install -g obsidian-cli 2>&1 | tail -3; then
+                log_success "Obsidian CLI installed"
+            else
+                log_error "Obsidian CLI installation failed"
+                return 1
+            fi
+        fi
+
+        if command -v obsidian &>/dev/null; then
+            log_success "Verified: Obsidian CLI ready"
+            return 0
+        else
+            log_error "obsidian command not found after install"
+            return 1
+        fi
+    else
+        log_info "Skipped Obsidian CLI installation"
+        return 1
+    fi
+}
+
 run_wizard() {
     echo ""
     echo -e "${BOLD}Configuration Wizard${NC}"
@@ -503,6 +591,14 @@ run_wizard() {
             echo ""
         fi
     fi
+
+    # 4.5. Core dependencies (QMD + optional Obsidian CLI)
+    echo -e "${BOLD}Dependencies${NC}"
+    echo ""
+    check_and_install_qmd || true
+    echo ""
+    check_and_install_obsidian_cli || true
+    echo ""
 
     # 5. Advanced config (optional)
     WIZARD_ADVANCED=false

@@ -22,11 +22,6 @@
     "multi-agent",
     "intelligence"
   ],
-  "dependencies": {
-    "@tobilu/qmd": "*",
-    "gitnexus": "*",
-    "obsidian-headless": "*"
-  },
   "peerDependencies": {
     "openclaw": "*"
   },
