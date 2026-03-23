@@ -1,6 +1,8 @@
-# OpenClaw LACP Fusion
+# Engram
 
-**v2.2.0** -- Local Agent Control Plane: hooks, policy gates, memory scaffolding, knowledge graph, code intelligence, and provenance tracking.
+**By [Easy Labs](https://itseasy.co)**
+
+**v2.2.0** -- Persistent agent memory, knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
 
 ![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![OpenClaw >= 0.23.0](https://img.shields.io/badge/openclaw-%3E%3D0.23.0-green.svg)
@@ -11,22 +13,24 @@
 
 ## Overview
 
-OpenClaw LACP Fusion brings the Local Agent Control Plane architecture into OpenClaw. It gives your agents persistent session memory that survives across conversations, a knowledge graph backed by Obsidian, safety hooks that block dangerous operations before they execute, and a hash-chained provenance trail for every session.
+Engram brings persistent agent memory into your development workflow. It gives your agents session memory that survives across conversations, a knowledge graph backed by Obsidian, safety hooks that block dangerous operations before they execute, and a hash-chained provenance trail for every session.
 
-The plugin implements a 5-layer memory system: per-project session memory, an Obsidian-backed knowledge graph, an ingestion pipeline for external content, AST-level code intelligence, and cryptographic provenance receipts. These layers work together so that every agent session starts with institutional context and ends with auditable evidence of what happened.
+The plugin implements a 5-layer memory system: per-project session memory with daily structure, an Obsidian-backed knowledge graph, an ingestion pipeline for external content (including video and audio), AST-level code intelligence, and cryptographic provenance receipts. These layers work together so that every agent session starts with institutional context and ends with auditable evidence of what happened.
 
-LACP Fusion is for teams and individuals who run OpenClaw agents on real codebases and need guardrails (blocking `npm publish`, `git reset --hard`, secrets access), persistent memory (facts that carry between sessions), and a clear audit trail. It is local-first by default -- all data stays on your machine.
+Engram is for teams and individuals who run agents on real codebases and need guardrails (blocking `npm publish`, `git reset --hard`, secrets access), persistent memory (facts that carry between sessions), and a clear audit trail. It is local-first by default -- all data stays on your machine.
 
 **Key capabilities:**
 
 - Execution hooks (session context injection, pretool guard, quality gate, write validation)
 - Risk-based policy routing with three tiers (safe / review / critical) and cost ceilings
-- Per-project session memory with LACP fact promotion
+- Per-project session memory with daily folder structure and per-agent session files
 - Obsidian-backed knowledge graph with semantic search (QMD)
+- Video and audio ingestion via ffmpeg + Whisper transcription
 - Code intelligence via AST analysis, call graphs, and impact analysis
 - Cryptographic provenance tracking (SHA-256 hash-chained receipts)
 - Multi-agent memory sharing with role-based access
 - Configurable safety profiles from autonomous to full-audit
+- **10 MCP tools** for memory query, fact promotion, ingestion, guard status, vault management, graph indexing, brain resolution, memory KPIs, vault optimization, and session saving
 - 25+ CLI tools for managing memory, guard rules, ingestion, and more
 
 ---
@@ -43,29 +47,40 @@ LACP Fusion is for teams and individuals who run OpenClaw agents on real codebas
 | gum | (optional) | Interactive wizard with arrow-key selection; falls back to `read` prompts |
 | Obsidian | (optional) | Knowledge graph vault (Layer 2) |
 | qmd | (optional) | Semantic search indexing |
+| ffmpeg | (optional) | Video/audio ingestion (Layer 3) |
+| whisper | (optional) | Audio transcription for media ingestion |
 
 ### Install
 
-**From the repo (recommended):**
+**Global install (recommended):**
 
 ```bash
-git clone https://github.com/openclaw/plugins/openclaw-lacp-fusion
-cd openclaw-lacp-fusion
-bash INSTALL.sh
+npm install -g @easylabs/engram
 ```
 
-**From a release ZIP:**
+**One-shot (no install):**
 
 ```bash
-curl -LO https://github.com/openclaw/plugins/openclaw-lacp-fusion/releases/download/v2.2.0/openclaw-lacp-fusion-v2.2.0.zip
-unzip openclaw-lacp-fusion-v2.2.0.zip
-cd openclaw-lacp-fusion-v2.2.0
+npx @easylabs/engram
+```
+
+**From the repo:**
+
+```bash
+git clone https://github.com/easylabs/engram
+cd engram
 bash INSTALL.sh
 ```
 
 ### First-time Setup
 
-The install wizard walks you through configuration interactively:
+Run the setup wizard:
+
+```bash
+engram wizard
+```
+
+The wizard walks you through configuration interactively:
 
 1. **Context engine** -- choose `lossless-claw` (native LCM integration) or file-based (default)
 2. **Safety profile** -- pick from 7 profiles (see [Safety Profiles](#safety-profiles))
@@ -77,22 +92,41 @@ The install wizard walks you through configuration interactively:
 After install, verify:
 
 ```bash
-openclaw-lacp-validate
+engram doctor
 ```
+
+---
+
+## MCP Tools (10 tools)
+
+Engram exposes 10 tools via the Model Context Protocol that agents can call directly during sessions.
+
+| Tool | Description |
+|---|---|
+| `engram_memory_query` | Query session memory and LACP facts with semantic search |
+| `engram_promote_fact` | Promote a session observation to persistent scored fact |
+| `engram_ingest` | Ingest transcripts, URLs, PDFs, files, video, and audio into the knowledge graph |
+| `engram_guard_status` | Check guard rule status, recent blocks, and allowlist entries |
+| `engram_vault_status` | Report on Obsidian vault health, note counts, and index freshness |
+| `engram_graph_index` | Trigger knowledge graph re-indexing with optional QMD semantic search |
+| `engram_brain_resolve` | Resolve a query against all 5 memory layers and return unified context |
+| `engram_memory_kpi` | Return memory system KPIs: fact count, promotion rate, staleness, coverage |
+| `engram_vault_optimize` | Run vault optimization: dedup notes, compress stale entries, rebuild index |
+| `engram_save_session` | Save session memory to daily folder structure with per-agent session files |
 
 ---
 
 ## How the Memory System Works
 
-LACP Fusion implements a continuous memory lifecycle across agent sessions. Understanding this cycle is key to getting the most out of the plugin.
+Engram implements a continuous memory lifecycle across agent sessions. Understanding this cycle is key to getting the most out of the plugin.
 
 ### The Five Layers
 
 ```
 Layer 1: Session Memory     ~/.openclaw/projects/<slug>/memory/
 Layer 2: Knowledge Graph    ~/obsidian/vault/ (Obsidian + QMD)
-Layer 3: Ingestion Pipeline openclaw-brain-ingest (transcripts, URLs, PDFs)
-Layer 4: Code Intelligence  openclaw-brain-code (AST, call graphs, impact)
+Layer 3: Ingestion Pipeline engram ingest (transcripts, URLs, PDFs, video, audio)
+Layer 4: Code Intelligence  engram brain (AST, call graphs, impact)
 Layer 5: Provenance         ~/.openclaw/provenance/ (hash-chained receipts)
 ```
 
@@ -106,12 +140,16 @@ Layer 5: Provenance         ~/.openclaw/provenance/ (hash-chained receipts)
   Per-project data in ~/.openclaw/projects/<slug>/memory/
        |
        v
-  Facts get promoted to LACP persistent memory (openclaw-lacp-promote)
+  Facts get promoted to persistent memory (engram_promote_fact)
   Scored, categorized, deduplicated
        |
        v
   Knowledge gets indexed in vault/graph (Layer 2)
   Organized into Projects / Concepts / People / Systems / Inbox
+       |
+       v
+  Session saved to daily structure (engram_save_session)
+  vault/memory/YYYY-MM-DD/<agent-id>-<session>.md
        |
        v
   Next session starts
@@ -124,13 +162,33 @@ Layer 5: Provenance         ~/.openclaw/provenance/ (hash-chained receipts)
 
 ### 1. Session Memory
 
-Every project gets its own memory directory at `~/.openclaw/projects/<slug>/memory/`. The `session-start` hook reads the current git context (branch, recent commits, modified files) and injects it as a system message when a new session begins. Execution results -- cost, gate decisions, exit codes, learnings -- are appended via `openclaw-memory-append`.
+Every project gets its own memory directory at `~/.openclaw/projects/<slug>/memory/`. The `session-start` hook reads the current git context (branch, recent commits, modified files) and injects it as a system message when a new session begins. Execution results -- cost, gate decisions, exit codes, learnings -- are appended via `engram memory append`.
 
-### 2. LACP Facts
+### 2. Daily Session Memory Structure
 
-Persistent facts are extracted from session data and stored via `openclaw-lacp-context`. Facts have scores, categories, and timestamps. The `openclaw-lacp-promote` tool handles promotion from raw session summaries to scored, persistent facts. Deduplication (`openclaw-lacp-dedup`) prevents redundant facts from accumulating. Confidence calibration (`openclaw-lacp-calibrate`) tunes promotion thresholds over time.
+Session memory is organized into a daily folder structure for easy browsing and automatic indexing:
 
-### 3. Knowledge Graph
+```
+vault/memory/
+  2026-03-23/
+    agent-a1b2c3-session-001.md
+    agent-a1b2c3-session-002.md
+    agent-d4e5f6-session-001.md
+    _daily-index.md              # Auto-generated summary of all sessions that day
+  2026-03-22/
+    agent-a1b2c3-session-001.md
+    _daily-index.md
+```
+
+Each session file contains the agent ID, project slug, start/end timestamps, key facts discovered, commands run, and a session summary. The `_daily-index.md` is auto-generated and links to all session files for that day, providing a chronological view of agent activity.
+
+The `engram_save_session` tool writes session data to this structure at session end. Daily indexes are rebuilt automatically when new sessions are saved.
+
+### 3. Persistent Facts
+
+Persistent facts are extracted from session data and stored via `engram memory context`. Facts have scores, categories, and timestamps. The `engram_promote_fact` tool handles promotion from raw session summaries to scored, persistent facts. Deduplication prevents redundant facts from accumulating. Confidence calibration tunes promotion thresholds over time.
+
+### 4. Knowledge Graph
 
 The Obsidian vault is organized into a taxonomy:
 
@@ -142,13 +200,15 @@ vault/
   Systems/        # Infrastructure, services
   Inbox/          # Unsorted incoming notes
     queue-generated/  # Ingested content landing zone
+  memory/         # Daily session memory (see above)
+    YYYY-MM-DD/   # Per-day folders with agent session files
 ```
 
-`openclaw-brain-graph` initializes and indexes the vault. `openclaw-obsidian` manages vault status, backups, and optimization. QMD provides semantic search across the vault.
+`engram brain graph` initializes and indexes the vault. `engram vault` manages vault status, backups, and optimization. QMD provides semantic search across the vault.
 
-### 4. Lossless Context Integration
+### 5. Lossless Context Integration
 
-When `contextEngine` is set to `lossless-claw`, the plugin integrates with the LCM (Lossless Context Manager) backend. LCM's DAG compaction works alongside LACP's fact injection: LCM compresses conversational context while LACP injects curated facts at session start. The two systems are complementary -- LCM handles within-session context efficiency, while LACP handles cross-session knowledge persistence.
+When `contextEngine` is set to `lossless-claw`, the plugin integrates with the LCM (Lossless Context Manager) backend. LCM's DAG compaction works alongside Engram's fact injection: LCM compresses conversational context while Engram injects curated facts at session start. The two systems are complementary -- LCM handles within-session context efficiency, while Engram handles cross-session knowledge persistence.
 
 Configure the integration in your plugin config:
 
@@ -177,7 +237,7 @@ Seven profiles control which hooks fire and how they behave.
 | **hardened-exec** | session-start, pretool-guard, stop-quality-gate, write-validate | All hooks block; violations require explicit approval | Production deploys, high-stakes work |
 | **full-audit** | session-start, pretool-guard, stop-quality-gate, write-validate | All hooks block; verbose logging; full provenance | Compliance, audit trails, debugging hook behavior |
 
-Set the profile during install or change it later in `~/.openclaw/extensions/openclaw-lacp-fusion/config/.openclaw-lacp.env`.
+Set the profile during install or change it later in `~/.openclaw/extensions/engram/config/.engram.env`.
 
 ---
 
@@ -242,49 +302,49 @@ Global defaults are in `guard-rules.json` under `defaults`. Per-repo overrides l
 }
 ```
 
-### Using `openclaw-guard`
+### Using `engram guard`
 
 ```bash
 # List all rules with their status
-openclaw-guard rules
+engram guard rules
 
 # View recent blocks from the log
-openclaw-guard blocks
-openclaw-guard blocks --tail 20
+engram guard blocks
+engram guard blocks --tail 20
 
 # Enable or disable a rule
-openclaw-guard toggle npm-publish
+engram guard toggle npm-publish
 
 # Set block level for a specific rule
-openclaw-guard level git-reset-hard warn
+engram guard level git-reset-hard warn
 
 # Add a command to the global allowlist
-openclaw-guard allow "git reset --hard HEAD~1" --reason "Common dev workflow"
+engram guard allow "git reset --hard HEAD~1" --reason "Common dev workflow"
 
 # Add a repo-specific allowlist entry
-openclaw-guard allow "docker run --privileged" --repo /path/to/ci-repo --reason "CI builds"
+engram guard allow "docker run --privileged" --repo /path/to/ci-repo --reason "CI builds"
 
 # Remove a command from all allowlists
-openclaw-guard deny "git reset --hard HEAD~1"
+engram guard deny "git reset --hard HEAD~1"
 
 # Interactive configuration (gum-powered)
-openclaw-guard config
+engram guard config
 
 # Configure overrides for a specific repo
-openclaw-guard config --repo /path/to/my-repo
+engram guard config --repo /path/to/my-repo
 
 # Set global default block level
-openclaw-guard defaults --level warn
+engram guard defaults --level warn
 
 # Reset to factory defaults
-openclaw-guard reset
+engram guard reset
 ```
 
 ---
 
 ## Automation & Ingestion
 
-LACP Fusion supports multiple patterns for getting external data into the knowledge graph.
+Engram supports multiple patterns for getting external data into the knowledge graph, including text, documents, and video/audio media.
 
 ### 1. Webhook to Agent to Ingest
 
@@ -292,93 +352,128 @@ A webhook receives meeting data and feeds transcripts to the agent for processin
 
 ```bash
 # Webhook handler receives a transcript file, then:
-openclaw-brain-ingest transcript ~/obsidian/vault /tmp/meeting-2026-03-21.txt \
+engram ingest transcript ~/obsidian/vault /tmp/meeting-2026-03-21.txt \
   --speaker "Alice" --date "2026-03-21"
 ```
 
 The transcript is converted into a structured Obsidian note with metadata and placed in the `inbox/queue-generated/` directory.
 
-### 2. Cron-based Sweep
+### 2. Video and Audio Ingestion
+
+Engram can ingest video and audio files by extracting audio via ffmpeg and transcribing with Whisper. Supported formats include mp4, mov, mkv, wav, mp3, m4a, flac, ogg, and more.
+
+```bash
+# Ingest a single video file
+engram ingest video ~/obsidian/vault ./meeting-recording.mp4 \
+  --speaker "Team Standup" --date "2026-03-23"
+
+# Ingest a single audio file
+engram ingest audio ~/obsidian/vault ./voice-memo.mp3 \
+  --title "Architecture Discussion"
+
+# Batch-process an entire directory of video files
+engram ingest video-batch ~/obsidian/vault ./recordings/ \
+  --date-from-filename --parallel 4
+
+# Customize Whisper model for better accuracy
+engram ingest video ~/obsidian/vault ./presentation.mov \
+  --whisper-model large --language en
+```
+
+The pipeline: ffmpeg extracts audio -> Whisper transcribes to text -> transcript is structured into an Obsidian note with timestamps, speaker labels, and metadata.
+
+### 3. Cron-based Sweep
 
 Set up a cron job to ingest files dropped into a directory:
 
 ```bash
 # In crontab (runs every 6 hours):
-0 */6 * * * for f in ~/inbox/*.txt; do openclaw-brain-ingest file ~/obsidian/vault "$f"; done
+0 */6 * * * for f in ~/inbox/*.txt; do engram ingest file ~/obsidian/vault "$f"; done
 ```
 
-### 3. Manual Ingestion
+### 4. Manual Ingestion
 
-Use `openclaw-brain-ingest` directly for one-off ingestion:
+Use `engram ingest` directly for one-off ingestion:
 
 ```bash
 # Ingest a transcript
-openclaw-brain-ingest transcript ~/obsidian/vault ./call-notes.txt --speaker "Bob" --date "2026-03-20"
+engram ingest transcript ~/obsidian/vault ./call-notes.txt --speaker "Bob" --date "2026-03-20"
 
 # Ingest a URL
-openclaw-brain-ingest url ~/obsidian/vault "https://example.com/article" --title "Architecture Overview"
+engram ingest url ~/obsidian/vault "https://example.com/article" --title "Architecture Overview"
 
 # Ingest a PDF
-openclaw-brain-ingest pdf ~/obsidian/vault ./whitepaper.pdf --title "System Design"
+engram ingest pdf ~/obsidian/vault ./whitepaper.pdf --title "System Design"
 
 # Ingest any file
-openclaw-brain-ingest file ~/obsidian/vault ./meeting-notes.md --title "Sprint Retro"
+engram ingest file ~/obsidian/vault ./meeting-notes.md --title "Sprint Retro"
 
 # Re-index the vault (optionally with QMD semantic indexing)
-openclaw-brain-ingest index ~/obsidian/vault --qmd
+engram ingest index ~/obsidian/vault --qmd
 ```
 
-### 4. OpenClaw Cron Integration
+### 5. OpenClaw Cron Integration
 
 If OpenClaw supports recurring jobs, configure them in your project config:
 
 ```bash
 # Example: auto-ingest and re-index every 6 hours
-openclaw cron add "openclaw-brain-ingest index ~/obsidian/vault --qmd" --interval 6h
+openclaw cron add "engram ingest index ~/obsidian/vault --qmd" --interval 6h
 
 # Example: promote high-confidence facts daily
-openclaw cron add "openclaw-lacp-promote auto --score 80" --interval 24h
+openclaw cron add "engram memory promote auto --score 80" --interval 24h
 ```
 
-### 5. Repo Research Sync
+### 6. Repo Research Sync
 
 Mirror repository documentation into the knowledge graph:
 
 ```bash
 # Sync README, docs/, wiki, and code comments into the vault
-openclaw-repo-research-sync /path/to/my-repo
+engram connector repo-sync /path/to/my-repo
 ```
 
 ---
 
-## CLI Tools Reference
+## CLI Reference
+
+The `engram` command is the main entry point with the following subcommands:
+
+| Subcommand | Description |
+|---|---|
+| `engram wizard` | Interactive first-time setup and reconfiguration |
+| `engram status` | Memory and context health dashboard |
+| `engram doctor` | Health check across all 5 memory layers with optional auto-fix |
+| `engram guard` | Manage guard rules, allowlists, block logs, and repo overrides |
+| `engram memory` | Session memory operations: query, append, promote, dedup, calibrate, context |
+| `engram brain` | Knowledge graph: ingest, index, resolve, code analysis, expand |
+| `engram vault` | Obsidian vault: status, audit, apply, backup, restore, optimize |
+| `engram connector` | External integrations: repo-sync, webhook handlers |
+| `engram watch` | File watcher for auto-ingestion of new content |
+| `engram connect` | Register and activate Engram with an agent runtime |
+| `engram disconnect` | Deregister Engram from an agent runtime |
+
+### Additional CLI Tools
 
 | Tool | Description |
 |---|---|
-| `openclaw-guard` | Manage guard rules, allowlists, block logs, and repo overrides |
-| `openclaw-brain-ingest` | Ingest transcripts, URLs, PDFs, and files into structured vault notes |
-| `openclaw-brain-graph` | Initialize, index, and query the Obsidian knowledge graph |
-| `openclaw-brain-code` | AST analysis, symbol lookup, call graphs, and impact analysis |
-| `openclaw-brain-doctor` | Health check across all 5 memory layers |
-| `openclaw-brain-expand` | Re-summarize, deduplicate, and compress memory layers |
-| `openclaw-brain-stack` | Main orchestrator for the 5-layer memory system |
-| `openclaw-obsidian` | Vault status, audit, apply, backup, restore, and optimize |
-| `openclaw-lacp-context` | Inject LACP facts into context windows; query and list facts |
-| `openclaw-lacp-promote` | Promote session facts to LACP persistent memory |
-| `openclaw-lacp-calibrate` | Confidence calibration for promotion thresholds |
-| `openclaw-lacp-dedup` | Semantic deduplication for promoted facts |
-| `openclaw-lacp-policies` | View and manage multi-agent sharing policies |
-| `openclaw-lacp-share` | Multi-agent memory sharing with role-based access |
-| `openclaw-lacp-validate` | Comprehensive setup validation with optional auto-fix |
-| `openclaw-memory-init` | Scaffold per-project session memory structure |
-| `openclaw-memory-append` | Append execution results to session memory |
-| `openclaw-memory-status` | Memory and context health dashboard |
-| `openclaw-agent-id` | Persistent agent identity per (hostname, project) pair |
-| `openclaw-gated-run` | Policy enforcement wrapper for commands (cost ceilings, approval) |
-| `openclaw-provenance` | SHA-256 hash-chained session receipts and audit trail |
-| `openclaw-repo-research-sync` | Mirror repo docs into the knowledge graph |
-| `openclaw-route` | Risk-based policy routing for tasks |
-| `openclaw-verify` | Task verification with heuristic, test, LLM, and hybrid modes |
+| `engram brain ingest` | Ingest transcripts, URLs, PDFs, video, audio, and files into structured vault notes |
+| `engram brain graph` | Initialize, index, and query the Obsidian knowledge graph |
+| `engram brain code` | AST analysis, symbol lookup, call graphs, and impact analysis |
+| `engram brain expand` | Re-summarize, deduplicate, and compress memory layers |
+| `engram memory context` | Inject facts into context windows; query and list facts |
+| `engram memory promote` | Promote session facts to persistent memory |
+| `engram memory calibrate` | Confidence calibration for promotion thresholds |
+| `engram memory dedup` | Semantic deduplication for promoted facts |
+| `engram memory policies` | View and manage multi-agent sharing policies |
+| `engram memory share` | Multi-agent memory sharing with role-based access |
+| `engram memory init` | Scaffold per-project session memory structure |
+| `engram memory append` | Append execution results to session memory |
+| `engram agent-id` | Persistent agent identity per (hostname, project) pair |
+| `engram gated-run` | Policy enforcement wrapper for commands (cost ceilings, approval) |
+| `engram provenance` | SHA-256 hash-chained session receipts and audit trail |
+| `engram route` | Risk-based policy routing for tasks |
+| `engram verify` | Task verification with heuristic, test, LLM, and hybrid modes |
 
 ---
 
@@ -386,9 +481,9 @@ openclaw-repo-research-sync /path/to/my-repo
 
 ### What the Wizard Configures
 
-The `INSTALL.sh` wizard sets up:
+The `engram wizard` command sets up:
 
-- Plugin directory at `~/.openclaw/extensions/openclaw-lacp-fusion/`
+- Plugin directory at `~/.openclaw/extensions/engram/`
 - Gateway registration in `~/.openclaw/openclaw.json`
 - `package.json` with required fields (`type: "module"`, `openclaw.extensions`)
 - `index.ts` entry point (hook registration shim)
@@ -415,13 +510,13 @@ To change settings after install:
 
 ```bash
 # Re-run the full wizard
-bash INSTALL.sh
+engram wizard
 
 # Or validate and fix specific issues
-openclaw-lacp-validate --fix
+engram doctor --fix
 
 # Or configure guard rules interactively
-openclaw-guard config
+engram guard config
 ```
 
 ---
@@ -461,13 +556,13 @@ The current SDK exposes `openclaw/plugin-sdk`. A future SDK release may move to 
 
 ### Plugin Config
 
-**Location:** `~/.openclaw/extensions/openclaw-lacp-fusion/config/.openclaw-lacp.env`
+**Location:** `~/.openclaw/extensions/engram/config/.engram.env`
 
 Environment-style config for the plugin. Set during install by the wizard.
 
 ### Guard Rules
 
-**Location:** `~/.openclaw/extensions/openclaw-lacp-fusion/config/guard-rules.json`
+**Location:** `~/.openclaw/extensions/engram/config/guard-rules.json`
 
 Controls all guard rules, block levels, allowlists, and per-repo overrides. See [Guard System](#guard-system) for the full schema.
 
@@ -481,9 +576,9 @@ The plugin must be registered here with `"source": "path"`:
 {
   "plugins": {
     "installs": {
-      "openclaw-lacp-fusion": {
+      "engram": {
         "source": "path",
-        "path": "~/.openclaw/extensions/openclaw-lacp-fusion"
+        "path": "~/.openclaw/extensions/engram"
       }
     }
   }
@@ -516,7 +611,7 @@ Each profile JSON declares which hooks are enabled, their configuration (sensiti
 
 ```json
 {
-  "openclaw-lacp-fusion": {
+  "engram": {
     "enabled": true,
     "config": {
       "contextEngine": null,
@@ -530,7 +625,7 @@ Each profile JSON declares which hooks are enabled, their configuration (sensiti
 
 ```json
 {
-  "openclaw-lacp-fusion": {
+  "engram": {
     "enabled": true,
     "config": {
       "contextEngine": "lossless-claw",
@@ -580,7 +675,7 @@ The `index.ts` file is either missing or has the wrong export format. It must ex
 
 ```typescript
 export default {
-  name: "OpenClaw LACP Fusion",
+  name: "Engram",
   register(api: OpenClawPluginApi) { ... }
 };
 ```
@@ -594,7 +689,7 @@ In the gateway config, the plugin source must be `"path"`, not `"local"`. The ga
 The `index.ts` imports `openclaw/plugin-sdk` which must be resolvable. The installer should create a symlink:
 
 ```
-~/.openclaw/extensions/openclaw-lacp-fusion/node_modules/openclaw -> <sdk_path>
+~/.openclaw/extensions/engram/node_modules/openclaw -> <sdk_path>
 ```
 
 If the symlink is missing, find the SDK location and create it manually:
@@ -607,24 +702,24 @@ ls ~/.openclaw/extensions/*/node_modules/openclaw
 ls "$(dirname "$(which openclaw)")/../lib/node_modules/openclaw"
 
 # Create the symlink
-ln -s <detected_path> ~/.openclaw/extensions/openclaw-lacp-fusion/node_modules/openclaw
+ln -s <detected_path> ~/.openclaw/extensions/engram/node_modules/openclaw
 ```
 
 ### Hooks not showing in `openclaw hooks list`
 
-This is expected behavior. LACP Fusion registers hooks as lifecycle listeners via `api.on()`, which do not appear in `openclaw hooks list`. The hooks still fire correctly on their respective events. You can verify by checking the logs or running `openclaw-lacp-validate`.
+This is expected behavior. Engram registers hooks as lifecycle listeners via `api.on()`, which do not appear in `openclaw hooks list`. The hooks still fire correctly on their respective events. You can verify by checking the logs or running `engram doctor`.
 
 ### Run the full validator
 
 ```bash
 # Check everything with verbose output
-openclaw-lacp-validate --verbose
+engram doctor --verbose
 
 # Auto-fix common issues
-openclaw-lacp-validate --fix
+engram doctor --fix
 
 # Output as JSON for scripting
-openclaw-lacp-validate --json
+engram doctor --json
 ```
 
 ---
@@ -634,7 +729,7 @@ openclaw-lacp-validate --json
 ### Repo Structure
 
 ```
-openclaw-lacp-fusion-repo/
+engram/
   openclaw.plugin.json       # Plugin manifest (hooks, profiles, config schema, bins)
   plugin.json                # Plugin metadata
   INSTALL.sh                 # Interactive install wizard
@@ -644,7 +739,7 @@ openclaw-lacp-fusion-repo/
     config/                  # Guard rules, example configs
     hooks/
       handlers/              # Python hook scripts
-        session-start.py     # Git context + LACP memory injection
+        session-start.py     # Git context + memory injection
         pretool-guard.py     # Dangerous pattern blocking
         stop-quality-gate.py # Incomplete work detection
         write-validate.py    # Schema/format validation
@@ -686,7 +781,7 @@ openclaw-lacp-fusion-repo/
 
 ### Adding a New CLI Tool
 
-1. Create the script in `plugin/bin/openclaw-<name>` (bash or python)
+1. Create the script in `plugin/bin/engram-<name>` (bash or python)
 2. Make it executable (`chmod +x`)
 3. Register it in `openclaw.plugin.json` under the `bin` map
 4. Add corresponding tests
