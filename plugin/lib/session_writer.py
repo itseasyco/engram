@@ -26,18 +26,6 @@ from pathlib import Path
 from typing import Optional
 
 
-def _vault_path() -> Path:
-    """Resolve the vault path from environment or defaults."""
-    vault = os.environ.get(
-        "LACP_OBSIDIAN_VAULT",
-        os.environ.get("OPENCLAW_VAULT", ""),
-    )
-    if not vault:
-        openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
-        vault = os.path.join(openclaw_home, "data", "knowledge")
-    return Path(vault)
-
-
 def _get_mode() -> str:
     """Get current operating mode, default standalone."""
     try:
@@ -50,16 +38,29 @@ def _get_mode() -> str:
 def _memory_root() -> Path:
     """Return the memory directory based on operating mode.
 
-    Standalone/curator: write directly to vault/01_memory/
-    Connected: write to vault/05_Inbox/queue-session/ for curator processing
+    Uses vault_paths resolver — curator can change locations via vault-schema.json.
+    Standalone/curator: vault_paths.memory (default: 01_memory/)
+    Connected: vault_paths.inbox_session (default: 05_Inbox/queue-session/)
     """
-    vault = _vault_path()
-    mode = _get_mode()
-
-    if mode == "connected":
-        return vault / "05_Inbox" / "queue-session"
-    else:
-        return vault / "01_memory"
+    try:
+        from .vault_paths import resolve
+        mode = _get_mode()
+        if mode == "connected":
+            return resolve("inbox_session")
+        return resolve("memory")
+    except (ImportError, KeyError):
+        # Fallback if vault_paths not available
+        vault = os.environ.get(
+            "LACP_OBSIDIAN_VAULT",
+            os.environ.get("OPENCLAW_VAULT", ""),
+        )
+        if not vault:
+            openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
+            vault = os.path.join(openclaw_home, "data", "knowledge")
+        mode = _get_mode()
+        if mode == "connected":
+            return Path(vault) / "05_Inbox" / "queue-session"
+        return Path(vault) / "01_memory"
 
 
 def _sanitize_agent_name(name: str) -> str:

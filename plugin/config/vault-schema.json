@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "description": "Vault folder structure mapping. The curator can update these paths to reorganize the vault. Edit this file to match your vault's actual structure.",
+  "paths": {
+    "home": "00-home",
+    "memory": "01_memory",
+    "atlas": "01-atlas",
+    "projects": "02-projects",
+    "engineering": "03-engineering",
+    "knowledge": "04-knowledge",
+    "sessions": "05-sessions",
+    "inbox": "06-inbox",
+    "inbox_agent": "06-inbox/queue-agent",
+    "inbox_cicd": "06-inbox/queue-cicd",
+    "inbox_human": "06-inbox/queue-human",
+    "inbox_external": "06-inbox/queue-external",
+    "inbox_session": "06-inbox/queue-session",
+    "inbox_stale": "06-inbox/review-stale",
+    "reference": "07-reference",
+    "health": "08-health",
+    "twitter": "09-twitter",
+    "archive": "99_Archive"
+  }
+}
