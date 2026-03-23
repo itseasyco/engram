@@ -11,7 +11,7 @@ Usage:
   python3 -m lib.curator_http --port 9100 --token <admin-token>
 
 Or programmatically:
-  from lib.curator_http import create_server, run_server
+  from .curator_http import create_server, run_server
 """
 from __future__ import annotations
 

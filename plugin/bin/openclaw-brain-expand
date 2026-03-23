@@ -548,7 +548,7 @@ main() {
       curator_result=$(python3 -c "
 import json, sys
 sys.path.insert(0, '$PLUGIN_DIR')
-from plugin.lib.curator import run_curator_cycle
+from lib.curator import run_curator_cycle
 result = run_curator_cycle(
     vault_path='$vault',
     dry_run=$( [ "$dry_run" = "1" ] && echo "True" || echo "False" ),

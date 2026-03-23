@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from plugin.lib.consolidation import _load_vault_notes, _parse_frontmatter, _extract_links
-from plugin.lib.staleness import compute_staleness_score, classify_staleness
+from .consolidation import _load_vault_notes, _parse_frontmatter, _extract_links
+from .staleness import compute_staleness_score, classify_staleness
 
 
 # ---------------------------------------------------------------------------

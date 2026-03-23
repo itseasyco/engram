@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from plugin.lib.consolidation import _parse_frontmatter
+from .consolidation import _parse_frontmatter
 
 
 # ---------------------------------------------------------------------------

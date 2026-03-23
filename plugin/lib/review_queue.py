@@ -10,8 +10,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from plugin.lib.consolidation import _load_vault_notes
-from plugin.lib.mycelium import (
+from .consolidation import _load_vault_notes
+from .mycelium import (
     compute_retrieval_strength,
     compute_storage_strength,
 )

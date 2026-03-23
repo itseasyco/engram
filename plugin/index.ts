@@ -117,9 +117,46 @@ const lacpPlugin = {
     });
 
     api.on("before_tool_call", async (event, ctx) => {
-      const result = runHandler("pretool-guard.py", JSON.stringify({ event, ctx }), api.logger);
-      if (result.blocked) {
-        throw new Error(result.error || result.stdout || "Blocked by pretool-guard");
+      // Determine guard mode based on tool name
+      const toolName = (event as any)?.name ?? (event as any)?.tool_name ?? "";
+      const toolInput = (event as any)?.input ?? (event as any)?.tool_input ?? {};
+      const hasCommand = typeof toolInput.command === "string";
+      const hasFilePath = typeof toolInput.file_path === "string";
+
+      const guardMode = hasCommand ? "command" : hasFilePath ? "file" : "";
+
+      if (guardMode) {
+        const payload = JSON.stringify({ tool_input: toolInput, tool_name: toolName });
+        const scriptPath = join(pluginDir, "hooks", "handlers", "pretool-guard.py");
+
+        logToolCall({
+          hook: "before_tool_call",
+          toolName,
+          guardMode,
+          commandPreview: (toolInput.command || toolInput.file_path || "").substring(0, 200),
+        });
+
+        try {
+          const result = execFileSync("python3", [scriptPath, guardMode], {
+            input: payload,
+            encoding: "utf-8",
+            timeout: 10_000,
+            env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir },
+          });
+          logToolCall({ hook: "before_tool_call_result", exitCode: 0, blocked: false });
+        } catch (err: any) {
+          const exitCode = err.status ?? 1;
+          const stderr = err.stderr?.toString().trim() ?? "";
+          logToolCall({
+            hook: "before_tool_call_result",
+            exitCode,
+            blocked: exitCode === 1,
+            error: stderr.substring(0, 300),
+          });
+          if (exitCode === 1) {
+            throw new Error(stderr || "Blocked by pretool-guard");
+          }
+        }
       }
     });
 

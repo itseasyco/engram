@@ -20,16 +20,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from plugin.lib.consolidation import run_consolidation
-from plugin.lib.conflict_resolver import resolve_conflicts
-from plugin.lib.health_reporter import generate_health_report
-from plugin.lib.inbox_processor import process_inbox
-from plugin.lib.index_generator import regenerate_indexes
-from plugin.lib.knowledge_gaps import detect_knowledge_gaps
-from plugin.lib.review_queue import write_review_queue
-from plugin.lib.schema_enforcer import enforce_schema
-from plugin.lib.staleness import scan_staleness
-from plugin.lib.wikilink_weaver import weave_wikilinks
+from .consolidation import run_consolidation
+from .conflict_resolver import resolve_conflicts
+from .health_reporter import generate_health_report
+from .inbox_processor import process_inbox
+from .index_generator import regenerate_indexes
+from .knowledge_gaps import detect_knowledge_gaps
+from .review_queue import write_review_queue
+from .schema_enforcer import enforce_schema
+from .staleness import scan_staleness
+from .wikilink_weaver import weave_wikilinks
 
 logger = logging.getLogger("curator")
 
@@ -276,7 +276,7 @@ def run_curator_cycle(
         except Exception:
             pass
         try:
-            from plugin.lib.knowledge_gaps import write_gap_report
+            from .knowledge_gaps import write_gap_report
             write_gap_report(vault_path=str(vault))
         except Exception:
             pass

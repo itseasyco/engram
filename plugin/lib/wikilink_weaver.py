@@ -12,7 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-from plugin.lib.consolidation import _parse_frontmatter, _extract_links
+from .consolidation import _parse_frontmatter, _extract_links
 
 
 # ---------------------------------------------------------------------------

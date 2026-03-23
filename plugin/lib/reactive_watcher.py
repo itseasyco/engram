@@ -149,7 +149,7 @@ def _poll_for_changes(vault_path: Path, handler: CuratorEventHandler, interval: 
 
 def _default_inbox_handler(file_path: Path):
     """Default handler for new inbox items: fast-classify and promote if high-trust."""
-    from plugin.lib.inbox_processor import classify_note
+    from .inbox_processor import classify_note
 
     vault_path = file_path
     # Walk up to find vault root (contains 05_Inbox)
@@ -168,7 +168,7 @@ def _default_inbox_handler(file_path: Path):
     )
 
     if classification["auto_promote"]:
-        from plugin.lib.inbox_processor import process_inbox
+        from .inbox_processor import process_inbox
         # Process just this queue folder
         # For simplicity, process the entire inbox (idempotent)
         process_inbox(str(vault_path), dry_run=False)
@@ -176,7 +176,7 @@ def _default_inbox_handler(file_path: Path):
 
 def _default_conflict_handler(file_path: Path):
     """Default handler for conflict files: attempt auto-merge."""
-    from plugin.lib.conflict_resolver import resolve_conflicts
+    from .conflict_resolver import resolve_conflicts
 
     vault_path = file_path
     for parent in file_path.parents:

@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from plugin.lib.mycelium import (
+from .mycelium import (
     compute_flow_score,
     compute_importance_score,
     compute_retrieval_strength,

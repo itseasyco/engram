@@ -11,8 +11,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from plugin.lib.consolidation import _load_vault_notes
-from plugin.lib.mycelium import compute_storage_strength
+from .consolidation import _load_vault_notes
+from .mycelium import compute_storage_strength
 
 
 def detect_knowledge_gaps(vault_path=None, min_category_size=3):
