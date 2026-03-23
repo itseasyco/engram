@@ -49,19 +49,44 @@ function runHandler(script: string, eventJson: string, logger?: { warn: (msg: st
 
 // ─── CLI tool runner (async, for agent tools) ────────────────────────────────
 
+import { appendFileSync, mkdirSync } from "node:fs";
+
+const toolLogPath = join(pluginDir, "logs", "tool-calls.jsonl");
+try { mkdirSync(join(pluginDir, "logs"), { recursive: true }); } catch {}
+
+function logToolCall(entry: Record<string, unknown>) {
+  try {
+    const line = JSON.stringify({ timestamp: new Date().toISOString(), ...entry });
+    appendFileSync(toolLogPath, line + "\n");
+  } catch {}
+}
+
 function runCli(cmd: string, args: string[], timeout = 30_000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const cmdPath = join(binDir, cmd);
+  const startMs = Date.now();
   return new Promise((resolve) => {
     execFile(cmdPath, args, {
       encoding: "utf-8",
       timeout,
       env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir },
     }, (err, stdout, stderr) => {
-      resolve({
+      const result = {
         stdout: (stdout ?? "").trim(),
         stderr: (stderr ?? "").trim(),
-        exitCode: err ? (err as any).code ?? 1 : 0,
+        exitCode: err ? (err as any).status ?? (err as any).code ?? 1 : 0,
+      };
+      logToolCall({
+        tool: cmd,
+        args,
+        exitCode: result.exitCode,
+        durationMs: Date.now() - startMs,
+        stdoutLen: result.stdout.length,
+        stderrLen: result.stderr.length,
+        stdoutPreview: result.stdout.substring(0, 500),
+        stderrPreview: result.stderr.substring(0, 500),
+        error: err ? String(err.message ?? err) : null,
       });
+      resolve(result);
     });
   });
 }
@@ -135,12 +160,12 @@ const lacpPlugin = {
       parameters: Type.Object({
         query: Type.String({ description: "Search query — topic, concept, or question to look up" }),
         project: Type.Optional(Type.String({ description: "Project name to scope the search (default: current project)" })),
-        max_results: Type.Optional(Type.Number({ description: "Maximum facts to return (default: 5)" })),
+        min_score: Type.Optional(Type.Number({ description: "Minimum relevance score 0-100 (default: 50)" })),
       }),
       async execute(_id, params: any) {
-        const args = ["query", params.query];
+        const args = ["query", "--topic", params.query];
         if (params.project) args.push("--project", params.project);
-        if (params.max_results) args.push("--max-facts", String(params.max_results));
+        if (params.min_score) args.push("--min-score", String(params.min_score));
         args.push("--format", "text");
         const result = await runCli("openclaw-lacp-context", args);
         return textResult(result.stdout || "No matching facts found.");
