@@ -115,7 +115,28 @@ cmd_wizard() {
     exec bash "$INSTALL_SH"
 }
 
+_source_env_config() {
+    # Source the LACP env config so env vars are available to subcommands
+    local env_file="$HOME/.openclaw/extensions/openclaw-lacp-fusion/config/.openclaw-lacp.env"
+    if [[ -f "$env_file" ]]; then
+        while IFS= read -r line; do
+            line="${line%%#*}"  # strip comments
+            line="${line#"${line%%[![:space:]]*}"}"  # trim leading whitespace
+            [[ -z "$line" ]] && continue
+            if [[ "$line" == *=* ]]; then
+                local key="${line%%=*}"
+                local val="${line#*=}"
+                # Only export if not already set in environment
+                if [[ -z "${!key:-}" ]]; then
+                    export "$key=$val"
+                fi
+            fi
+        done < "$env_file"
+    fi
+}
+
 cmd_status() {
+    _source_env_config
     show_banner
 
     echo -e "${BOLD}System Status${NC}"

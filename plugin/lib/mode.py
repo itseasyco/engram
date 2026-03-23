@@ -73,6 +73,33 @@ def _read_config_file() -> dict:
         return {}
 
 
+def _read_env_config() -> dict:
+    """Read .openclaw-lacp.env file and return key-value pairs.
+
+    This picks up settings from the INSTALL.sh-generated env config,
+    which may have values not in environment variables or mode.json.
+    """
+    openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
+    candidates = [
+        Path(openclaw_home) / "extensions" / "openclaw-lacp-fusion" / "config" / ".openclaw-lacp.env",
+    ]
+    for path in candidates:
+        if path.exists():
+            result = {}
+            try:
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        result[key.strip()] = value.strip()
+            except OSError:
+                pass
+            return result
+    return {}
+
+
 def _write_config_file(data: dict) -> Path:
     """Write mode.json, creating parent directories if needed."""
     path = _config_path()
@@ -94,29 +121,37 @@ def get_mode() -> str:
 
 
 def get_config() -> ModeConfig:
-    """Return a full ModeConfig snapshot from env + config file."""
+    """Return a full ModeConfig snapshot from env + config file + env config file.
+
+    Priority: environment variables > mode.json > .openclaw-lacp.env > defaults
+    """
     config = _read_config_file()
+    env_config = _read_env_config()
     mode = get_mode()
 
     curator_url = os.environ.get(
         "LACP_CURATOR_URL",
-        config.get("curator_url", ""),
+        config.get("curator_url", env_config.get("LACP_CURATOR_URL", "")),
     )
     curator_token = os.environ.get(
         "LACP_CURATOR_TOKEN",
-        config.get("curator_token", ""),
+        config.get("curator_token", env_config.get("LACP_CURATOR_TOKEN", "")),
     )
     mutations_enabled_env = os.environ.get("LACP_MUTATIONS_ENABLED", "").strip().lower()
     if mutations_enabled_env in ("true", "false"):
         mutations_enabled = mutations_enabled_env == "true"
     else:
-        mutations_enabled = config.get("mutations_enabled", mode != "connected")
+        env_config_mutations = env_config.get("LACP_MUTATIONS_ENABLED", "").strip().lower()
+        if env_config_mutations in ("true", "false"):
+            mutations_enabled = env_config_mutations == "true"
+        else:
+            mutations_enabled = config.get("mutations_enabled", mode != "connected")
 
     vault_path = os.environ.get(
         "LACP_OBSIDIAN_VAULT",
         os.environ.get(
             "OPENCLAW_VAULT",
-            config.get("vault_path", ""),
+            config.get("vault_path", env_config.get("LACP_OBSIDIAN_VAULT", "")),
         ),
     )
     if not vault_path:
@@ -125,7 +160,7 @@ def get_config() -> ModeConfig:
 
     agent_role = os.environ.get(
         "LACP_AGENT_ROLE",
-        config.get("agent_role", "developer"),
+        config.get("agent_role", env_config.get("LACP_AGENT_ROLE", "developer")),
     )
 
     return ModeConfig(
