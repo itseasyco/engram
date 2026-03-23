@@ -450,6 +450,7 @@ OPTIONS:
   --archive-days NUM    Archive entries older than N days (default: 90)
   --consolidate         Run mycelium consolidation pipeline (prune, merge, reinforce, heal)
   --activate            Run spreading activation from recently-accessed notes
+  --curator-cycle       Run full curator maintenance cycle (all 8 steps)
   --dry-run             Show what would be done without changes
   --json                Output results as JSON
   --help                Show this help
@@ -478,6 +479,7 @@ main() {
   local dry_run=0
   local consolidate=0
   local activate=0
+  local curator_cycle=0
   local json_output=0
 
   while [ $# -gt 0 ]; do
@@ -489,6 +491,7 @@ main() {
       --dry-run) dry_run=1; shift ;;
       --consolidate) consolidate=1; shift ;;
       --activate) activate=1; shift ;;
+      --curator-cycle) curator_cycle=1; shift ;;
       --json) json_output=1; shift ;;
       --help|-h|help) usage; exit 0 ;;
       *) echo "Unknown option: $1"; usage; exit 1 ;;
@@ -504,7 +507,7 @@ main() {
   fi
 
   # Standard layer expansion (unless only --consolidate/--activate requested)
-  if [ "$consolidate" = "0" ] && [ "$activate" = "0" ]; then
+  if [ "$consolidate" = "0" ] && [ "$activate" = "0" ] && [ "$curator_cycle" = "0" ]; then
     if [ -z "$layer" ] || [ "$layer" = "1" ]; then
       expand_layer1 "$project" "$max_tokens"
     fi
@@ -530,6 +533,44 @@ main() {
   # Spreading activation
   if [ "$activate" = "1" ]; then
     run_activation "$project" "$json_output"
+  fi
+
+  # Curator maintenance cycle
+  if [ "$curator_cycle" = "1" ]; then
+    echo ""
+    echo -e "${BLUE}Running Curator Maintenance Cycle${NC}"
+
+    local vault="${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}"
+    if [ ! -d "$vault" ]; then
+      log_warn "Vault not found at $vault — skipping curator cycle"
+    else
+      local curator_result
+      curator_result=$(python3 -c "
+import json, sys
+sys.path.insert(0, '$PLUGIN_DIR')
+from plugin.lib.curator import run_curator_cycle
+result = run_curator_cycle(
+    vault_path='$vault',
+    dry_run=$( [ "$dry_run" = "1" ] && echo "True" || echo "False" ),
+)
+print(json.dumps(result, indent=2, default=str))
+" 2>&1) || {
+        log_error "Curator cycle failed"
+        echo "$curator_result" >&2
+      }
+
+      if [ "$json_output" = "1" ]; then
+        echo "$curator_result"
+      else
+        local duration
+        duration=$(echo "$curator_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('cycle_duration_seconds',0))" 2>/dev/null || echo "?")
+        echo "  Cycle completed in ${duration}s"
+        local health_score
+        health_score=$(echo "$curator_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('results',{}).get('health',{}).get('health_score','?'))" 2>/dev/null || echo "?")
+        echo "  Health score: $health_score/100"
+      fi
+      log_success "Curator cycle complete"
+    fi
   fi
 
   echo ""
