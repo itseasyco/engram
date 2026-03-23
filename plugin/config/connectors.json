@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "connectors": [
+    {
+      "id": "watch-inbox",
+      "type": "filesystem",
+      "enabled": true,
+      "trust_level": "high",
+      "mode": "pull",
+      "landing_zone": "queue-agent",
+      "config": {
+        "watch_paths": ["~/.openclaw/data/knowledge/inbox/"],
+        "extensions": [".md", ".txt", ".pdf", ".url", ".webloc"],
+        "ignore_patterns": ["*.tmp", ".DS_Store", "*.swp"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""
+openclaw-connector: CLI for managing connectors in the knowledge graph.
+
+Usage:
+  openclaw-connector list                     List all configured connectors
+  openclaw-connector types                    List available connector types
+  openclaw-connector add <type> <id> [opts]   Add a new connector
+  openclaw-connector remove <id>              Remove a connector
+  openclaw-connector test <id>                Test a connector's connectivity
+  openclaw-connector status                   Show health status of all connectors
+  openclaw-connector pull [--id <id>]         Run pull on all (or one) pull-mode connectors
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# Add plugin lib to path
+PLUGIN_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PLUGIN_DIR))
+
+from lib.connectors.registry import ConnectorRegistry, CONNECTORS_CONFIG
+
+# ANSI colors
+BLUE = "\033[0;34m"
+GREEN = "\033[0;32m"
+YELLOW = "\033[1;33m"
+RED = "\033[0;31m"
+MAGENTA = "\033[0;35m"
+DIM = "\033[2m"
+BOLD = "\033[1m"
+NC = "\033[0m"
+
+
+def resolve_vault_path() -> str:
+    """Determine vault path from environment or config."""
+    val = os.environ.get("LACP_OBSIDIAN_VAULT") or os.environ.get("OPENCLAW_VAULT")
+    if val:
+        return val
+    openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
+    return os.path.join(openclaw_home, "data", "knowledge")
+
+
+def cmd_list(args, registry: ConnectorRegistry):
+    """List all configured connectors."""
+    registry.load_config()
+    connectors = registry._config.get("connectors", [])
+
+    if not connectors:
+        print(f"  {DIM}No connectors configured.{NC}")
+        print(f"  Run: openclaw-connector add <type> <id>")
+        return
+
+    print(f"\n{BOLD}Configured Connectors{NC}")
+    print("=" * 60)
+
+    for c in connectors:
+        enabled = c.get("enabled", True)
+        status_icon = f"{GREEN}on{NC}" if enabled else f"{RED}off{NC}"
+        trust = c.get("trust_level", "medium")
+        mode = c.get("mode", "pull")
+        landing = c.get("landing_zone", "queue-human")
+        print(
+            f"  [{status_icon}] {BOLD}{c['id']}{NC}"
+            f"  type={c.get('type', '?')}"
+            f"  trust={trust}"
+            f"  mode={mode}"
+            f"  zone={landing}"
+        )
+
+    print(f"\n  Total: {len(connectors)} connector(s)\n")
+
+
+def cmd_types(args, registry: ConnectorRegistry):
+    """List available connector types."""
+    types = registry.list_available_types()
+
+    print(f"\n{BOLD}Available Connector Types{NC}")
+    print("=" * 60)
+
+    for t in types:
+        tier_color = GREEN if t["tier"] == "native" else BLUE if t["tier"] == "first-party" else MAGENTA
+        print(f"  {tier_color}[{t['tier']}]{NC} {t['type']}")
+
+    print()
+
+
+def cmd_add(args, registry: ConnectorRegistry):
+    """Add a new connector."""
+    registry.load_config()
+
+    entry = {
+        "id": args.id,
+        "type": args.type,
+        "enabled": True,
+        "trust_level": args.trust or "medium",
+        "mode": args.mode or "pull",
+        "landing_zone": args.zone or "queue-human",
+        "config": {},
+    }
+
+    # Parse extra config from --set key=value pairs
+    if args.set:
+        for kv in args.set:
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                # Try to parse as JSON for complex values
+                try:
+                    entry["config"][k] = json.loads(v)
+                except json.JSONDecodeError:
+                    entry["config"][k] = v
+
+    try:
+        registry.add_connector(entry)
+        print(f"{GREEN}[ok]{NC} Added connector: {args.id} (type={args.type})")
+        print(f"     Config: {registry.config_path}")
+        print(f"     Edit config to add type-specific settings.")
+    except ValueError as exc:
+        print(f"{RED}[error]{NC} {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_remove(args, registry: ConnectorRegistry):
+    """Remove a connector."""
+    registry.load_config()
+    if registry.remove_connector(args.id):
+        print(f"{GREEN}[ok]{NC} Removed connector: {args.id}")
+    else:
+        print(f"{YELLOW}[warn]{NC} Connector not found: {args.id}")
+        sys.exit(1)
+
+
+def cmd_test(args, registry: ConnectorRegistry):
+    """Test a connector's connectivity."""
+    loaded = registry.load_all()
+
+    conn = registry.get(args.id)
+    if conn is None:
+        print(f"{RED}[error]{NC} Connector not found or failed to load: {args.id}")
+        sys.exit(1)
+
+    print(f"Testing connector: {args.id} (type={conn.type})...")
+
+    try:
+        ok = conn.authenticate()
+        if ok:
+            print(f"  {GREEN}[ok]{NC} Authentication successful")
+        else:
+            print(f"  {RED}[fail]{NC} Authentication failed")
+            sys.exit(1)
+    except Exception as exc:
+        print(f"  {RED}[fail]{NC} Authentication error: {exc}")
+        sys.exit(1)
+
+    # Try a pull if it's a pull-mode connector
+    if conn.mode in ("pull", "both"):
+        print(f"  Testing pull...")
+        try:
+            items = conn.pull()
+            print(f"  {GREEN}[ok]{NC} Pull returned {len(items)} item(s)")
+        except Exception as exc:
+            print(f"  {YELLOW}[warn]{NC} Pull error: {exc}")
+
+    # Health check
+    try:
+        status = conn.health_check()
+        health_icon = f"{GREEN}healthy{NC}" if status.healthy else f"{RED}unhealthy{NC}"
+        print(f"  Health: {health_icon}")
+    except Exception as exc:
+        print(f"  {YELLOW}[warn]{NC} Health check error: {exc}")
+
+    print()
+
+
+def cmd_status(args, registry: ConnectorRegistry):
+    """Show health status of all connectors."""
+    loaded = registry.load_all()
+    started = registry.start_all()
+
+    statuses = registry.status_all()
+
+    if not statuses:
+        print(f"  {DIM}No connectors loaded.{NC}")
+        return
+
+    print(f"\n{BOLD}Connector Status{NC}")
+    print("=" * 60)
+
+    for s in statuses:
+        healthy = s.get("healthy", False)
+        icon = f"{GREEN}healthy{NC}" if healthy else f"{RED}unhealthy{NC}"
+        cid = s.get("connector_id", "?")
+        ctype = s.get("connector_type", "?")
+        ingested = s.get("notes_ingested", 0)
+        errors = s.get("error_count", 0)
+        last_pull = s.get("last_pull_time", "never")
+        last_error = s.get("last_error", "")
+
+        print(f"  {icon}  {BOLD}{cid}{NC} ({ctype})")
+        print(f"         ingested={ingested}  errors={errors}  last_pull={last_pull}")
+        if last_error:
+            print(f"         {RED}last_error: {last_error}{NC}")
+
+    print()
+
+
+def cmd_pull(args, registry: ConnectorRegistry):
+    """Run pull on connectors."""
+    loaded = registry.load_all()
+    started = registry.start_all()
+
+    vault = resolve_vault_path()
+
+    if args.id:
+        conn = registry.get(args.id)
+        if conn is None:
+            print(f"{RED}[error]{NC} Connector not found: {args.id}", file=sys.stderr)
+            sys.exit(1)
+        if conn.mode not in ("pull", "both"):
+            print(f"{YELLOW}[warn]{NC} Connector {args.id} is push-only", file=sys.stderr)
+            sys.exit(1)
+        try:
+            items = conn.pull()
+            conn.record_pull()
+            written = 0
+            for raw in items:
+                note = conn.transform(raw)
+                path = note.write_to_vault(vault)
+                conn.record_ingestion()
+                written += 1
+                print(f"  {GREEN}[ok]{NC} {path}")
+            print(f"\n  Pulled {len(items)} item(s), wrote {written} note(s)")
+        except Exception as exc:
+            print(f"  {RED}[error]{NC} {exc}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        written_paths = registry.pull_all(vault)
+        for p in written_paths:
+            print(f"  {GREEN}[ok]{NC} {p}")
+        print(f"\n  Total: {len(written_paths)} note(s) written")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="openclaw-connector",
+        description="Manage connectors for the knowledge graph.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # list
+    subparsers.add_parser("list", help="List configured connectors")
+
+    # types
+    subparsers.add_parser("types", help="List available connector types")
+
+    # add
+    add_p = subparsers.add_parser("add", help="Add a new connector")
+    add_p.add_argument("type", help="Connector type (e.g. filesystem, webhook, github)")
+    add_p.add_argument("id", help="Unique connector ID")
+    add_p.add_argument("--trust", default=None, help="Trust level (verified, high, medium, low)")
+    add_p.add_argument("--mode", default=None, help="Mode (pull, push, both)")
+    add_p.add_argument("--zone", default=None, help="Landing zone (e.g. queue-cicd)")
+    add_p.add_argument("--set", action="append", help="Config key=value pair (repeatable)")
+
+    # remove
+    rm_p = subparsers.add_parser("remove", help="Remove a connector")
+    rm_p.add_argument("id", help="Connector ID to remove")
+
+    # test
+    test_p = subparsers.add_parser("test", help="Test connector connectivity")
+    test_p.add_argument("id", help="Connector ID to test")
+
+    # status
+    subparsers.add_parser("status", help="Show connector health status")
+
+    # pull
+    pull_p = subparsers.add_parser("pull", help="Run pull on connectors")
+    pull_p.add_argument("--id", default=None, help="Pull from specific connector only")
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+
+    registry = ConnectorRegistry()
+
+    dispatch = {
+        "list": cmd_list,
+        "types": cmd_types,
+        "add": cmd_add,
+        "remove": cmd_remove,
+        "test": cmd_test,
+        "status": cmd_status,
+        "pull": cmd_pull,
+    }
+
+    handler = dispatch.get(args.command)
+    if handler:
+        handler(args, registry)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
