@@ -18,6 +18,10 @@
     "reference": "reference",
     "health": "health",
     "people": "people",
+    "people_team": "people/team",
+    "people_personal": "people/personal",
+    "people_investors": "people/investors",
+    "people_clients": "people/clients",
     "strategy": "strategy",
     "archive": "archive"
   }
