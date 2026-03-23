@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -64,6 +65,10 @@ def write_json(path: Path, payload: dict, dry_run: bool) -> bool:
 
 
 def main() -> int:
+    # Mode guard: block in connected mode
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+    from mode_check import guard_or_exit
+    guard_or_exit("obsidian-optimize", json_output="--json" in sys.argv)
     args = build_parser().parse_args()
     vault = resolve_vault(args.vault)
     if not vault.exists():

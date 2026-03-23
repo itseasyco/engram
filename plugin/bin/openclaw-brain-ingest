@@ -18,13 +18,25 @@ from pathlib import Path
 from datetime import datetime
 import hashlib
 
+from pathlib import Path as _Path
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parent / "lib"))
+from mode_check import guard_or_exit
+
+_INGEST_MODE_STATUS = guard_or_exit("brain-ingest", json_output="--json" in _sys.argv)
+
 
 def ingest_transcript(vault_path, transcript_file, speaker=None, date=None):
     """Ingest a transcript file"""
     vault = Path(vault_path)
     inbox = vault / "inbox" / "queue-generated"
     inbox.mkdir(parents=True, exist_ok=True)
-    
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
     content = Path(transcript_file).read_text() if Path(transcript_file).exists() else ""
     
     title = f"Transcript — {speaker or 'Unknown'} ({date or 'undated'})"
@@ -57,7 +69,12 @@ def ingest_url(vault_path, url, title=None):
     vault = Path(vault_path)
     inbox = vault / "inbox" / "queue-generated"
     inbox.mkdir(parents=True, exist_ok=True)
-    
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
     title = title or url
     slug = "url_" + hashlib.md5(url.encode()).hexdigest()[:8]
     
@@ -87,7 +104,12 @@ def ingest_pdf(vault_path, pdf_file, title=None):
     vault = Path(vault_path)
     inbox = vault / "inbox" / "queue-generated"
     inbox.mkdir(parents=True, exist_ok=True)
-    
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
     pdf_name = Path(pdf_file).name
     title = title or Path(pdf_file).stem
     slug = "pdf_" + hashlib.md5(pdf_file.encode()).hexdigest()[:8]
@@ -118,7 +140,12 @@ def ingest_file(vault_path, file_path, title=None):
     vault = Path(vault_path)
     inbox = vault / "inbox" / "queue-generated"
     inbox.mkdir(parents=True, exist_ok=True)
-    
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
     file_obj = Path(file_path)
     content = file_obj.read_text(errors='ignore') if file_obj.exists() else ""
     

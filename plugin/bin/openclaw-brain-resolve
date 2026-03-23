@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, UTC
 from pathlib import Path
@@ -123,6 +124,10 @@ def apply_resolution(text: str, *, resolution: str, reason: str, superseded_by: 
 
 
 def main() -> int:
+    # Mode guard: block in connected mode
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+    from mode_check import guard_or_exit
+    guard_or_exit("brain-resolve", json_output="--json" in sys.argv)
     args = build_parser().parse_args()
     vault = resolve_vault(args.vault)
     if not vault.exists():
