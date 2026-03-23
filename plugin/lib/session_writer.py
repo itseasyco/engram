@@ -38,9 +38,28 @@ def _vault_path() -> Path:
     return Path(vault)
 
 
+def _get_mode() -> str:
+    """Get current operating mode, default standalone."""
+    try:
+        from .mode import get_mode
+        return get_mode()
+    except ImportError:
+        return os.environ.get("LACP_MODE", "standalone")
+
+
 def _memory_root() -> Path:
-    """Return the memory directory within the vault."""
-    return _vault_path() / "memory"
+    """Return the memory directory based on operating mode.
+
+    Standalone/curator: write directly to vault/01_memory/
+    Connected: write to vault/05_Inbox/queue-session/ for curator processing
+    """
+    vault = _vault_path()
+    mode = _get_mode()
+
+    if mode == "connected":
+        return vault / "05_Inbox" / "queue-session"
+    else:
+        return vault / "01_memory"
 
 
 def _sanitize_agent_name(name: str) -> str:
@@ -86,8 +105,14 @@ def write_session_memory(
     time = _time_str(dt)
     agent_slug = _sanitize_agent_name(agent_name)
 
-    # Create daily folder
-    daily_dir = _memory_root() / today
+    # Create daily folder: 01_memory/YYYY-MM/YYYY-MM-DD/ (standalone)
+    # or 05_Inbox/queue-session/ (connected, flat)
+    month = dt.strftime("%Y-%m")
+    mode = _get_mode()
+    if mode == "connected":
+        daily_dir = _memory_root()
+    else:
+        daily_dir = _memory_root() / month / today
     daily_dir.mkdir(parents=True, exist_ok=True)
 
     # Session filename
