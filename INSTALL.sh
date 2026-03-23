@@ -7,27 +7,29 @@ set -euo pipefail
 # Installs to ~/.openclaw/extensions/openclaw-lacp-fusion/
 
 # Require Bash 4.0+ (for associative arrays)
-if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
-    echo "Error: Bash 4.0+ required (you have ${BASH_VERSION})."
-    echo "  macOS: Install via Homebrew: brew install bash"
-    echo "  Then run: /opt/homebrew/bin/bash INSTALL.sh"
-    exit 1
-fi
+# Bash 3.2+ is fine (macOS default)
 
-# Cleanup trap — print recovery info on failure
+# Track whether install has started (vs still in wizard)
+INSTALL_STARTED=false
+
 _install_cleanup() {
     local exit_code=$?
     if [ "$exit_code" -ne 0 ]; then
         echo ""
-        echo -e "\033[0;31mInstallation failed (exit code $exit_code).\033[0m"
-        echo ""
-        echo "To recover:"
-        echo "  1. Re-run INSTALL.sh (it's safe to run again)"
-        echo "  2. If gateway config is broken: restore from backup:"
-        echo "     cp ~/.openclaw/openclaw.json.bak.* ~/.openclaw/openclaw.json"
-        echo "  3. To remove partial install:"
-        echo "     rm -rf ~/.openclaw/extensions/openclaw-lacp-fusion"
-        echo ""
+        if [ "$INSTALL_STARTED" = "true" ]; then
+            echo -e "\033[0;31mInstallation failed (exit code $exit_code).\033[0m"
+            echo ""
+            echo "To recover:"
+            echo "  1. Re-run INSTALL.sh (it's safe to run again)"
+            echo "  2. If gateway config is broken: restore from backup:"
+            echo "     cp ~/.openclaw/openclaw.json.bak.* ~/.openclaw/openclaw.json"
+            echo "  3. To remove partial install:"
+            echo "     rm -rf ~/.openclaw/extensions/openclaw-lacp-fusion"
+            echo ""
+        else
+            echo -e "\033[1;33mInstallation cancelled.\033[0m"
+            echo ""
+        fi
     fi
 }
 trap _install_cleanup EXIT
@@ -80,34 +82,36 @@ detect_environment() {
 
     case "$DETECTED_OS" in
         macos)
-            search_roots=("$HOME/Documents" "$HOME/Library/Mobile Documents" "$HOME/Desktop" "$HOME")
-            # Also check mounted volumes (external drives, NAS, etc.)
+            search_roots=("$HOME/Documents" "$HOME/Desktop")
+            # Check mounted volumes (external drives, NAS, etc.)
             for vol in /Volumes/*/; do
                 [ -d "$vol" ] && search_roots+=("${vol%/}")
             done
             ;;
         *)
-            search_roots=("$HOME/Documents" "$HOME/Desktop" "$HOME")
+            search_roots=("$HOME/Documents" "$HOME/Desktop")
             ;;
     esac
 
+    echo -en "  Scanning for Obsidian vaults..."
     for root in "${search_roots[@]}"; do
         if [ -d "$root" ]; then
             while IFS= read -r vault_dir; do
-                # vault_dir is the .obsidian folder; parent is the vault
                 local vault="${vault_dir%/.obsidian}"
                 DETECTED_VAULTS+=("$vault")
-            done < <(find "$root" -maxdepth 4 -name ".obsidian" -type d 2>/dev/null)
+                echo -en "."
+            done < <(find "$root" -maxdepth 3 -name ".obsidian" -type d 2>/dev/null)
         fi
     done
+    echo " done"
 
-    # Deduplicate (in case overlapping search roots)
+    # Deduplicate (bash 3.2 compatible)
     if [ "${#DETECTED_VAULTS[@]}" -gt 0 ]; then
-        local -A seen=()
         local unique_vaults=()
+        local seen_list=""
         for v in "${DETECTED_VAULTS[@]}"; do
-            if [ -z "${seen[$v]+x}" ]; then
-                seen[$v]=1
+            if [[ "$seen_list" != *"|${v}|"* ]]; then
+                seen_list="${seen_list}|${v}|"
                 unique_vaults+=("$v")
             fi
         done
@@ -128,14 +132,19 @@ prompt_value() {
     local default="$2"
 
     if [ "$HAS_GUM" = "true" ]; then
-        echo -e "  ${CYAN}?${NC} ${prompt}"
+        echo -e "  ${CYAN}?${NC} ${prompt}" >&2
         gum input --placeholder "$default" --value "$default" --width 60
     else
         local result
-        echo -en "  ${CYAN}?${NC} ${prompt} ${DIM}[${default}]${NC}: "
+        echo -en "  ${CYAN}?${NC} ${prompt} ${DIM}[${default}]${NC}: " >&2
         read -r result
         echo "${result:-$default}"
     fi
+}
+
+extract_first_word() {
+    # Extracts the first word from a choice string like "auto          — description"
+    echo "$1" | awk '{print $1}'
 }
 
 prompt_choice() {
@@ -145,19 +154,19 @@ prompt_choice() {
     local default="${options[0]}"
 
     if [ "$HAS_GUM" = "true" ]; then
-        echo -e "  ${CYAN}?${NC} ${prompt}"
+        echo -e "  ${CYAN}?${NC} ${prompt}" >&2
         gum choose --cursor="> " --cursor.foreground="212" "${options[@]}"
     else
-        echo -e "  ${CYAN}?${NC} ${prompt}"
+        echo -e "  ${CYAN}?${NC} ${prompt}" >&2
         for i in "${!options[@]}"; do
             local num=$((i + 1))
             if [ "$i" -eq 0 ]; then
-                echo -e "    ${GREEN}${num})${NC} ${BOLD}${options[$i]}${NC} ${DIM}(default)${NC}"
+                echo -e "    ${GREEN}${num})${NC} ${BOLD}${options[$i]}${NC} ${DIM}(default)${NC}" >&2
             else
-                echo -e "    ${num}) ${options[$i]}"
+                echo -e "    ${num}) ${options[$i]}" >&2
             fi
         done
-        echo -en "    Choice [1-${#options[@]}]: "
+        echo -en "    Choice [1-${#options[@]}]: " >&2
         read -r choice
         if [ -z "$choice" ] || [ "$choice" -lt 1 ] 2>/dev/null || [ "$choice" -gt "${#options[@]}" ] 2>/dev/null; then
             echo "$default"
@@ -194,11 +203,11 @@ prompt_yes_no() {
 
 prompt_browse_directory() {
     if [ "$HAS_GUM" = "true" ]; then
-        echo -e "  ${DIM}Navigate with arrow keys, Enter to select${NC}"
+        echo -e "  ${DIM}Navigate with arrow keys, Enter to select${NC}" >&2
         gum file --directory --height 12 "${1:-$HOME}"
     else
         local result
-        echo -en "  ${CYAN}?${NC} Enter directory path: "
+        echo -en "  ${CYAN}?${NC} Enter directory path: " >&2
         read -r result
         echo "$result"
     fi
@@ -253,10 +262,8 @@ check_and_install_obsidian_headless() {
 }
 
 check_and_install_gitnexus() {
-    if npx gitnexus --version &>/dev/null 2>&1; then
-        local gn_ver
-        gn_ver=$(npx gitnexus --version 2>/dev/null || echo "unknown")
-        log_success "GitNexus found ($gn_ver)"
+    if command -v gitnexus &>/dev/null; then
+        log_success "GitNexus found ($(which gitnexus))"
         return 0
     fi
 
@@ -283,7 +290,7 @@ check_and_install_gitnexus() {
             fi
         fi
 
-        if npx gitnexus --version &>/dev/null 2>&1; then
+        if command -v gitnexus &>/dev/null; then
             log_success "Verified: GitNexus ready"
             return 0
         else
@@ -348,8 +355,8 @@ check_and_install_lossless_claw() {
 check_and_install_qmd() {
     if command -v qmd &>/dev/null; then
         local qmd_ver
-        qmd_ver=$(qmd --version 2>/dev/null || echo "unknown")
-        log_success "QMD found ($qmd_ver)"
+        qmd_ver=$(which qmd)
+        log_success "QMD found"
         return 0
     fi
 
@@ -390,10 +397,10 @@ check_and_install_qmd() {
 }
 
 check_and_install_obsidian_cli() {
-    if command -v obsidian &>/dev/null; then
+    if command -v obsidian-cli &>/dev/null; then
         local obs_ver
-        obs_ver=$(obsidian --version 2>/dev/null || echo "unknown")
-        log_success "Obsidian CLI found ($obs_ver)"
+        obs_ver=$(obsidian-cli --version 2>/dev/null || echo "unknown")
+        log_success "Obsidian CLI found"
         return 0
     fi
 
@@ -420,11 +427,11 @@ check_and_install_obsidian_cli() {
             fi
         fi
 
-        if command -v obsidian &>/dev/null; then
+        if command -v obsidian-cli &>/dev/null; then
             log_success "Verified: Obsidian CLI ready"
             return 0
         else
-            log_error "obsidian command not found after install"
+            log_error "obsidian-cli command not found after install"
             return 1
         fi
     else
@@ -505,16 +512,43 @@ run_wizard() {
     echo -e "  ${GREEN}✓${NC} Vault: $WIZARD_VAULT"
     echo ""
 
-    # 2. Context engine
+    # 2. Context engine (detect first, ask only if needed)
     echo -e "${BOLD}Context Engine${NC}"
     echo -e "  ${DIM}Controls how LACP stores and retrieves context facts.${NC}"
     echo ""
-    local ce_choice
-    ce_choice=$(prompt_choice "Context engine" \
-        "auto          — auto-detect (lossless-claw if available, else file-based)" \
-        "file-based    — JSON files on disk (no extra dependencies)" \
-        "lossless-claw — native LCM database (~/.openclaw/lcm.db required)")
-    WIZARD_CONTEXT_ENGINE="${ce_choice%%[[:space:]]*}"
+
+    # Auto-detect what's available
+    local has_lossless_claw=false
+    local has_lcm_db=false
+    if [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ]; then
+        has_lossless_claw=true
+        echo -e "  ${GREEN}+${NC} lossless-claw extension detected"
+    fi
+    if [ -f "$OPENCLAW_HOME/lcm.db" ]; then
+        has_lcm_db=true
+        echo -e "  ${GREEN}+${NC} LCM database found (~/.openclaw/lcm.db)"
+    fi
+    echo ""
+
+    if [ "$has_lossless_claw" = "true" ]; then
+        # lossless-claw is installed, recommend it but let them choose
+        local ce_choice
+        ce_choice=$(prompt_choice "Context engine (lossless-claw detected)" \
+            "lossless-claw — native LCM database (recommended, already installed)" \
+            "file-based    — JSON files on disk (simpler, no database)")
+        WIZARD_CONTEXT_ENGINE=$(extract_first_word "$ce_choice")
+    else
+        # No lossless-claw, offer to install or use file-based
+        local ce_choice
+        ce_choice=$(prompt_choice "Context engine" \
+            "file-based    — JSON files on disk (no extra dependencies)" \
+            "lossless-claw — install native LCM database for better performance")
+        WIZARD_CONTEXT_ENGINE=$(extract_first_word "$ce_choice")
+    fi
+
+    if [ -z "$WIZARD_CONTEXT_ENGINE" ]; then
+        WIZARD_CONTEXT_ENGINE="file-based"
+    fi
     echo -e "  ${GREEN}✓${NC} Context engine: $WIZARD_CONTEXT_ENGINE"
     echo ""
 
@@ -531,7 +565,7 @@ run_wizard() {
         "minimal-stop  — quality gate only (lightweight)" \
         "hardened-exec — all 4 hooks, blocks dangerous ops" \
         "full-audit    — all hooks, strict mode, verbose logging")
-    WIZARD_PROFILE="${profile_choice%%[[:space:]]*}"
+    WIZARD_PROFILE=$(extract_first_word "$profile_choice")
     echo -e "  ${GREEN}✓${NC} Safety profile: $WIZARD_PROFILE"
     echo ""
 
@@ -545,7 +579,7 @@ run_wizard() {
         "standalone — local vault, all brain commands active (default)" \
         "connected  — sync to shared vault, mutations delegated to curator" \
         "curator    — server node: connectors, mycelium, git backup, invites")
-    WIZARD_MODE="${mode_choice%%[[:space:]]*}"
+    WIZARD_MODE=$(extract_first_word "$mode_choice")
     echo -e "  ${GREEN}✓${NC} Operating mode: $WIZARD_MODE"
     echo ""
 
@@ -612,7 +646,7 @@ run_wizard() {
             "review   — require review before execution" \
             "safe     — auto-approve safe operations" \
             "critical — all operations require approval")
-        WIZARD_POLICY_TIER="${tier_choice%%[[:space:]]*}"
+        WIZARD_POLICY_TIER=$(extract_first_word "$tier_choice")
 
         WIZARD_CODE_GRAPH="false"
         if prompt_yes_no "Enable code intelligence (AST analysis)?" "n"; then
@@ -644,44 +678,129 @@ run_wizard() {
             "block — block dangerous commands (ask user first)" \
             "warn  — warn but allow execution (log to guard-blocks.jsonl)" \
             "log   — silently log matches (no interruption)")
-        WIZARD_GUARD_LEVEL="${guard_level_choice%%[[:space:]]*}"
+        WIZARD_GUARD_LEVEL=$(extract_first_word "$guard_level_choice")
         echo -e "  ${GREEN}✓${NC} Guard block level: $WIZARD_GUARD_LEVEL"
         echo ""
 
-        if prompt_yes_no "Review and toggle individual guard rules?" "n"; then
+        if prompt_yes_no "Configure individual guard rules?" "n"; then
             echo ""
-            echo -e "  ${DIM}16 rules are enabled by default. Disable any you don't need:${NC}"
+            echo -e "  ${DIM}Select rules to change. Default level: ${WIZARD_GUARD_LEVEL}${NC}"
+            echo -e "  ${DIM}Use arrow keys to navigate, space to select, enter to confirm.${NC}"
             echo ""
 
-            # Key rules users might want to toggle
-            local -a toggle_rules=(
-                "npm-publish:Package registry publishing (npm/yarn/pnpm/cargo publish)"
-                "git-reset-hard:git reset --hard (destructive)"
-                "git-clean-force:git clean -f (destructive)"
-                "chmod-777:chmod 777 (overly permissive)"
-                "docker-privileged:docker run --privileged"
-                "curl-pipe-interpreter:curl/wget piped to interpreter"
-                "env-files:.env file access"
-                "pem-key-files:PEM/key file access"
+            local -a all_rules=(
+                "npm-publish          — Package registry publishing"
+                "git-reset-hard       — git reset --hard (destructive)"
+                "git-clean-force      — git clean -f (destructive)"
+                "chmod-777            — chmod 777 (overly permissive)"
+                "docker-privileged    — docker run --privileged"
+                "curl-pipe-interpreter — curl/wget piped to interpreter"
+                "fork-bomb            — Fork bomb detection"
+                "scp-rsync-root       — scp/rsync to /root"
+                "data-exfiltration    — Exfiltration from sensitive files"
+                "env-files            — .env file access"
+                "config-toml          — config.toml access"
+                "secrets-directory    — secrets/ directory access"
+                "claude-settings      — .claude/settings.json access"
+                "authorized-keys      — authorized_keys access"
+                "pem-key-files        — PEM/key file access"
+                "gnupg-directory      — .gnupg/ directory access"
             )
 
             WIZARD_DISABLED_RULES=()
-            for rule_entry in "${toggle_rules[@]}"; do
-                local rule_id="${rule_entry%%:*}"
-                local rule_desc="${rule_entry#*:}"
-                if ! prompt_yes_no "Enable: ${rule_desc}?" "y"; then
-                    WIZARD_DISABLED_RULES+=("$rule_id")
-                    echo -e "    ${YELLOW}!${NC} ${rule_id} disabled"
-                fi
-            done
+            WIZARD_RULE_OVERRIDES=()
 
-            if [ "${#WIZARD_DISABLED_RULES[@]}" -eq 0 ]; then
-                echo -e "  ${GREEN}✓${NC} All rules enabled"
+            if [ "$HAS_GUM" = "true" ] || true; then
+                # Show all rules with numbers
+                echo -e "  Current rules (all default to: ${BOLD}${WIZARD_GUARD_LEVEL}${NC}):"
+                echo ""
+                for i in "${!all_rules[@]}"; do
+                    printf "    %2d. %s\n" "$((i + 1))" "${all_rules[$i]}"
+                done
+                echo ""
+                echo -e "  ${CYAN}?${NC} Enter rule numbers to customize (comma-separated), or press enter to skip:" >&2
+                read -r rule_nums
+
+                local selected=""
+                if [ -n "$rule_nums" ]; then
+                    IFS=',' read -ra nums <<< "$rule_nums"
+                    for num in "${nums[@]}"; do
+                        num=$(echo "$num" | tr -d ' ')
+                        local idx=$((num - 1))
+                        if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#all_rules[@]}" ]; then
+                            selected="${selected}${all_rules[$idx]}"$'\n'
+                        fi
+                    done
+                fi
+
+                if [ -n "$selected" ]; then
+                    echo ""
+                    echo -e "  For each rule, enter: ${BOLD}b${NC}=block  ${BOLD}w${NC}=warn  ${BOLD}l${NC}=log  ${BOLD}d${NC}=disable  ${BOLD}enter${NC}=keep default"
+                    echo ""
+                    while IFS= read -r rule_line; do
+                        [ -z "$rule_line" ] && continue
+                        local rule_id
+                        rule_id=$(echo "$rule_line" | awk '{print $1}')
+
+                        echo -en "    ${BOLD}${rule_id}${NC} [${WIZARD_GUARD_LEVEL}]: " >&2
+                        local input
+                        read -r input
+                        local chosen_level=""
+                        case "$input" in
+                            b|block)   chosen_level="block" ;;
+                            w|warn)    chosen_level="warn" ;;
+                            l|log)     chosen_level="log" ;;
+                            d|disable) chosen_level="disable" ;;
+                            *)         chosen_level="$WIZARD_GUARD_LEVEL" ;;
+                        esac
+
+                        if [ "$chosen_level" = "disable" ]; then
+                            WIZARD_DISABLED_RULES+=("$rule_id")
+                            echo -e "      ${YELLOW}!${NC} disabled"
+                        elif [ "$chosen_level" != "$WIZARD_GUARD_LEVEL" ]; then
+                            WIZARD_RULE_OVERRIDES+=("${rule_id}:${chosen_level}")
+                            echo -e "      ${GREEN}✓${NC} ${chosen_level}"
+                        else
+                            echo -e "      ${DIM}default${NC}"
+                        fi
+                    done <<< "$selected"
+                fi
             else
-                echo -e "  ${GREEN}✓${NC} ${#WIZARD_DISABLED_RULES[@]} rule(s) disabled"
+                # Fallback: numbered list, type numbers to select
+                echo "  Rules (enter numbers separated by spaces to customize, or press enter to skip):"
+                for i in "${!all_rules[@]}"; do
+                    local num=$((i + 1))
+                    printf "    %2d) %s\n" "$num" "${all_rules[$i]}"
+                done
+                echo -en "  Selection: "
+                read -r selections
+
+                for sel in $selections; do
+                    local idx=$((sel - 1))
+                    if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#all_rules[@]}" ]; then
+                        local rule_id
+                        rule_id=$(echo "${all_rules[$idx]}" | awk '{print $1}')
+                        echo -en "  ${rule_id} — block/warn/log/disable [block]: "
+                        read -r chosen_level
+                        chosen_level="${chosen_level:-block}"
+                        if [ "$chosen_level" = "disable" ]; then
+                            WIZARD_DISABLED_RULES+=("$rule_id")
+                        elif [ "$chosen_level" != "$WIZARD_GUARD_LEVEL" ]; then
+                            WIZARD_RULE_OVERRIDES+=("${rule_id}:${chosen_level}")
+                        fi
+                    fi
+                done
+            fi
+
+            local changes=$(( ${#WIZARD_DISABLED_RULES[@]} + ${#WIZARD_RULE_OVERRIDES[@]} ))
+            if [ "$changes" -eq 0 ]; then
+                echo -e "  ${GREEN}✓${NC} All rules at default level ($WIZARD_GUARD_LEVEL)"
+            else
+                echo -e "  ${GREEN}✓${NC} ${changes} rule(s) customized"
             fi
         else
             WIZARD_DISABLED_RULES=()
+            WIZARD_RULE_OVERRIDES=()
         fi
     else
         WIZARD_POLICY_TIER="review"
@@ -706,32 +825,36 @@ run_wizard() {
         fi
         echo ""
     elif [ "$WIZARD_CONTEXT_ENGINE" = "auto" ]; then
+        echo -e "  ${DIM}Auto-detecting context engine...${NC}"
         if [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ] && [ -f "$OPENCLAW_HOME/lcm.db" ]; then
             WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
+            log_success "Detected: lossless-claw (LCM database + extension found)"
         elif [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ]; then
             WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
-            log_info "lossless-claw extension found (lcm.db will be created on first use)"
+            log_success "Detected: lossless-claw (extension found, lcm.db will be created on first use)"
         else
             WIZARD_CONTEXT_ENGINE_RESOLVED="file-based"
+            log_info "Detected: file-based (lossless-claw not installed)"
         fi
     else
         WIZARD_CONTEXT_ENGINE_RESOLVED="$WIZARD_CONTEXT_ENGINE"
     fi
+    echo -e "  ${GREEN}✓${NC} Resolved context engine: $WIZARD_CONTEXT_ENGINE_RESOLVED"
 
-    # 5. Confirmation
+    # 6. Confirmation
     echo ""
     echo -e "${BOLD}Installation Summary${NC}"
-    echo -e "  ┌─────────────────────────────────────────────────────────────┐"
-    echo -e "  │  Plugin:          openclaw-lacp-fusion v${PLUGIN_VERSION}               │"
-    echo -e "  │  Install path:    ${DIM}${PLUGIN_PATH}${NC}  │"
-    echo -e "  │  Obsidian vault:  ${DIM}${WIZARD_VAULT}${NC}"
-    echo -e "  │  Context engine:  ${WIZARD_CONTEXT_ENGINE_RESOLVED}"
-    echo -e "  │  Safety profile:  ${WIZARD_PROFILE}"
-    echo -e "  │  Policy tier:     ${WIZARD_POLICY_TIER}"
-    echo -e "  │  Code graph:      ${WIZARD_CODE_GRAPH}"
-    echo -e "  │  Provenance:      ${WIZARD_PROVENANCE}"
-    echo -e "  │  Local-first:     ${WIZARD_LOCAL_FIRST}"
-    echo -e "  └─────────────────────────────────────────────────────────────┘"
+    echo ""
+    echo -e "  Obsidian vault:    ${GREEN}${WIZARD_VAULT}${NC}"
+    echo -e "  Context engine:    ${GREEN}${WIZARD_CONTEXT_ENGINE_RESOLVED}${NC}"
+    echo -e "  Safety profile:    ${GREEN}${WIZARD_PROFILE}${NC}"
+    echo -e "  Operating mode:    ${GREEN}${WIZARD_MODE}${NC}"
+    echo -e "  Policy tier:       ${GREEN}${WIZARD_POLICY_TIER}${NC}"
+    echo -e "  Code graph:        ${GREEN}${WIZARD_CODE_GRAPH}${NC}"
+    echo -e "  Provenance:        ${GREEN}${WIZARD_PROVENANCE}${NC}"
+    echo -e "  Guard level:       ${GREEN}${WIZARD_GUARD_LEVEL}${NC}"
+    echo ""
+    echo -e "  Install path:      ${DIM}${PLUGIN_PATH}${NC}"
     echo ""
 
     if ! prompt_yes_no "Proceed with installation?" "y"; then
@@ -1377,9 +1500,17 @@ EOF
 
 main() {
     echo ""
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║          OpenClaw LACP Fusion Installer v${PLUGIN_VERSION}                    ║"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo -e "${BOLD}${CYAN}"
+    echo "  ███████╗███╗   ██╗ ██████╗ ██████╗  █████╗ ███╗   ███╗"
+    echo "  ██╔════╝████╗  ██║██╔════╝ ██╔══██╗██╔══██╗████╗ ████║"
+    echo "  █████╗  ██╔██╗ ██║██║  ███╗██████╔╝███████║██╔████╔██║"
+    echo "  ██╔══╝  ██║╚██╗██║██║   ██║██╔══██╗██╔══██║██║╚██╔╝██║"
+    echo "  ███████╗██║ ╚████║╚██████╔╝██║  ██║██║  ██║██║ ╚═╝ ██║"
+    echo "  ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝"
+    echo -e "${NC}"
+    echo -e "  ${DIM}Shared Intelligence Graph for AI Agents
+  by Easy Labs — https://itseasy.co${NC}"
+    echo -e "  ${DIM}Installer v${PLUGIN_VERSION}${NC}"
     echo ""
 
     detect_environment
@@ -1389,6 +1520,7 @@ main() {
     run_wizard
 
     echo ""
+    INSTALL_STARTED=true
     log_info "Starting installation..."
 
     check_prerequisites

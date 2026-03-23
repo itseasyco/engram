@@ -27,7 +27,7 @@ show_banner() {
     echo "  ███████╗██║ ╚████║╚██████╔╝██║  ██║██║  ██║██║ ╚═╝ ██║"
     echo "  ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝"
     echo -e "${NC}"
-    echo -e "  ${DIM}Shared Intelligence Graph for AI Agents${NC}"
+    echo -e "  ${DIM}Shared Intelligence Graph for AI Agents\n  by Easy Labs — https://itseasy.co${NC}"
     echo -e "  ${DIM}v${VERSION}${NC}"
     echo ""
 }
