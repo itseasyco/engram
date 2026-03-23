@@ -324,7 +324,23 @@ cmd_query() {
 
     log_info "Querying LACP facts for topic=${topic} min-score=${MIN_SCORE}"
 
-    # Search across all projects if no project specified
+    local results=()
+
+    # --- Phase 1: QMD semantic search (primary) ---
+    local qmd_searched=false
+    if command -v qmd &>/dev/null; then
+        log_info "Using QMD semantic search"
+        local qmd_output
+        qmd_output=$(qmd search "$topic" -c vault 2>/dev/null || true)
+        if [[ -n "$qmd_output" ]]; then
+            qmd_searched=true
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && results+=("qmd: $line")
+            done <<< "$qmd_output"
+        fi
+    fi
+
+    # --- Phase 2: Grep-based search across memory dirs ---
     local search_dirs=()
     if [[ -n "$project" ]]; then
         local slug
@@ -343,7 +359,6 @@ cmd_query() {
         fi
     fi
 
-    local results=()
     for dir in "${search_dirs[@]}"; do
         if [[ -d "$dir" ]]; then
             local matches
@@ -360,13 +375,36 @@ cmd_query() {
         fi
     done
 
+    # --- Phase 3: QMD search on Obsidian vault directly ---
+    if [[ "$qmd_searched" = "false" ]] && command -v qmd &>/dev/null && [[ -d "${LACP_OBSIDIAN_VAULT:-}" ]]; then
+        log_info "Searching Obsidian vault via QMD"
+        local vault_qmd
+        vault_qmd=$(cd "$LACP_OBSIDIAN_VAULT" && qmd search "$topic" 2>/dev/null || true)
+        if [[ -n "$vault_qmd" ]]; then
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && results+=("vault: $line")
+            done <<< "$vault_qmd"
+        fi
+    fi
+
     if [[ ${#results[@]} -eq 0 ]]; then
         log_warn "No facts found for topic=${topic}"
         exit 0
     fi
 
-    log_ok "Found ${#results[@]} matching facts"
-    format_output "$OUTPUT_FORMAT" "${results[@]}"
+    # Deduplicate results (compatible with bash 3.2+)
+    local unique_results=()
+    local seen_text=""
+    for r in "${results[@]}"; do
+        local content="${r#*: }"
+        if [[ "$seen_text" != *"|||${content}|||"* ]]; then
+            seen_text="${seen_text}|||${content}|||"
+            unique_results+=("$r")
+        fi
+    done
+
+    log_ok "Found ${#unique_results[@]} matching facts (QMD: $qmd_searched)"
+    format_output "$OUTPUT_FORMAT" "${unique_results[@]}"
 }
 
 cmd_list() {
