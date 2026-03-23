@@ -218,19 +218,25 @@ const lacpPlugin = {
         "research findings, or any content that should be available in future sessions.",
       parameters: Type.Object({
         type: Type.String({
-          description: 'Content type: "file" (markdown/text), "transcript" (meeting/conversation), "url" (web page), "pdf"',
-          enum: ["file", "transcript", "url", "pdf"],
+          description: 'Content type: "file" (markdown/text), "transcript" (meeting/conversation), "url" (web page), "pdf", "video" (mp4/mov/audio, auto-transcribes with Whisper), "video-batch" (all media in a directory)',
+          enum: ["file", "transcript", "url", "pdf", "video", "video-batch"],
         }),
-        source: Type.String({ description: "File path or URL to ingest" }),
-        title: Type.Optional(Type.String({ description: "Title for the ingested content" })),
-        speaker: Type.Optional(Type.String({ description: "Speaker name (for transcripts)" })),
+        source: Type.String({ description: "File path, URL, or directory path (for video-batch) to ingest" }),
+        title: Type.Optional(Type.String({ description: "Title for the ingested content (or title prefix for video-batch)" })),
+        speaker: Type.Optional(Type.String({ description: "Speaker name (for transcripts and video)" })),
+        model: Type.Optional(Type.String({ description: "Whisper model for video: tiny, base, small, medium, large. Default: base" })),
       }),
       async execute(_id, params: any) {
         const vaultPath = process.env.LACP_OBSIDIAN_VAULT || join(process.env.HOME ?? "", ".openclaw", "data", "knowledge");
         const args = [params.type, vaultPath, params.source];
-        if (params.title) args.push("--title", params.title);
+        if (params.title) {
+          args.push(params.type === "video-batch" ? "--title-prefix" : "--title", params.title);
+        }
         if (params.speaker) args.push("--speaker", params.speaker);
-        const result = await runCli("openclaw-brain-ingest", args, 60_000);
+        if (params.model) args.push("--model", params.model);
+        // Video transcription can take a long time
+        const timeout = params.type.startsWith("video") ? 600_000 : 60_000;
+        const result = await runCli("openclaw-brain-ingest", args, timeout);
         if (result.exitCode !== 0) {
           return textResult(`Ingestion failed: ${result.stderr || result.stdout}`);
         }
