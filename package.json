@@ -1,0 +1,38 @@
+{
+  "name": "engram",
+  "version": "2.2.0",
+  "description": "Shared Intelligence Graph for AI Agents — persistent memory, mycelium-powered knowledge curation, multi-agent coordination",
+  "license": "MIT",
+  "author": "Easy Labs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itseasyco/openclaw-lacp-fusion"
+  },
+  "bin": {
+    "engram": "./bin/engram"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "memory",
+    "knowledge-graph",
+    "obsidian",
+    "openclaw",
+    "mycelium",
+    "multi-agent",
+    "intelligence"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin/",
+    "plugin/",
+    "docs/",
+    "INSTALL.sh",
+    "openclaw.plugin.json",
+    "plugin.json",
+    "README.md",
+    "LICENSE"
+  ]
+}
