@@ -2,12 +2,12 @@
 
 **By [Easy Labs](https://itseasy.co)**
 
-**v2.2.0** -- Persistent agent memory, knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
+**v2.2.0** -- Persistent agent memory, mycelium-powered knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
 
 ![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![OpenClaw >= 0.23.0](https://img.shields.io/badge/openclaw-%3E%3D0.23.0-green.svg)
+![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-green.svg)
 ![Python >= 3.9](https://img.shields.io/badge/python-%3E%3D3.9-yellow.svg)
-![Tests](https://img.shields.io/badge/tests-122%2F122-brightgreen.svg)
 
 ---
 
@@ -15,7 +15,7 @@
 
 Engram brings persistent agent memory into your development workflow. It gives your agents session memory that survives across conversations, a knowledge graph backed by Obsidian, safety hooks that block dangerous operations before they execute, and a hash-chained provenance trail for every session.
 
-The plugin implements a 5-layer memory system: per-project session memory with daily structure, an Obsidian-backed knowledge graph, an ingestion pipeline for external content (including video and audio), AST-level code intelligence, and cryptographic provenance receipts. These layers work together so that every agent session starts with institutional context and ends with auditable evidence of what happened.
+The plugin implements a 5-layer memory system: per-project session memory with daily structure, an Obsidian-backed knowledge graph with QMD semantic search, an ingestion pipeline for external content (including video and audio via Whisper), AST-level code intelligence, and cryptographic provenance receipts. These layers work together so that every agent session starts with institutional context and ends with auditable evidence of what happened.
 
 Engram is for teams and individuals who run agents on real codebases and need guardrails (blocking `npm publish`, `git reset --hard`, secrets access), persistent memory (facts that carry between sessions), and a clear audit trail. It is local-first by default -- all data stays on your machine.
 
@@ -24,14 +24,19 @@ Engram is for teams and individuals who run agents on real codebases and need gu
 - Execution hooks (session context injection, pretool guard, quality gate, write validation)
 - Risk-based policy routing with three tiers (safe / review / critical) and cost ceilings
 - Per-project session memory with daily folder structure and per-agent session files
-- Obsidian-backed knowledge graph with semantic search (QMD)
+- Session auto-capture hook (fires automatically on `/new` and `/reset`)
+- Obsidian-backed knowledge graph with QMD semantic search
 - Video and audio ingestion via ffmpeg + Whisper transcription
+- Vault doctor: scan orphans, fix frontmatter, add tags, rename hash files
+- Vault migration tool for restructuring existing vaults into Engram-compatible layout
+- 8-step curator maintenance cycle (inbox processing, consolidation, wikilinks, staleness, conflicts, schema, index, health)
 - Code intelligence via AST analysis, call graphs, and impact analysis
 - Cryptographic provenance tracking (SHA-256 hash-chained receipts)
 - Multi-agent memory sharing with role-based access
 - Configurable safety profiles from autonomous to full-audit
 - **10 MCP tools** for memory query, fact promotion, ingestion, guard status, vault management, graph indexing, brain resolution, memory KPIs, vault optimization, and session saving
-- 25+ CLI tools for managing memory, guard rules, ingestion, and more
+- **30 CLI tools** for managing memory, guard rules, ingestion, vault health, and more
+- Node.js interactive wizard with arrow-key navigation (powered by @clack/prompts)
 
 ---
 
@@ -42,9 +47,9 @@ Engram is for teams and individuals who run agents on real codebases and need gu
 | Requirement | Version | Notes |
 |---|---|---|
 | OpenClaw | >= 0.23.0 | Core runtime |
-| Python | >= 3.9 | Hook handlers are Python scripts |
-| Bash | >= 5.0 | CLI tools are bash/python scripts |
-| gum | (optional) | Interactive wizard with arrow-key selection; falls back to `read` prompts |
+| Node.js | >= 22 | CLI and wizard |
+| Python | >= 3.9 | Hook handlers and lib modules |
+| Bash | >= 4.0 | CLI tools are bash/python scripts |
 | Obsidian | (optional) | Knowledge graph vault (Layer 2) |
 | qmd | (optional) | Semantic search indexing |
 | ffmpeg | (optional) | Video/audio ingestion (Layer 3) |
@@ -67,7 +72,7 @@ npx @easylabs/engram
 **From the repo:**
 
 ```bash
-git clone https://github.com/easylabs/engram
+git clone https://github.com/itseasyco/engram
 cd engram
 bash INSTALL.sh
 ```
@@ -80,20 +85,30 @@ Run the setup wizard:
 engram wizard
 ```
 
-The wizard walks you through configuration interactively:
+The wizard uses a Node.js interactive UI (powered by @clack/prompts) with arrow-key navigation. It walks you through:
 
-1. **Context engine** -- choose `lossless-claw` (native LCM integration) or file-based (default)
-2. **Safety profile** -- pick from 7 profiles (see [Safety Profiles](#safety-profiles))
-3. **Policy tier** -- default risk tier for unmatched tasks: `safe`, `review`, or `critical`
-4. **Obsidian vault** -- auto-detects vaults on your system, or type/browse to a path
-5. **Code intelligence** -- enable AST analysis and call graphs (optional)
-6. **Provenance tracking** -- hash-chained cryptographic receipts (enabled by default)
+1. **Obsidian vault** -- auto-detects vaults on your system, or type/browse to a path
+2. **Context engine** -- choose `lossless-claw` (native LCM integration) or file-based (default)
+3. **Safety profile** -- pick from 7 profiles (see [Safety Profiles](#safety-profiles))
+4. **Operating mode** -- standalone, connected, or curator
+5. **Guard configuration** -- block levels, rule toggling, allowlists
+6. **Dependencies** -- GitNexus, lossless-claw, obsidian-headless checks
+
+The wizard outputs config to a temp file that `INSTALL.sh` consumes to complete installation. If Node.js is unavailable, it falls back to legacy bash prompts.
 
 After install, verify:
 
 ```bash
 engram doctor
 ```
+
+### Uninstall
+
+```bash
+engram uninstall
+```
+
+This removes the plugin extension directory, managed hooks, and gateway config entries. Vault data and LACP memory files are preserved. Pass `--yes` to skip confirmation.
 
 ---
 
@@ -103,15 +118,15 @@ Engram exposes 10 tools via the Model Context Protocol that agents can call dire
 
 | Tool | Description |
 |---|---|
-| `engram_memory_query` | Query session memory and LACP facts with semantic search |
+| `engram_memory_query` | Query session memory and LACP facts with semantic search (uses QMD when available) |
 | `engram_promote_fact` | Promote a session observation to persistent scored fact |
 | `engram_ingest` | Ingest transcripts, URLs, PDFs, files, video, and audio into the knowledge graph |
 | `engram_guard_status` | Check guard rule status, recent blocks, and allowlist entries |
 | `engram_vault_status` | Report on Obsidian vault health, note counts, and index freshness |
 | `engram_graph_index` | Trigger knowledge graph re-indexing with optional QMD semantic search |
-| `engram_brain_resolve` | Resolve a query against all 5 memory layers and return unified context |
-| `engram_memory_kpi` | Return memory system KPIs: fact count, promotion rate, staleness, coverage |
-| `engram_vault_optimize` | Run vault optimization: dedup notes, compress stale entries, rebuild index |
+| `engram_brain_resolve` | Resolve a query against contradictions/supersessions in knowledge notes |
+| `engram_memory_kpi` | Return memory system KPIs: fact count, schema coverage, staleness, contradictions |
+| `engram_vault_optimize` | Apply memory-centric graph physics defaults (link distance, repel, node sizing, color groups) |
 | `engram_save_session` | Save session memory to daily folder structure with per-agent session files |
 
 ---
@@ -126,7 +141,7 @@ Engram implements a continuous memory lifecycle across agent sessions. Understan
 Layer 1: Session Memory     ~/.openclaw/projects/<slug>/memory/
 Layer 2: Knowledge Graph    ~/obsidian/vault/ (Obsidian + QMD)
 Layer 3: Ingestion Pipeline engram ingest (transcripts, URLs, PDFs, video, audio)
-Layer 4: Code Intelligence  engram brain (AST, call graphs, impact)
+Layer 4: Code Intelligence  engram brain code (AST, call graphs, impact)
 Layer 5: Provenance         ~/.openclaw/provenance/ (hash-chained receipts)
 ```
 
@@ -145,10 +160,10 @@ Layer 5: Provenance         ~/.openclaw/provenance/ (hash-chained receipts)
        |
        v
   Knowledge gets indexed in vault/graph (Layer 2)
-  Organized into Projects / Concepts / People / Systems / Inbox
+  Organized into projects / engineering / knowledge / inbox
        |
        v
-  Session saved to daily structure (engram_save_session)
+  Session saved to daily structure (engram_save_session or auto-capture hook)
   vault/memory/YYYY-MM-DD/<agent-id>-<session>.md
        |
        v
@@ -164,49 +179,95 @@ Layer 5: Provenance         ~/.openclaw/provenance/ (hash-chained receipts)
 
 Every project gets its own memory directory at `~/.openclaw/projects/<slug>/memory/`. The `session-start` hook reads the current git context (branch, recent commits, modified files) and injects it as a system message when a new session begins. Execution results -- cost, gate decisions, exit codes, learnings -- are appended via `engram memory append`.
 
-### 2. Daily Session Memory Structure
+### 2. Session Auto-Capture Hook
+
+Engram includes a managed hook (`engram-session-capture`) that fires automatically when you issue `/new` or `/reset` in OpenClaw. It:
+
+1. Reads the session transcript (last N messages)
+2. Extracts key decisions, tasks completed/pending, and notable facts
+3. Writes a per-agent session file to `vault/memory/YYYY-MM-DD/`
+4. Updates the daily index with wikilinks
+
+No agent action needed -- capture happens as a side effect of ending a session.
+
+### 3. Daily Session Memory Structure
 
 Session memory is organized into a daily folder structure for easy browsing and automatic indexing:
 
 ```
 vault/memory/
-  2026-03-23/
+  2026-03-24/
     agent-a1b2c3-session-001.md
     agent-a1b2c3-session-002.md
     agent-d4e5f6-session-001.md
     _daily-index.md              # Auto-generated summary of all sessions that day
-  2026-03-22/
+  2026-03-23/
     agent-a1b2c3-session-001.md
     _daily-index.md
 ```
 
-Each session file contains the agent ID, project slug, start/end timestamps, key facts discovered, commands run, and a session summary. The `_daily-index.md` is auto-generated and links to all session files for that day, providing a chronological view of agent activity.
+Each session file contains the agent ID, project slug, start/end timestamps, key facts discovered, commands run, and a session summary. The `_daily-index.md` is auto-generated and links to all session files for that day.
 
-The `engram_save_session` tool writes session data to this structure at session end. Daily indexes are rebuilt automatically when new sessions are saved.
-
-### 3. Persistent Facts
+### 4. Persistent Facts
 
 Persistent facts are extracted from session data and stored via `engram memory context`. Facts have scores, categories, and timestamps. The `engram_promote_fact` tool handles promotion from raw session summaries to scored, persistent facts. Deduplication prevents redundant facts from accumulating. Confidence calibration tunes promotion thresholds over time.
 
-### 4. Knowledge Graph
+### 5. Knowledge Graph
 
-The Obsidian vault is organized into a taxonomy:
+The Obsidian vault is organized into the Engram taxonomy:
 
 ```
 vault/
-  Projects/       # Per-project knowledge
-  Concepts/       # Technical concepts, patterns
-  People/         # Team members, contacts
-  Systems/        # Infrastructure, services
-  Inbox/          # Unsorted incoming notes
-    queue-generated/  # Ingested content landing zone
-  memory/         # Daily session memory (see above)
-    YYYY-MM-DD/   # Per-day folders with agent session files
+  home/           # Master index, vault overview
+  memory/         # Daily session memory (YYYY-MM-DD folders)
+  projects/       # Per-repo/per-project knowledge
+  engineering/    # Architecture, decisions, active work
+  knowledge/      # Concepts, learnings, agent knowledge
+  inbox/          # Incoming notes awaiting curator processing
+    queue-agent/    # Agent-submitted facts
+    queue-cicd/     # CI/CD events
+    queue-human/    # Human-submitted (email, voice notes, research)
+    queue-session/  # Auto-captured session memories (connected mode)
+    review-stale/   # Curator-flagged for review
+  reference/      # External docs, API references
+  people/         # Team members, contacts
+  health/         # Personal/team health tracking
+  strategy/       # Business strategy, planning
+  archive/        # Archived/deprecated content
+  _metadata/      # Vault config, taxonomy
 ```
 
-`engram brain graph` initializes and indexes the vault. `engram vault` manages vault status, backups, and optimization. QMD provides semantic search across the vault.
+`engram brain graph` initializes and indexes the vault. `engram vault` manages vault status, backups, and optimization. QMD provides semantic search across the vault when available.
 
-### 5. Lossless Context Integration
+### 6. Vault Doctor
+
+The vault doctor scans every note in your vault and fixes what it can:
+
+- Find orphans (notes with zero backlinks)
+- Add/fix YAML frontmatter (title, category, tags, dates, status)
+- Auto-detect tags from content (#PRD, #research, #architecture, #meeting, etc.)
+- Rename hash-named files to prose-style titles
+- Detect category and suggest/execute moves to correct folders
+- Run wikilink weaver to connect orphans
+
+```bash
+engram brain heal
+engram brain heal --dry-run    # Preview changes without writing
+```
+
+### 7. Vault Migration
+
+For existing vaults that need restructuring into the Engram-compatible layout, the vault migration tool scans your vault, proposes a clean structure, and migrates files with wikilink preservation:
+
+```bash
+# Preview migration plan
+python3 plugin/lib/vault_migrate.py /path/to/vault --dry-run
+
+# Execute migration
+python3 plugin/lib/vault_migrate.py /path/to/vault
+```
+
+### 8. Lossless Context Integration
 
 When `contextEngine` is set to `lossless-claw`, the plugin integrates with the LCM (Lossless Context Manager) backend. LCM's DAG compaction works alongside Engram's fact injection: LCM compresses conversational context while Engram injects curated facts at session start. The two systems are complementary -- LCM handles within-session context efficiency, while Engram handles cross-session knowledge persistence.
 
@@ -237,13 +298,13 @@ Seven profiles control which hooks fire and how they behave.
 | **hardened-exec** | session-start, pretool-guard, stop-quality-gate, write-validate | All hooks block; violations require explicit approval | Production deploys, high-stakes work |
 | **full-audit** | session-start, pretool-guard, stop-quality-gate, write-validate | All hooks block; verbose logging; full provenance | Compliance, audit trails, debugging hook behavior |
 
-Set the profile during install or change it later in `~/.openclaw/extensions/engram/config/.engram.env`.
+Set the profile during install or change it later in `~/.openclaw/extensions/engram/config/.openclaw-lacp.env`.
 
 ---
 
 ## Guard System
 
-The pretool-guard hook intercepts every tool call before execution and checks it against a configurable set of rules.
+The pretool-guard hook intercepts tool calls before execution and checks them against a configurable set of rules.
 
 ### How It Works
 
@@ -258,7 +319,7 @@ The pretool-guard hook intercepts every tool call before execution and checks it
    - `log` -- silently logged, command proceeds (exit 0)
 7. Every match is written to `guard-blocks.jsonl` for audit
 
-### Built-in Rules
+### Built-in Rules (16 rules)
 
 The guard ships with rules for common dangerous patterns:
 
@@ -327,7 +388,7 @@ engram guard allow "docker run --privileged" --repo /path/to/ci-repo --reason "C
 # Remove a command from all allowlists
 engram guard deny "git reset --hard HEAD~1"
 
-# Interactive configuration (gum-powered)
+# Interactive configuration
 engram guard config
 
 # Configure overrides for a specific repo
@@ -412,25 +473,21 @@ engram ingest file ~/obsidian/vault ./meeting-notes.md --title "Sprint Retro"
 engram ingest index ~/obsidian/vault --qmd
 ```
 
-### 5. OpenClaw Cron Integration
+### 5. Curator Maintenance Cycle
 
-If OpenClaw supports recurring jobs, configure them in your project config:
+The curator engine runs an 8-step maintenance cycle on your vault:
 
-```bash
-# Example: auto-ingest and re-index every 6 hours
-openclaw cron add "engram ingest index ~/obsidian/vault --qmd" --interval 6h
-
-# Example: promote high-confidence facts daily
-openclaw cron add "engram memory promote auto --score 80" --interval 24h
-```
-
-### 6. Repo Research Sync
-
-Mirror repository documentation into the knowledge graph:
+1. Process inbox (route queue-agent, queue-human, queue-cicd, queue-session)
+2. Run mycelium consolidation (spreading activation, memory decay, path reinforcement)
+3. Weave wikilinks (connect related notes)
+4. Staleness scan (flag outdated content)
+5. Conflict resolution (detect contradictions)
+6. Schema enforcement (validate frontmatter)
+7. Index update (rebuild graph index)
+8. Health report (summary of vault state)
 
 ```bash
-# Sync README, docs/, wiki, and code comments into the vault
-engram connector repo-sync /path/to/my-repo
+engram brain expand --curator-cycle
 ```
 
 ---
@@ -439,41 +496,147 @@ engram connector repo-sync /path/to/my-repo
 
 The `engram` command is the main entry point with the following subcommands:
 
-| Subcommand | Description |
-|---|---|
-| `engram wizard` | Interactive first-time setup and reconfiguration |
-| `engram status` | Memory and context health dashboard |
-| `engram doctor` | Health check across all 5 memory layers with optional auto-fix |
-| `engram guard` | Manage guard rules, allowlists, block logs, and repo overrides |
-| `engram memory` | Session memory operations: query, append, promote, dedup, calibrate, context |
-| `engram brain` | Knowledge graph: ingest, index, resolve, code analysis, expand |
-| `engram vault` | Obsidian vault: status, audit, apply, backup, restore, optimize |
-| `engram connector` | External integrations: repo-sync, webhook handlers |
-| `engram watch` | File watcher for auto-ingestion of new content |
-| `engram connect` | Register and activate Engram with an agent runtime |
-| `engram disconnect` | Deregister Engram from an agent runtime |
+### Top-level Commands
 
-### Additional CLI Tools
+| Command | Description |
+|---|---|
+| `engram wizard` | Interactive setup wizard (Node.js UI with arrow-key navigation) |
+| `engram wizard --section <name>` | Run a specific wizard section: `vault`, `engine`, `profile`, `mode`, `guard`, `dependencies`, `all` |
+| `engram status` | Memory and context health dashboard (mode, mutations, vault, tools) |
+| `engram doctor` | Health check across plugin, hooks, modules, guard config, and tests |
+| `engram connect` | Join a shared vault (shortcut for `engram-connect join`) |
+| `engram disconnect` | Leave the shared vault |
+| `engram uninstall` | Remove Engram (preserves vault data); pass `--yes` to skip confirmation |
+| `engram -v` / `engram --version` | Print version |
+
+### Guard Commands
+
+| Command | Description |
+|---|---|
+| `engram guard rules` | List all guard rules with their status |
+| `engram guard blocks` | View recent blocks from the audit log |
+| `engram guard toggle <rule-id>` | Enable or disable a specific rule |
+| `engram guard level <rule-id> <level>` | Set block level (block/warn/log) for a rule |
+| `engram guard allow "<cmd>"` | Add a command to the global allowlist |
+| `engram guard deny "<cmd>"` | Remove a command from all allowlists |
+| `engram guard config` | Interactive guard configuration |
+| `engram guard defaults --level <level>` | Set global default block level |
+| `engram guard reset` | Reset to factory defaults |
+
+### Memory Commands
+
+| Command | Description |
+|---|---|
+| `engram memory query <topic>` | Search memory for facts matching a topic |
+| `engram memory promote` | Promote session facts to persistent memory |
+| `engram memory status` | Show memory system status |
+| `engram memory kpi` | Memory quality KPIs |
+
+### Brain Commands
+
+| Command | Description |
+|---|---|
+| `engram brain expand` | Re-summarize, deduplicate, and compress memory layers |
+| `engram brain expand --curator-cycle` | Run full 8-step curator maintenance cycle |
+| `engram brain expand --consolidate` | Run mycelium consolidation pass |
+| `engram brain resolve` | Resolve contradictions/supersessions in knowledge notes |
+| `engram brain kpi` | Vault quality metrics (aliases `engram-memory-kpi`) |
+| `engram brain optimize` | Apply memory-centric graph physics defaults to vault |
+| `engram brain code` | AST analysis, symbol lookup, call graphs, impact analysis |
+| `engram brain graph` | Initialize, index, and query the knowledge graph |
+| `engram brain ingest` | Ingest transcripts, URLs, PDFs, video, audio, files |
+| `engram brain doctor` | Brain-specific diagnostics |
+| `engram brain heal` | Vault doctor: scan orphans, fix frontmatter, add tags, rename hash files |
+
+### Vault Commands
+
+| Command | Description |
+|---|---|
+| `engram vault status` | Vault health and statistics |
+| `engram vault audit` | Full audit (broken links, orphans) |
+| `engram vault backup` | Backup vault |
+| `engram vault restore` | Restore vault from backup |
+
+### Ingestion & Watch
+
+| Command | Description |
+|---|---|
+| `engram ingest <type> <vault> <source>` | Ingest content (file, transcript, url, pdf, video, video-batch) |
+| `engram watch setup` | Configure file watcher for auto-ingestion |
+| `engram watch run` | Run file watcher |
+| `engram watch status` | Check watcher status |
+
+### Connector Commands
+
+| Command | Description |
+|---|---|
+| `engram connector list` | List available connectors |
+| `engram connector add` | Add a connector |
+| `engram connector remove` | Remove a connector |
+| `engram connector test` | Test a connector |
+
+### Additional CLI Tools (plugin/bin)
+
+All 30 CLI tools use the `engram-*` prefix:
 
 | Tool | Description |
 |---|---|
-| `engram brain ingest` | Ingest transcripts, URLs, PDFs, video, audio, and files into structured vault notes |
-| `engram brain graph` | Initialize, index, and query the Obsidian knowledge graph |
-| `engram brain code` | AST analysis, symbol lookup, call graphs, and impact analysis |
-| `engram brain expand` | Re-summarize, deduplicate, and compress memory layers |
-| `engram memory context` | Inject facts into context windows; query and list facts |
-| `engram memory promote` | Promote session facts to persistent memory |
-| `engram memory calibrate` | Confidence calibration for promotion thresholds |
-| `engram memory dedup` | Semantic deduplication for promoted facts |
-| `engram memory policies` | View and manage multi-agent sharing policies |
-| `engram memory share` | Multi-agent memory sharing with role-based access |
-| `engram memory init` | Scaffold per-project session memory structure |
-| `engram memory append` | Append execution results to session memory |
-| `engram agent-id` | Persistent agent identity per (hostname, project) pair |
-| `engram gated-run` | Policy enforcement wrapper for commands (cost ceilings, approval) |
-| `engram provenance` | SHA-256 hash-chained session receipts and audit trail |
-| `engram route` | Risk-based policy routing for tasks |
-| `engram verify` | Task verification with heuristic, test, LLM, and hybrid modes |
+| `engram-agent-id` | Persistent agent identity per (hostname, project) pair |
+| `engram-brain-code` | AST analysis, symbol lookup, call graphs |
+| `engram-brain-doctor` | Brain diagnostics |
+| `engram-brain-expand` | Memory expansion, consolidation, curator cycle |
+| `engram-brain-graph` | Knowledge graph init, index, query |
+| `engram-brain-ingest` | Content ingestion pipeline |
+| `engram-brain-resolve` | Contradiction/supersession resolution |
+| `engram-brain-stack` | Brain stack inspection |
+| `engram-calibrate` | Confidence calibration for promotion thresholds |
+| `engram-connect` | Connected mode: join/leave shared vaults |
+| `engram-connector` | External integration management |
+| `engram-context` | Fact injection and query |
+| `engram-dedup` | Semantic deduplication for promoted facts |
+| `engram-gated-run` | Policy enforcement wrapper (cost ceilings, approval) |
+| `engram-guard` | Guard rule management |
+| `engram-ingest-watch` | File watcher for auto-ingestion |
+| `engram-memory-append` | Append execution results to session memory |
+| `engram-memory-init` | Scaffold per-project session memory structure |
+| `engram-memory-kpi` | Memory quality KPIs |
+| `engram-memory-status` | Memory system status |
+| `engram-obsidian` | Vault management (status, audit, backup, restore) |
+| `engram-obsidian-optimize` | Vault graph physics optimization |
+| `engram-policies` | View and manage multi-agent sharing policies |
+| `engram-promote` | Fact promotion to persistent memory |
+| `engram-provenance` | SHA-256 hash-chained session receipts |
+| `engram-repo-research-sync` | Mirror repo docs into the knowledge graph |
+| `engram-route` | Risk-based policy routing for tasks |
+| `engram-share` | Multi-agent memory sharing |
+| `engram-validate` | Schema/format validation |
+| `engram-verify` | Task verification (heuristic, test, LLM, hybrid modes) |
+
+---
+
+## Coming Soon
+
+The following features exist in the codebase but are not fully wired or tested end-to-end. Use at your own risk.
+
+### Pretool Guard Blocking (Partial)
+
+The `before_tool_call` hook is registered in `index.ts` and shells out to `pretool-guard.py`, but the OpenClaw gateway's `before_tool_call` lifecycle event may not be fully supported in all runtimes yet. The guard code works; delivery depends on the gateway version.
+
+### Connected Mode
+
+The `engram-connect` CLI exists for joining and leaving shared vaults (`engram connect --token inv_abc123`). The underlying `sync_daemon.py`, `invites.py`, and `heartbeat.py` modules are implemented but have not been tested end-to-end against live multi-user scenarios.
+
+### Curator Mode
+
+The curator engine (`plugin/lib/curator.py`) implements the full 8-step maintenance cycle and can be triggered via `engram brain expand --curator-cycle`. The code is functional but has not been battle-tested in production vaults at scale.
+
+### Obsidian-headless Shared Vault Sync
+
+The wizard checks for `obsidian-headless` (`ob` CLI) and the status command reports its presence, but headless vault sync for multi-machine setups is not yet fully integrated.
+
+### Connectors: GitHub, Slack, Email
+
+Connector modules exist at `plugin/lib/connectors/` for GitHub (`github.py`), Slack (`slack.py`), Email (`email.py`), filesystem (`filesystem.py`), webhooks (`webhook.py`), and cron-based fetching (`cron_fetch.py`). These have not been tested against real external services. A community connector packaging system (`community.py`, `registry.py`, `trust.py`) is scaffolded but not production-ready.
 
 ---
 
@@ -498,6 +661,7 @@ During the wizard you can configure:
 
 - **Guard level**: Set the global default block level (block/warn/log)
 - **Rule toggling**: Enable or disable individual guard rules
+- **Operating mode**: Standalone, connected, or curator
 - **Policy tier**: Default risk tier for unmatched tasks (safe/review/critical)
 - **Code graph**: Enable or disable AST analysis and call graphs
 - **Provenance**: Enable or disable hash-chained cryptographic receipts
@@ -512,8 +676,13 @@ To change settings after install:
 # Re-run the full wizard
 engram wizard
 
+# Run a specific section
+engram wizard --section guard
+engram wizard --section profile
+engram wizard --section vault
+
 # Or validate and fix specific issues
-engram doctor --fix
+engram doctor
 
 # Or configure guard rules interactively
 engram guard config
@@ -556,7 +725,7 @@ The current SDK exposes `openclaw/plugin-sdk`. A future SDK release may move to 
 
 ### Plugin Config
 
-**Location:** `~/.openclaw/extensions/engram/config/.engram.env`
+**Location:** `~/.openclaw/extensions/engram/config/.openclaw-lacp.env`
 
 Environment-style config for the plugin. Set during install by the wizard.
 
@@ -564,7 +733,7 @@ Environment-style config for the plugin. Set during install by the wizard.
 
 **Location:** `~/.openclaw/extensions/engram/config/guard-rules.json`
 
-Controls all guard rules, block levels, allowlists, and per-repo overrides. See [Guard System](#guard-system) for the full schema.
+Controls all 16 guard rules, block levels, allowlists, and per-repo overrides. See [Guard System](#guard-system) for the full schema.
 
 ### Gateway Registration
 
@@ -605,44 +774,12 @@ Each profile JSON declares which hooks are enabled, their configuration (sensiti
 - `hardened-exec.json`
 - `full-audit.json`
 
-### Context Engine Config Examples
-
-**File-based (default):**
-
-```json
-{
-  "engram": {
-    "enabled": true,
-    "config": {
-      "contextEngine": null,
-      "promotionThreshold": 70
-    }
-  }
-}
-```
-
-**Lossless-claw backend:**
-
-```json
-{
-  "engram": {
-    "enabled": true,
-    "config": {
-      "contextEngine": "lossless-claw",
-      "lcmQueryBatchSize": 50,
-      "promotionThreshold": 70,
-      "autoDiscoveryInterval": "6h"
-    }
-  }
-}
-```
-
 ### Config Schema Properties
 
 | Property | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | boolean | true | Enable/disable the plugin |
-| `profile` | string | `"balanced"` | Safety profile: minimal-stop, balanced, hardened-exec |
+| `profile` | string | `"balanced"` | Safety profile: minimal-stop, balanced, hardened-exec, etc. |
 | `obsidianVault` | string | `~/obsidian/vault` | Path to Obsidian knowledge vault |
 | `knowledgeRoot` | string | `~/.openclaw/data/knowledge` | Directory for knowledge graph data |
 | `automationRoot` | string | `~/.openclaw/data/automation` | Directory for automation data |
@@ -713,13 +850,10 @@ This is expected behavior. Engram registers hooks as lifecycle listeners via `ap
 
 ```bash
 # Check everything with verbose output
-engram doctor --verbose
+engram doctor
 
-# Auto-fix common issues
-engram doctor --fix
-
-# Output as JSON for scripting
-engram doctor --json
+# Re-run the wizard to fix configuration
+engram wizard
 ```
 
 ---
@@ -730,12 +864,16 @@ engram doctor --json
 
 ```
 engram/
+  package.json               # @easylabs/engram, v2.2.0
   openclaw.plugin.json       # Plugin manifest (hooks, profiles, config schema, bins)
   plugin.json                # Plugin metadata
-  INSTALL.sh                 # Interactive install wizard
+  INSTALL.sh                 # Install script (consumed by wizard output)
+  bin/
+    engram                   # Main CLI entry point (bash router)
+    wizard.mjs               # Node.js interactive wizard (@clack/prompts)
   plugin/
-    index.ts                 # Gateway entry point (hook registration shim)
-    bin/                     # 25+ CLI tools
+    index.ts                 # Gateway entry point (hook + tool registration)
+    bin/                     # 30 CLI tools (engram-*)
     config/                  # Guard rules, example configs
     hooks/
       handlers/              # Python hook scripts
@@ -743,8 +881,31 @@ engram/
         pretool-guard.py     # Dangerous pattern blocking
         stop-quality-gate.py # Incomplete work detection
         write-validate.py    # Schema/format validation
+      managed/
+        engram-session-capture/  # Auto-capture hook (/new, /reset)
       profiles/              # 7 safety profile JSONs
       tests/                 # Hook unit tests (pytest)
+    lib/                     # Python modules
+      mycelium.py            # Spreading activation, FSRS memory model, flow scores
+      curator.py             # 8-step curator maintenance cycle
+      vault_doctor.py        # Orphan scan, frontmatter fix, tag detection, rename
+      vault_migrate.py       # Vault structure migration with wikilink preservation
+      consolidation.py       # Memory consolidation
+      session_writer.py      # Daily session file writer
+      wikilink_weaver.py     # Auto-link related notes
+      staleness.py           # Stale content detection
+      schema_enforcer.py     # Frontmatter schema validation
+      conflict_resolver.py   # Contradiction detection
+      inbox_processor.py     # Inbox queue routing
+      index_generator.py     # Graph index builder
+      health_reporter.py     # Vault health reporting
+      mode.py                # Operating mode (standalone/connected/curator)
+      heartbeat.py           # Connected mode heartbeat
+      sync_daemon.py         # Vault sync daemon
+      knowledge_gaps.py      # Gap detection
+      review_queue.py        # Review queue management
+      connectors/            # GitHub, Slack, Email, filesystem, webhook, cron connectors
+      tests/                 # Lib unit tests
     memory/
       tests/                 # Memory layer tests
     policy/                  # Risk policy routing
