@@ -46,7 +46,7 @@
       },
       "profile": {
         "type": "string",
-        "enum": ["minimal-stop", "balanced", "hardened-exec"],
+        "enum": ["minimal-stop", "balanced", "hardened-exec", "autonomous", "context-only", "guard-rail", "full-audit"],
         "default": "balanced"
       },
       "obsidianVault": {
@@ -123,6 +123,28 @@
         "default": "6h",
         "enum": ["1h", "2h", "4h", "6h", "8h", "12h", "24h"],
         "description": "How often to auto-discover summaries (requires LCM backend)"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["standalone", "connected", "curator"],
+        "default": "standalone",
+        "description": "Operating mode: standalone (local), connected (shared vault), curator (server)"
+      },
+      "mutationsEnabled": {
+        "type": ["string", "boolean"],
+        "default": "true",
+        "description": "Whether vault mutation commands are allowed (false in connected mode)"
+      },
+      "curatorUrl": {
+        "type": ["string", "null"],
+        "default": null,
+        "description": "URL of the curator server (for connected mode)"
+      },
+      "guardLevel": {
+        "type": "string",
+        "enum": ["block", "warn", "log"],
+        "default": "block",
+        "description": "Default guard block level"
       }
     }
   },
