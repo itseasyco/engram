@@ -62,6 +62,8 @@ OPTIONS:
   --discover             Auto-discover summaries from LCM backend (requires lossless-claw)
   --similarity-threshold Dedup threshold 0.0-1.0 (default: 0.85)
   --calibrate-confidence Auto-calibrate promotion threshold from usage data
+  --backend <name>       Override backend: lossless-claw or file (default: from config)
+  --discover             Auto-discover summaries from LCM backend (requires lossless-claw)
   --dry-run              Score but don't actually promote
   --help                 Show this help
 
@@ -761,6 +763,70 @@ cmd_verify() {
         log_error "Receipt NOT FOUND: ${receipt_hash}"
         exit 1
     fi
+}
+
+# --- Discover (requires lossless-claw backend) ---
+
+cmd_discover() {
+    local project=""
+    local since=""
+    local limit=10
+    local backend_override=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  project="$2"; shift 2 ;;
+            --since)    since="$2"; shift 2 ;;
+            --limit)    limit="$2"; shift 2 ;;
+            --backend)  backend_override="$2"; shift 2 ;;
+            *)          log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    # Check if lossless-claw backend is configured
+    local config_engine=""
+    local gateway_config="${HOME}/.openclaw/openclaw.json"
+    if [[ -f "$gateway_config" ]] && command -v jq &>/dev/null; then
+        config_engine=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.contextEngine // ""' "$gateway_config" 2>/dev/null || true)
+    fi
+
+    local active_backend="${backend_override:-$config_engine}"
+
+    if [[ "$active_backend" != "lossless-claw" ]]; then
+        log_error "discover requires the lossless-claw backend."
+        log_error "Set contextEngine to 'lossless-claw' in your config or use --backend lossless-claw"
+        exit 1
+    fi
+
+    local lcm_db="${HOME}/.openclaw/lcm.db"
+    if [[ ! -f "$lcm_db" ]]; then
+        log_error "LCM database not found at ${lcm_db}"
+        exit 1
+    fi
+
+    log_info "Discovering summaries from LCM database..."
+    log_info "  Backend: lossless-claw"
+    [[ -n "$project" ]] && log_info "  Project: ${project}"
+    [[ -n "$since" ]] && log_info "  Since: ${since}"
+    log_info "  Limit: ${limit}"
+
+    python3 -c "
+import sys, json
+sys.path.insert(0, '${V2_LCM_DIR}')
+sys.path.insert(0, '${V2_LCM_DIR}/backends')
+from lcm_backend import LCMBackend
+backend = LCMBackend({'lcmDbPath': '${lcm_db}'})
+filters = {}
+if '${project}': filters['project'] = '${project}'
+if '${since}': filters['since'] = '${since}'
+filters['limit'] = int('${limit}')
+summaries = backend.discover_summaries(filters)
+for s in summaries:
+    print(json.dumps(s, default=str))
+" 2>/dev/null || {
+        log_error "Failed to query LCM database"
+        exit 1
+    }
 }
 
 # --- Main ---

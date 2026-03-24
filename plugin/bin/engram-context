@@ -10,7 +10,7 @@
 
 set -eo pipefail
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 SCRIPT_NAME="openclaw-lacp-context"
 
 # Colors
@@ -54,9 +54,9 @@ OPTIONS:
   --max-facts <n>      Max facts to inject (default: 3)
   --min-score <n>      Minimum relevance score (default: 50)
   --format <fmt>       Output format: text, json, markdown (default: text)
-  --backend <type>       Override backend: 'lcm' or 'file' (default: from config)
-  --discover             Auto-discover summaries (requires lossless-claw backend)
   --session-id <id>    Session ID for tracking
+  --backend <name>     Override backend: lossless-claw or file (default: from config)
+  --discover           Auto-discover context from LCM backend (requires lossless-claw)
   --help               Show this help
 
 EXAMPLES:
@@ -235,7 +235,7 @@ format_output() {
 # --- Commands ---
 
 cmd_inject() {
-    local project="" agent="" topic="" backend_override="" discover=false
+    local project="" agent="" topic=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -243,8 +243,6 @@ cmd_inject() {
             --agent)    agent="$2"; shift 2 ;;
             --depth)    DEPTH="$2"; shift 2 ;;
             --topic)    topic="$2"; shift 2 ;;
-            --backend)  backend_override="$2"; shift 2 ;;
-            --discover) discover=true; shift ;;
             --format)   OUTPUT_FORMAT="$2"; shift 2 ;;
             *)          log_error "Unknown option: $1"; exit 1 ;;
         esac
@@ -326,7 +324,23 @@ cmd_query() {
 
     log_info "Querying LACP facts for topic=${topic} min-score=${MIN_SCORE}"
 
-    # Search across all projects if no project specified
+    local results=()
+
+    # --- Phase 1: QMD semantic search (primary) ---
+    local qmd_searched=false
+    if command -v qmd &>/dev/null; then
+        log_info "Using QMD semantic search"
+        local qmd_output
+        qmd_output=$(qmd search "$topic" -c vault 2>/dev/null || true)
+        if [[ -n "$qmd_output" ]]; then
+            qmd_searched=true
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && results+=("qmd: $line")
+            done <<< "$qmd_output"
+        fi
+    fi
+
+    # --- Phase 2: Grep-based search across memory dirs ---
     local search_dirs=()
     if [[ -n "$project" ]]; then
         local slug
@@ -345,7 +359,6 @@ cmd_query() {
         fi
     fi
 
-    local results=()
     for dir in "${search_dirs[@]}"; do
         if [[ -d "$dir" ]]; then
             local matches
@@ -362,13 +375,36 @@ cmd_query() {
         fi
     done
 
+    # --- Phase 3: QMD search on Obsidian vault directly ---
+    if [[ "$qmd_searched" = "false" ]] && command -v qmd &>/dev/null && [[ -d "${LACP_OBSIDIAN_VAULT:-}" ]]; then
+        log_info "Searching Obsidian vault via QMD"
+        local vault_qmd
+        vault_qmd=$(cd "$LACP_OBSIDIAN_VAULT" && qmd search "$topic" 2>/dev/null || true)
+        if [[ -n "$vault_qmd" ]]; then
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && results+=("vault: $line")
+            done <<< "$vault_qmd"
+        fi
+    fi
+
     if [[ ${#results[@]} -eq 0 ]]; then
         log_warn "No facts found for topic=${topic}"
         exit 0
     fi
 
-    log_ok "Found ${#results[@]} matching facts"
-    format_output "$OUTPUT_FORMAT" "${results[@]}"
+    # Deduplicate results (compatible with bash 3.2+)
+    local unique_results=()
+    local seen_text=""
+    for r in "${results[@]}"; do
+        local content="${r#*: }"
+        if [[ "$seen_text" != *"|||${content}|||"* ]]; then
+            seen_text="${seen_text}|||${content}|||"
+            unique_results+=("$r")
+        fi
+    done
+
+    log_ok "Found ${#unique_results[@]} matching facts (QMD: $qmd_searched)"
+    format_output "$OUTPUT_FORMAT" "${unique_results[@]}"
 }
 
 cmd_list() {
@@ -506,7 +542,7 @@ write_injection_metadata() {
 
 # Auto-inject top-N facts for session-start hook integration
 cmd_auto_inject() {
-    local project="" agent="" topic="" session_id="" backend_override="" discover=false
+    local project="" agent="" topic="" session_id=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -515,8 +551,6 @@ cmd_auto_inject() {
             --topic)      topic="$2"; shift 2 ;;
             --max-facts)  MAX_FACTS="$2"; shift 2 ;;
             --session-id) session_id="$2"; shift 2 ;;
-            --backend)    backend_override="$2"; shift 2 ;;
-            --discover)   discover=true; shift ;;
             --format)     OUTPUT_FORMAT="$2"; shift 2 ;;
             *)            log_error "Unknown option: $1"; exit 1 ;;
         esac
@@ -687,6 +721,7 @@ main() {
         query)        cmd_query "$@" ;;
         list)         cmd_list "$@" ;;
         history)      cmd_history "$@" ;;
+        discover)     cmd_discover "$@" ;;
         --help|-h) usage ;;
         --version|-v) echo "${SCRIPT_NAME} v${VERSION}" ;;
         *)
@@ -694,6 +729,73 @@ main() {
             usage
             ;;
     esac
+}
+
+# --- Discover (requires lossless-claw backend) ---
+
+cmd_discover() {
+    local project=""
+    local topic=""
+    local limit=10
+    local backend_override=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  project="$2"; shift 2 ;;
+            --topic)    topic="$2"; shift 2 ;;
+            --limit)    limit="$2"; shift 2 ;;
+            --backend)  backend_override="$2"; shift 2 ;;
+            *)          log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    local config_engine=""
+    local gateway_config="${HOME}/.openclaw/openclaw.json"
+    if [[ -f "$gateway_config" ]] && command -v jq &>/dev/null; then
+        config_engine=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.contextEngine // ""' "$gateway_config" 2>/dev/null || true)
+    fi
+
+    local active_backend="${backend_override:-$config_engine}"
+
+    if [[ "$active_backend" != "lossless-claw" ]]; then
+        log_error "discover requires the lossless-claw backend."
+        log_error "Set contextEngine to 'lossless-claw' in your config or use --backend lossless-claw"
+        exit 1
+    fi
+
+    local lcm_db="${HOME}/.openclaw/lcm.db"
+    if [[ ! -f "$lcm_db" ]]; then
+        log_error "LCM database not found at ${lcm_db}"
+        exit 1
+    fi
+
+    if [[ -z "$topic" ]]; then
+        log_error "Missing required --topic for context discovery"
+        exit 1
+    fi
+
+    log_info "Discovering context from LCM database..."
+    log_info "  Backend: lossless-claw"
+    log_info "  Topic: ${topic}"
+    [[ -n "$project" ]] && log_info "  Project: ${project}"
+    log_info "  Limit: ${limit}"
+
+    local v2_lcm_dir
+    v2_lcm_dir="$(cd "$(dirname "$0")/.." && pwd)/v2-lcm"
+
+    python3 -c "
+import sys, json
+sys.path.insert(0, '${v2_lcm_dir}')
+sys.path.insert(0, '${v2_lcm_dir}/backends')
+from lcm_backend import LCMBackend
+backend = LCMBackend({'lcmDbPath': '${lcm_db}'})
+results = backend.find_context(task='${topic}', project='${project}' or None, limit=int('${limit}'))
+for r in results:
+    print(json.dumps(r, default=str))
+" 2>/dev/null || {
+        log_error "Failed to query LCM database"
+        exit 1
+    }
 }
 
 main "$@"

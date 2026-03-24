@@ -1,164 +1,242 @@
 # Context Backends
 
-## Architecture
-
-The v2-lcm module uses a backend abstraction to decouple context retrieval from storage format. All CLI commands and internal modules operate against the `ContextBackend` interface, allowing transparent switching between implementations.
-
-```
-                    +-----------------------+
-                    |   ContextBackend      |
-                    |   (abstract class)    |
-                    +-----------+-----------+
-                                |
-              +-----------------+-----------------+
-              |                                   |
-   +----------+----------+           +------------+----------+
-   |    FileBackend      |           |     LCMBackend        |
-   |  (file-based)       |           |  (lossless-claw)      |
-   +---------------------+           +-----------------------+
-   | Scans vault dirs    |           | Queries SQLite DAG    |
-   | Reads memory root   |           | traverse_dag()        |
-   | Explicit --file     |           | Keyword search        |
-   | paths               |           | Batch discovery       |
-   +---------------------+           +-----------------------+
-              |                                   |
-    ~/.openclaw/vault/              ~/.openclaw/lcm.db
-    ~/.openclaw/memory/             (summaries table)
-```
-
-### ContextBackend Interface
-
-All backends implement these methods:
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `fetch_summary` | `(summary_id: str) -> dict` | Fetch a single summary by ID |
-| `discover_summaries` | `(filters: dict) -> list` | Find summaries matching filters (since, until, project, limit) |
-| `find_context` | `(task: str, project?, limit?) -> list` | Keyword search for task-relevant context |
-| `traverse_dag` | `(summary_id: str, depth?) -> dict` | Walk parent chain to build conversation history |
-| `backend_name` | `() -> str` | Return `"file"` or `"lossless-claw"` |
-| `is_available` | `() -> bool` | Check whether the backend can serve requests |
+OpenClaw LACP Fusion v2.2.0 supports two context backends: **LCMBackend** (lossless-claw) and **FileBackend** (file-based). The active backend is selected via the `contextEngine` config key.
 
 ---
 
-## FileBackend
+## Architecture
 
-The default backend when `contextEngine` is `null` or unset.
+```
+                    +---------------------------+
+                    |    CLI Commands            |
+                    |  openclaw-lacp-promote     |
+                    |  openclaw-lacp-context     |
+                    +------------+--------------+
+                                 |
+                                 v
+                    +---------------------------+
+                    |   get_backend(config)      |
+                    |   (Factory Function)       |
+                    +------+----------+---------+
+                           |          |
+              contextEngine|          | contextEngine
+              = "lossless- |          | = null
+                claw"      |          |
+                           v          v
+              +------------+--+  +---+-----------+
+              |  LCMBackend   |  |  FileBackend   |
+              |  (SQLite DB)  |  |  (Vault Files) |
+              +-------+------+  +-------+--------+
+                      |                 |
+                      v                 v
+              +-------+------+  +-------+--------+
+              |  lcm.db      |  |  ~/.openclaw/   |
+              |  (SQLite)    |  |  vault/*.md     |
+              |              |  |  memory/*.md    |
+              +--------------+  +----------------+
+```
 
-### How It Works
+---
 
-FileBackend scans the filesystem for context:
+## ContextBackend Abstract Interface
 
-1. **Explicit files** -- Any paths provided via the `--file` flag or `files` config key are searched first.
-2. **Memory root** -- Recursively scans `~/.openclaw/memory/` (or configured `memoryRoot`) for `.md` and `.json` files.
-3. **Vault directories** -- Recursively scans `~/.openclaw/vault/` (or configured `vaultPath`) for markdown notes.
-4. **Keyword matching** -- For `find_context`, extracts keywords from the task description and scores files by term frequency overlap.
-5. **Date filtering** -- For `discover_summaries`, filters by file timestamps or embedded date fields.
+Both backends implement the same abstract interface, ensuring commands work identically regardless of which backend is active.
 
-### When to Use
+### Methods
 
-- Simple setups without a running lossless-claw instance
-- Projects that store context as flat files or Obsidian vault notes
-- Quick prototyping before committing to the full LCM pipeline
-- Environments where SQLite is not available or practical
+| Method | Description | Returns |
+|--------|-------------|---------|
+| `discover_summaries(filters)` | Find summaries matching project/date filters | `list[dict]` |
+| `find_context(task, project, limit)` | Find context relevant to a task/topic | `list[dict]` |
+| `get_summary(summary_id)` | Retrieve a single summary by ID | `dict` or `None` |
+| `get_ancestors(summary_id, depth)` | Traverse parent_id chain upward | `list[dict]` |
+| `list_projects()` | List all known projects | `list[str]` |
 
-### Limitations
+### Filter dictionary
 
-- No true DAG traversal. `traverse_dag()` returns a single-node chain if the summary is found.
-- No conversation-level grouping. Summaries are discovered individually by file path.
-- No auto-discovery by conversation ID. The `--discover` flag scans directories but cannot group by conversation.
-- Performance degrades on large vaults (filesystem scan on every query).
+The `filters` parameter for `discover_summaries` accepts:
+
+```python
+{
+    "project": "easy-api",      # Filter by project name
+    "since": "2026-03-01",      # Filter by date (ISO format)
+    "limit": 50,                # Max results to return
+}
+```
 
 ---
 
 ## LCMBackend
 
-The native lossless-claw context engine. Activated by setting `contextEngine` to `"lossless-claw"`.
+The LCMBackend reads from the LCM SQLite database. This is the recommended backend for production use when LCM is your primary session engine.
 
-### How It Works
+### How it works
 
-LCMBackend queries the `summaries` table in `~/.openclaw/lcm.db`:
+1. Opens a read-only connection to `~/.openclaw/lcm.db`.
+2. Queries the `summaries` table with SQL filters.
+3. Traverses `parent_id` chains using recursive CTEs for DAG traversal.
+4. Returns structured dictionaries with summary content, metadata, and lineage.
 
-1. **Direct fetch** -- `fetch_summary` performs a primary key lookup by `summary_id`.
-2. **Discovery** -- `discover_summaries` builds a SQL query with optional WHERE clauses for `since`, `until`, `project`, and `conversation_id`. Results are ordered by timestamp descending.
-3. **Keyword search** -- `find_context` fetches recent summaries (up to `lcmQueryBatchSize`) and scores them against extracted keywords from the task description.
-4. **DAG traversal** -- `traverse_dag` walks `parent_id` references from a starting summary backward through the chain, up to the configured depth.
+### SQLite queries
 
-### When to Use
+**Find summaries by project:**
 
-- Full lossless-claw integration with persistent session summaries
-- Projects that need conversation history reconstruction (DAG traversal)
-- Multi-project environments with structured discovery queries
-- Production setups requiring indexed, batch-capable context retrieval
-
-### Requirements
-
-- `~/.openclaw/lcm.db` must exist (or the path configured in `lcmDbPath`)
-- The database must contain a `summaries` table with at minimum: `summary_id`, `content`, `parent_id`, `timestamp`, `project`
-- Python `sqlite3` module (included in standard library)
-
----
-
-## Comparison
-
-| Feature | FileBackend | LCMBackend |
-|---------|-------------|------------|
-| Storage format | Flat files (MD, JSON) | SQLite database |
-| DAG traversal | No (single-node only) | Yes (full parent chain) |
-| Auto-discovery by date | Yes (filesystem scan) | Yes (SQL query) |
-| Auto-discovery by conversation | No | Yes |
-| Auto-discovery by project | Yes (directory convention) | Yes (SQL WHERE) |
-| Keyword search | Yes (file content scan) | Yes (batch + score) |
-| Batch size control | Limited (scan-based) | Yes (`lcmQueryBatchSize`) |
-| Setup complexity | None (works out of the box) | Requires lcm.db with summaries table |
-| Performance on large datasets | Degrades (O(n) file scan) | Stable (indexed queries) |
-| Explicit file paths (--file) | Yes | No (queries DB only) |
-| Always available | Yes | Only if lcm.db exists |
-
----
-
-## get_backend Factory
-
-The `get_backend(config)` function in `plugin/v2-lcm/backends/__init__.py` handles backend selection:
-
-```python
-from backends import get_backend
-
-config = load_openclaw_lacp_config()
-backend = get_backend(config)
-
-# Use the backend
-summaries = backend.discover_summaries({"project": "easy-api", "limit": 20})
-context = backend.find_context("deploy treasury flow", project="easy-api")
-chain = backend.traverse_dag("sum_abc123", depth=5)
+```sql
+SELECT summary_id, content, project, parent_id, timestamp
+FROM summaries
+WHERE project = ?
+ORDER BY timestamp DESC
+LIMIT ?;
 ```
 
-Selection logic:
+**Find context by topic (keyword search):**
 
-1. If `config["contextEngine"] == "lossless-claw"`:
-   - Instantiate `LCMBackend(config)`
-   - Verify `is_available()` returns `True`
-   - If not available, raise `ValueError` with a message pointing to the missing database
-2. Otherwise (null or unset):
-   - Instantiate `FileBackend(config)`
-   - FileBackend is always available
+```sql
+SELECT summary_id, content, project, parent_id, timestamp
+FROM summaries
+WHERE content LIKE '%' || ? || '%'
+ORDER BY timestamp DESC
+LIMIT ?;
+```
+
+**DAG traversal (ancestor chain):**
+
+```sql
+WITH RECURSIVE ancestors AS (
+  SELECT * FROM summaries WHERE summary_id = ?
+  UNION ALL
+  SELECT s.* FROM summaries s
+  JOIN ancestors a ON s.summary_id = a.parent_id
+)
+SELECT * FROM ancestors ORDER BY timestamp ASC;
+```
+
+### Configuration
+
+```json
+{
+  "contextEngine": "lossless-claw",
+  "lcmQueryBatchSize": 50
+}
+```
+
+The `lcmQueryBatchSize` controls how many rows are fetched per query (range: 1-1000, default: 50).
+
+---
+
+## FileBackend
+
+The FileBackend reads from the LACP vault and memory directories. This is the default backend and requires no LCM database.
+
+### How it works
+
+1. Scans `MEMORY_ROOT` (`~/.openclaw/memory/<project>/`) for markdown and JSON files.
+2. Scans `VAULT_ROOT` (`~/.openclaw/vault/<project>/`) for Obsidian vault notes.
+3. Parses markdown files to extract facts (bullet points, sentences with fact indicators).
+4. Follows Obsidian wikilinks (`[[note-name]]`) for graph traversal.
+5. Returns facts as flat lists without parent_id lineage.
+
+### File sources
+
+| Source | Path | Content |
+|--------|------|---------|
+| `MEMORY.md` | `~/.openclaw/memory/<slug>/MEMORY.md` | Promoted facts with receipts |
+| Category files | `~/.openclaw/memory/<slug>/<category>.md` | Facts grouped by category |
+| `context.json` | `~/.openclaw/memory/<slug>/context.json` | Last injection metadata |
+| `patterns.md` | `~/.openclaw/memory/<slug>/patterns.md` | Reusable patterns |
+| Vault notes | `~/.openclaw/vault/<slug>/**/*.md` | Obsidian knowledge graph |
+
+### Configuration
+
+```json
+{
+  "contextEngine": null
+}
+```
+
+When `contextEngine` is `null` (or omitted), the file-based backend is used.
+
+### Limitations
+
+- No `discover` command support (no centralized index to scan).
+- No parent_id lineage or DAG traversal.
+- Relies on file system layout and naming conventions.
+- Slower for large vaults (scans all markdown files on each query).
+
+---
+
+## When to Use Which
+
+| Scenario | Recommended Backend |
+|----------|-------------------|
+| LCM is your primary session engine | `lossless-claw` |
+| You want auto-discovery of summaries | `lossless-claw` |
+| You need DAG traversal / lineage tracking | `lossless-claw` |
+| You use Obsidian as your primary knowledge store | `file` (FileBackend) |
+| You don't have an LCM database | `file` (FileBackend) |
+| You want zero dependencies beyond the file system | `file` (FileBackend) |
+| You are migrating incrementally | Start with `file`, add `lossless-claw` later |
 
 ---
 
 ## Config-Driven Selection
 
-Backend selection is driven by the `contextEngine` key in plugin config:
+The backend is selected by the `contextEngine` key in your plugin config:
 
 ```json
 {
-  "contextEngine": "lossless-claw"
+  "openclaw-lacp-fusion": {
+    "enabled": true,
+    "config": {
+      "contextEngine": "lossless-claw"
+    }
+  }
 }
 ```
 
-This can be set in three places (resolution order, later overrides earlier):
+Valid values:
 
-1. **Defaults** -- `contextEngine: null` (file-based)
-2. **openclaw.json** -- Gateway config at `plugins.entries.openclaw-lacp-fusion.config.contextEngine`
-3. **CLI override** -- `--backend lcm` or `--backend file` on any v2-lcm command
+- `"lossless-claw"` -- use the LCMBackend (SQLite database)
+- `null` -- use the FileBackend (vault/memory files)
 
-The `--backend` flag takes precedence over all config. This allows testing a different backend without modifying configuration files.
+---
+
+## Factory Pattern via get_backend()
+
+The backend is instantiated via a factory function that reads the config and returns the appropriate implementation:
+
+```python
+def get_backend(config: dict) -> ContextBackend:
+    """
+    Return the appropriate backend based on config.
+
+    Args:
+        config: Plugin config dict with 'contextEngine' key.
+
+    Returns:
+        LCMBackend if contextEngine is "lossless-claw",
+        FileBackend otherwise.
+    """
+    engine = config.get("contextEngine")
+    if engine == "lossless-claw":
+        return LCMBackend(config)
+    return FileBackend(config)
+```
+
+CLI scripts use this pattern internally. When you pass `--backend lossless-claw` or `--backend file`, the CLI overrides the config value before calling `get_backend()`.
+
+---
+
+## Runtime Override
+
+Both `openclaw-lacp-promote` and `openclaw-lacp-context` accept a `--backend` flag to override the configured backend for a single invocation:
+
+```bash
+# Use LCM backend even if config says file-based
+openclaw-lacp-promote discover --backend lossless-claw --project easy-api
+
+# Use file backend even if config says lossless-claw
+openclaw-lacp-context inject --backend file --project easy-api --topic "checkout"
+```
+
+This is useful for testing, debugging, or during a gradual migration between backends.

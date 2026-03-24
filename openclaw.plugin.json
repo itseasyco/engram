@@ -1,6 +1,8 @@
 {
   "id": "openclaw-lacp-fusion",
-  "version": "2.1.0",
+  "kind": "provider",
+  "name": "OpenClaw LACP Fusion",
+  "version": "2.2.0",
   "description": "Local Agent Control Plane — hooks, policy gates, memory scaffolding, knowledge graph, code intelligence, and provenance tracking",
   "author": "Easy Labs",
   "license": "MIT",
@@ -109,10 +111,17 @@
         "maximum": 1000,
         "description": "Batch size for LCM queries"
       },
+      "promotionThreshold": {
+        "type": "number",
+        "default": 70,
+        "minimum": 0,
+        "maximum": 100,
+        "description": "Minimum score for auto-promotion"
+      },
       "autoDiscoveryInterval": {
         "type": "string",
-        "enum": ["1h", "2h", "4h", "6h", "8h", "12h", "24h"],
         "default": "6h",
+        "enum": ["1h", "2h", "4h", "6h", "8h", "12h", "24h"],
         "description": "How often to auto-discover summaries (requires LCM backend)"
       }
     }
@@ -164,8 +173,7 @@
     "code-intelligence",
     "provenance-tracking",
     "task-verification",
-    "context-injection",
-    "backend-abstraction"
+    "context-injection"
   ],
   "requirements": {
     "openclaw": ">=0.23.0",
@@ -177,8 +185,7 @@
       "obsidian": "Knowledge graph (Layer 2)",
       "qmd": "Semantic search indexing",
       "smart-connections": "MCP semantic search",
-      "gitnexus": "Advanced code intelligence (Layer 4)",
-      "lossless-claw": "Native LCM context engine"
+      "gitnexus": "Advanced code intelligence (Layer 4)"
     }
   },
   "bin": {
@@ -190,6 +197,9 @@
     "openclaw-brain-ingest": "bin/openclaw-brain-ingest",
     "openclaw-brain-stack": "bin/openclaw-brain-stack",
     "openclaw-gated-run": "bin/openclaw-gated-run",
+    "openclaw-lacp-context": "bin/openclaw-lacp-context",
+    "openclaw-lacp-promote": "bin/openclaw-lacp-promote",
+    "openclaw-lacp-share": "bin/openclaw-lacp-share",
     "openclaw-lacp-validate": "bin/openclaw-lacp-validate",
     "openclaw-memory-append": "bin/openclaw-memory-append",
     "openclaw-memory-init": "bin/openclaw-memory-init",

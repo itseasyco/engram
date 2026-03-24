@@ -1,0 +1,13 @@
+{
+  "name": "openclaw-lacp-connector-example",
+  "version": "1.0.0",
+  "description": "Example community connector for openclaw-lacp-fusion",
+  "main": "index.py",
+  "keywords": ["openclaw", "lacp", "connector"],
+  "license": "MIT",
+  "files": [
+    "connector.json",
+    "index.py",
+    "transforms/"
+  ]
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the LCM (lossless-claw) backend — SQLite-based context engine."""
+"""Tests for LCMBackend with real SQLite test databases."""
 
 import json
 import os
@@ -9,11 +9,13 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backends"))
+
 from backends.lcm_backend import LCMBackend
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Helpers
 # ---------------------------------------------------------------------------
 
 def create_test_db(path, summaries=None):
@@ -35,24 +37,31 @@ def create_test_db(path, summaries=None):
         )
     """)
     for s in (summaries or []):
-        conn.execute(
-            "INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                s.get("summary_id", ""),
-                s.get("content", ""),
-                s.get("source", "lcm"),
-                json.dumps(s.get("citations", [])),
-                s.get("project", ""),
-                s.get("agent", ""),
-                s.get("timestamp", ""),
-                s.get("conversation_id", ""),
-                s.get("parent_id", ""),
-                json.dumps(s.get("tags", [])),
-                json.dumps(s.get("metadata", {})),
-            ),
-        )
+        conn.execute("INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (s.get("summary_id", ""), s.get("content", ""), s.get("source", "lcm"),
+             json.dumps(s.get("citations", [])), s.get("project", ""),
+             s.get("agent", ""), s.get("timestamp", ""), s.get("conversation_id", ""),
+             s.get("parent_id", ""), json.dumps(s.get("tags", [])),
+             json.dumps(s.get("metadata", {}))))
     conn.commit()
     conn.close()
+
+
+STANDARD_SUMMARIES = [
+    {"summary_id": "s1", "content": "Treasury settlement design for Brale",
+     "project": "easy-api", "timestamp": "2026-03-10T10:00:00Z",
+     "conversation_id": "conv-a", "tags": ["treasury", "settlement"],
+     "metadata": {"score": 85}},
+    {"summary_id": "s2", "content": "Checkout flow implementation with Finix",
+     "project": "easy-checkout", "timestamp": "2026-03-15T10:00:00Z",
+     "conversation_id": "conv-b"},
+    {"summary_id": "s3", "content": "Dashboard auth with Auth0 and Supabase RLS",
+     "project": "easy-api", "timestamp": "2026-03-18T10:00:00Z",
+     "conversation_id": "conv-a"},
+    {"summary_id": "s4", "content": "Brale settlement testing and validation",
+     "project": "easy-api", "timestamp": "2026-03-18T12:00:00Z",
+     "conversation_id": "conv-a", "parent_id": "s3"},
+]
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +76,10 @@ class TestLCMBackendInit:
         assert backend._batch_size == 50
         assert backend._threshold == 70
 
+    def test_default_db_path_contains_lcm(self):
+        backend = LCMBackend({})
+        assert "lcm.db" in str(backend._db_path)
+
     def test_init_with_custom_db_path(self, tmp_path):
         db_path = str(tmp_path / "custom.db")
         backend = LCMBackend({"lcmDbPath": db_path})
@@ -80,13 +93,17 @@ class TestLCMBackendInit:
         backend = LCMBackend({"promotionThreshold": 85})
         assert backend._threshold == 85
 
+    def test_init_tilde_expansion(self):
+        backend = LCMBackend({"lcmDbPath": "~/mydb.db"})
+        assert "~" not in str(backend._db_path)
+
 
 # ---------------------------------------------------------------------------
-# backend_name / is_available
+# Availability
 # ---------------------------------------------------------------------------
 
-class TestLCMBackendIdentity:
-    """backend_name and is_available checks."""
+class TestLCMBackendAvailability:
+    """is_available checks."""
 
     def test_backend_name(self):
         assert LCMBackend({}).backend_name() == "lossless-claw"
@@ -121,40 +138,29 @@ class TestFetchSummary:
     @pytest.fixture(autouse=True)
     def _setup(self, tmp_path):
         self.db = tmp_path / "lcm.db"
-        create_test_db(
-            self.db,
-            [
-                {
-                    "summary_id": "sum-001",
-                    "content": "Treasury settlement design",
-                    "project": "easy-api",
-                    "timestamp": "2026-03-18T10:00:00Z",
-                    "tags": ["treasury", "settlement"],
-                    "metadata": {"score": 95},
-                },
-            ],
-        )
+        create_test_db(self.db, STANDARD_SUMMARIES)
         self.backend = LCMBackend({"lcmDbPath": str(self.db)})
 
     def test_returns_dict_for_existing_id(self):
-        result = self.backend.fetch_summary("sum-001")
+        result = self.backend.fetch_summary("s1")
         assert isinstance(result, dict)
-        assert result["summary_id"] == "sum-001"
-        assert result["content"] == "Treasury settlement design"
+        assert result["summary_id"] == "s1"
+        assert "Treasury" in result["content"]
 
     def test_returns_empty_dict_for_missing_id(self):
-        result = self.backend.fetch_summary("no-such-id")
-        assert result == {}
+        assert self.backend.fetch_summary("no-such-id") == {}
+
+    def test_returns_empty_for_empty_id(self):
+        assert self.backend.fetch_summary("") == {}
 
     def test_parses_json_fields(self):
-        result = self.backend.fetch_summary("sum-001")
+        result = self.backend.fetch_summary("s1")
         assert result["tags"] == ["treasury", "settlement"]
-        assert result["metadata"] == {"score": 95}
+        assert result["metadata"] == {"score": 85}
 
-    def test_handles_db_error_gracefully(self, tmp_path):
+    def test_handles_db_error_gracefully(self):
         backend = LCMBackend({"lcmDbPath": "/nonexistent/lcm.db"})
-        result = backend.fetch_summary("sum-001")
-        assert result == {}
+        assert backend.fetch_summary("s1") == {}
 
 
 # ---------------------------------------------------------------------------
@@ -167,72 +173,57 @@ class TestDiscoverSummaries:
     @pytest.fixture(autouse=True)
     def _setup(self, tmp_path):
         self.db = tmp_path / "lcm.db"
-        create_test_db(
-            self.db,
-            [
-                {
-                    "summary_id": "s1",
-                    "content": "Alpha",
-                    "project": "easy-api",
-                    "timestamp": "2026-03-10T10:00:00Z",
-                    "conversation_id": "conv-a",
-                },
-                {
-                    "summary_id": "s2",
-                    "content": "Beta",
-                    "project": "easy-checkout",
-                    "timestamp": "2026-03-15T10:00:00Z",
-                    "conversation_id": "conv-b",
-                },
-                {
-                    "summary_id": "s3",
-                    "content": "Gamma",
-                    "project": "easy-api",
-                    "timestamp": "2026-03-18T10:00:00Z",
-                    "conversation_id": "conv-a",
-                },
-            ],
-        )
+        create_test_db(self.db, STANDARD_SUMMARIES)
         self.backend = LCMBackend({"lcmDbPath": str(self.db)})
 
-    def test_no_filters(self):
+    def test_no_filters_returns_all(self):
         results = self.backend.discover_summaries({})
-        assert len(results) == 3
+        assert len(results) == 4
 
     def test_filtered_by_since(self):
         results = self.backend.discover_summaries({"since": "2026-03-14"})
         ids = {r["summary_id"] for r in results}
         assert "s1" not in ids
-        assert "s2" in ids
-        assert "s3" in ids
+        assert "s2" in ids and "s3" in ids and "s4" in ids
 
     def test_filtered_by_until(self):
         results = self.backend.discover_summaries({"until": "2026-03-12"})
-        ids = {r["summary_id"] for r in results}
-        assert ids == {"s1"}
+        ids = [r["summary_id"] for r in results]
+        assert ids == ["s1"]
 
     def test_filtered_by_project(self):
         results = self.backend.discover_summaries({"project": "easy-api"})
         assert all(r["project"] == "easy-api" for r in results)
-        assert len(results) == 2
+        assert len(results) == 3
 
     def test_filtered_by_conversation_id(self):
         results = self.backend.discover_summaries({"conversation_id": "conv-a"})
-        assert len(results) == 2
+        assert len(results) == 3
         assert all(r["conversation_id"] == "conv-a" for r in results)
 
     def test_respects_limit(self):
-        results = self.backend.discover_summaries({"limit": 1})
-        assert len(results) == 1
+        results = self.backend.discover_summaries({"limit": 2})
+        assert len(results) == 2
 
-    def test_returns_empty_list_on_db_error(self):
-        backend = LCMBackend({"lcmDbPath": "/nonexistent/lcm.db"})
-        assert backend.discover_summaries({}) == []
+    def test_combined_filters(self):
+        results = self.backend.discover_summaries({
+            "project": "easy-api",
+            "since": "2026-03-17",
+        })
+        assert len(results) == 2  # s3 and s4
+
+    def test_empty_results(self):
+        results = self.backend.discover_summaries({"project": "nonexistent"})
+        assert results == []
 
     def test_sorted_by_timestamp_descending(self):
         results = self.backend.discover_summaries({})
         timestamps = [r["timestamp"] for r in results]
         assert timestamps == sorted(timestamps, reverse=True)
+
+    def test_returns_empty_list_on_db_error(self):
+        backend = LCMBackend({"lcmDbPath": "/nonexistent/lcm.db"})
+        assert backend.discover_summaries({}) == []
 
 
 # ---------------------------------------------------------------------------
@@ -245,70 +236,50 @@ class TestFindContext:
     @pytest.fixture(autouse=True)
     def _setup(self, tmp_path):
         self.db = tmp_path / "lcm.db"
-        create_test_db(
-            self.db,
-            [
-                {
-                    "summary_id": "ctx1",
-                    "content": "Deploy the treasury settlement flow for Brale integration",
-                    "project": "easy-api",
-                    "timestamp": "2026-03-18T10:00:00Z",
-                },
-                {
-                    "summary_id": "ctx2",
-                    "content": "Unrelated topic about marketing campaigns",
-                    "project": "marketing",
-                    "timestamp": "2026-03-17T10:00:00Z",
-                },
-                {
-                    "summary_id": "ctx3",
-                    "content": "Treasury settlement test cases and validation",
-                    "project": "easy-api",
-                    "timestamp": "2026-03-16T10:00:00Z",
-                },
-            ],
-        )
+        create_test_db(self.db, STANDARD_SUMMARIES)
         self.backend = LCMBackend({"lcmDbPath": str(self.db)})
 
     def test_finds_matching_keywords(self):
         results = self.backend.find_context("treasury settlement")
         assert len(results) >= 1
         ids = {r["summary_id"] for r in results}
-        assert "ctx1" in ids
+        assert "s1" in ids
 
-    def test_no_matches(self):
+    def test_no_matches_for_unrelated_task(self):
         results = self.backend.find_context("quantum computing blockchain")
         assert results == []
 
-    def test_with_project_filter(self):
-        results = self.backend.find_context("treasury", project="easy-api")
-        assert all(r.get("project") == "easy-api" for r in results)
-
-    def test_scores_by_keyword_overlap(self):
-        results = self.backend.find_context("treasury settlement")
-        # ctx1 and ctx3 both have treasury and settlement; ctx2 has neither
-        ids = {r["summary_id"] for r in results}
-        assert "ctx2" not in ids
-
-    def test_respects_limit(self):
-        results = self.backend.find_context("treasury settlement", limit=1)
-        assert len(results) <= 1
-
-    def test_handles_missing_db(self):
-        backend = LCMBackend({"lcmDbPath": "/nonexistent/lcm.db"})
-        results = backend.find_context("anything")
+    def test_empty_task_returns_empty(self):
+        results = self.backend.find_context("")
         assert results == []
 
-    def test_relevance_score_present(self):
-        results = self.backend.find_context("treasury settlement")
+    def test_with_project_filter(self):
+        results = self.backend.find_context("settlement", project="easy-api")
+        assert all(r["project"] == "easy-api" for r in results)
+
+    def test_respects_limit(self):
+        results = self.backend.find_context("settlement Brale", limit=1)
+        assert len(results) <= 1
+
+    def test_scores_sorted_descending(self):
+        results = self.backend.find_context("treasury settlement Brale")
+        if len(results) >= 2:
+            scores = [r["relevance_score"] for r in results]
+            assert scores == sorted(scores, reverse=True)
+
+    def test_relevance_score_is_float(self):
+        results = self.backend.find_context("settlement")
         for r in results:
-            assert "relevance_score" in r
             assert isinstance(r["relevance_score"], float)
 
     def test_source_is_lossless_claw(self):
         results = self.backend.find_context("treasury")
         for r in results:
             assert r["source"] == "lossless-claw"
+
+    def test_handles_missing_db(self):
+        backend = LCMBackend({"lcmDbPath": "/nonexistent/lcm.db"})
+        assert backend.find_context("anything") == []
 
 
 # ---------------------------------------------------------------------------
@@ -321,49 +292,123 @@ class TestTraverseDag:
     @pytest.fixture(autouse=True)
     def _setup(self, tmp_path):
         self.db = tmp_path / "lcm.db"
-        create_test_db(
-            self.db,
-            [
-                {"summary_id": "root", "content": "Root node", "parent_id": ""},
-                {"summary_id": "child", "content": "Child node", "parent_id": "root"},
-                {"summary_id": "grandchild", "content": "Grandchild", "parent_id": "child"},
-                {"summary_id": "loop", "content": "Self-loop", "parent_id": "loop"},
-            ],
-        )
+        create_test_db(self.db, [
+            {"summary_id": "root", "content": "Root node", "parent_id": ""},
+            {"summary_id": "child", "content": "Child node", "parent_id": "root"},
+            {"summary_id": "grandchild", "content": "Grandchild", "parent_id": "child"},
+            {"summary_id": "loop", "content": "Self-loop", "parent_id": "loop"},
+        ])
         self.backend = LCMBackend({"lcmDbPath": str(self.db)})
 
     def test_single_node(self):
         result = self.backend.traverse_dag("root")
         assert len(result["chain"]) == 1
-        assert result["root"]["summary_id"] == "root"
+        assert result["chain"][0]["summary_id"] == "root"
+        assert result["depth_reached"] == 0
 
     def test_follows_parent_chain(self):
-        result = self.backend.traverse_dag("grandchild", depth=5)
+        result = self.backend.traverse_dag("grandchild", depth=10)
         ids = [s["summary_id"] for s in result["chain"]]
         assert ids == ["grandchild", "child", "root"]
+        assert result["depth_reached"] == 2
+
+    def test_root_is_last_in_chain(self):
+        result = self.backend.traverse_dag("grandchild", depth=10)
         assert result["root"]["summary_id"] == "root"
-        assert result["depth_reached"] == 3
 
     def test_respects_depth_limit(self):
         result = self.backend.traverse_dag("grandchild", depth=1)
-        assert len(result["chain"]) == 1
+        assert len(result["chain"]) == 2
         assert result["depth_reached"] == 1
 
     def test_handles_missing_summary(self):
         result = self.backend.traverse_dag("no-such-id")
         assert result["chain"] == []
         assert result["root"] == {}
-        assert result["depth_reached"] == 0
+        assert result["depth_reached"] == -1
 
     def test_handles_circular_reference(self):
-        result = self.backend.traverse_dag("loop", depth=10)
+        result = self.backend.traverse_dag("loop", depth=5)
         assert len(result["chain"]) == 1
-        assert result["depth_reached"] == 1
+        assert result["depth_reached"] == 0
 
     def test_default_depth_is_3(self):
         result = self.backend.traverse_dag("grandchild")
-        # depth=3 is enough for grandchild->child->root
         assert len(result["chain"]) == 3
+
+    def test_depth_zero_returns_just_start(self):
+        result = self.backend.traverse_dag("grandchild", depth=0)
+        assert len(result["chain"]) == 1
+        assert result["chain"][0]["summary_id"] == "grandchild"
+
+
+# ---------------------------------------------------------------------------
+# _row_to_dict
+# ---------------------------------------------------------------------------
+
+class TestRowToDict:
+    """Private _row_to_dict JSON field parsing."""
+
+    def test_parses_json_fields(self, tmp_path):
+        db = tmp_path / "lcm.db"
+        create_test_db(db, [
+            {"summary_id": "dict-test", "content": "Test",
+             "citations": ["ref1", "ref2"], "tags": ["tag1"],
+             "metadata": {"key": "value"}},
+        ])
+        backend = LCMBackend({"lcmDbPath": str(db)})
+        result = backend.fetch_summary("dict-test")
+        assert result["citations"] == ["ref1", "ref2"]
+        assert result["tags"] == ["tag1"]
+        assert result["metadata"] == {"key": "value"}
+
+    def test_handles_invalid_json_gracefully(self, tmp_path):
+        db = tmp_path / "bad.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("""
+            CREATE TABLE summaries (
+                summary_id TEXT PRIMARY KEY, content TEXT,
+                source TEXT DEFAULT 'lcm', citations TEXT DEFAULT '[]',
+                project TEXT DEFAULT '', agent TEXT DEFAULT '',
+                timestamp TEXT DEFAULT '', conversation_id TEXT DEFAULT '',
+                parent_id TEXT DEFAULT '', tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}')
+        """)
+        conn.execute(
+            "INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("bad-json", "content", "lcm", "not-valid-json", "", "", "", "", "", "[", "{"),
+        )
+        conn.commit()
+        conn.close()
+        backend = LCMBackend({"lcmDbPath": str(db)})
+        result = backend.fetch_summary("bad-json")
+        assert result["summary_id"] == "bad-json"
+        # Invalid JSON stays as string
+        assert result["citations"] == "not-valid-json"
+
+    def test_empty_json_string_stays_as_string(self, tmp_path):
+        db = tmp_path / "empty_json.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("""
+            CREATE TABLE summaries (
+                summary_id TEXT PRIMARY KEY, content TEXT,
+                source TEXT DEFAULT 'lcm', citations TEXT DEFAULT '[]',
+                project TEXT DEFAULT '', agent TEXT DEFAULT '',
+                timestamp TEXT DEFAULT '', conversation_id TEXT DEFAULT '',
+                parent_id TEXT DEFAULT '', tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}')
+        """)
+        conn.execute(
+            "INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("empty", "content", "lcm", "[]", "", "", "", "", "", "[]", "{}"),
+        )
+        conn.commit()
+        conn.close()
+        backend = LCMBackend({"lcmDbPath": str(db)})
+        result = backend.fetch_summary("empty")
+        assert result["citations"] == []
+        assert result["tags"] == []
+        assert result["metadata"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -398,64 +443,39 @@ class TestExtractKeywords:
         assert "treasury" in keywords
         assert "settlement" in keywords
 
+    def test_multiple_words_extracted(self):
+        keywords = self.backend._extract_keywords("payment processor settlement flow")
+        assert len(keywords) == 4
+
 
 # ---------------------------------------------------------------------------
-# _row_to_dict
+# get_stats
 # ---------------------------------------------------------------------------
 
-class TestRowToDict:
-    """Private _row_to_dict helper."""
+class TestGetStats:
+    """get_stats returns database statistics."""
 
-    @pytest.fixture(autouse=True)
-    def _setup(self, tmp_path):
-        self.db = tmp_path / "lcm.db"
-        create_test_db(
-            self.db,
-            [
-                {
-                    "summary_id": "dict-test",
-                    "content": "Test content",
-                    "citations": ["ref1", "ref2"],
-                    "tags": ["tag1"],
-                    "metadata": {"key": "value"},
-                },
-            ],
-        )
-        self.backend = LCMBackend({"lcmDbPath": str(self.db)})
-
-    def test_parses_json_fields(self):
-        result = self.backend.fetch_summary("dict-test")
-        assert result["citations"] == ["ref1", "ref2"]
-        assert result["tags"] == ["tag1"]
-        assert result["metadata"] == {"key": "value"}
-
-    def test_handles_invalid_json_gracefully(self, tmp_path):
-        db = tmp_path / "bad.db"
-        conn = sqlite3.connect(str(db))
-        conn.execute("""
-            CREATE TABLE summaries (
-                summary_id TEXT PRIMARY KEY,
-                content TEXT,
-                source TEXT DEFAULT 'lcm',
-                citations TEXT DEFAULT '[]',
-                project TEXT DEFAULT '',
-                agent TEXT DEFAULT '',
-                timestamp TEXT DEFAULT '',
-                conversation_id TEXT DEFAULT '',
-                parent_id TEXT DEFAULT '',
-                tags TEXT DEFAULT '[]',
-                metadata TEXT DEFAULT '{}'
-            )
-        """)
-        conn.execute(
-            "INSERT INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            ("bad-json", "content", "lcm", "not-valid-json", "", "", "", "", "", "[", "{"),
-        )
-        conn.commit()
-        conn.close()
-
+    def test_returns_correct_counts(self, tmp_path):
+        db = tmp_path / "lcm.db"
+        create_test_db(db, STANDARD_SUMMARIES)
         backend = LCMBackend({"lcmDbPath": str(db)})
-        result = backend.fetch_summary("bad-json")
-        # Should not crash; invalid JSON fields remain as strings
-        assert result["summary_id"] == "bad-json"
-        assert result["citations"] == "not-valid-json"
+        stats = backend.get_stats()
+        assert stats["total_summaries"] == 4
+        assert "easy-api" in stats["projects"]
+        assert "easy-checkout" in stats["projects"]
+        assert stats["backend"] == "lossless-claw"
+        assert stats["earliest"] is not None
+        assert stats["latest"] is not None
+
+    def test_empty_db(self, tmp_path):
+        db = tmp_path / "empty.db"
+        create_test_db(db)
+        backend = LCMBackend({"lcmDbPath": str(db)})
+        stats = backend.get_stats()
+        assert stats["total_summaries"] == 0
+        assert stats["projects"] == []
+
+    def test_handles_missing_db(self):
+        backend = LCMBackend({"lcmDbPath": "/nonexistent/lcm.db"})
+        stats = backend.get_stats()
+        assert "error" in stats

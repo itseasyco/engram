@@ -1,0 +1,406 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="2.2.0"
+
+# Resolve the real location of this script (follow npm link symlinks)
+_resolve_script_dir() {
+    local source="${BASH_SOURCE[0]}"
+    local dir
+    # Follow symlink chain
+    while [ -L "$source" ]; do
+        dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        # Handle relative symlinks
+        [[ "$source" != /* ]] && source="$dir/$source"
+    done
+    cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(_resolve_script_dir)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Find plugin bin: repo structure (plugin/bin) or installed extension
+if [ -d "$ROOT_DIR/plugin/bin" ]; then
+    PLUGIN_BIN="$ROOT_DIR/plugin/bin"
+elif [ -d "$HOME/.openclaw/extensions/openclaw-lacp-fusion/bin" ]; then
+    PLUGIN_BIN="$HOME/.openclaw/extensions/openclaw-lacp-fusion/bin"
+else
+    echo "Error: Cannot find Engram plugin bin directory" >&2
+    exit 1
+fi
+
+if [ -f "$ROOT_DIR/INSTALL.sh" ]; then
+    INSTALL_SH="$ROOT_DIR/INSTALL.sh"
+else
+    INSTALL_SH=""
+fi
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+show_banner() {
+    echo ""
+    echo -e "${BOLD}${CYAN}"
+    echo "  ███████╗███╗   ██╗ ██████╗ ██████╗  █████╗ ███╗   ███╗"
+    echo "  ██╔════╝████╗  ██║██╔════╝ ██╔══██╗██╔══██╗████╗ ████║"
+    echo "  █████╗  ██╔██╗ ██║██║  ███╗██████╔╝███████║██╔████╔██║"
+    echo "  ██╔══╝  ██║╚██╗██║██║   ██║██╔══██╗██╔══██║██║╚██╔╝██║"
+    echo "  ███████╗██║ ╚████║╚██████╔╝██║  ██║██║  ██║██║ ╚═╝ ██║"
+    echo "  ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝"
+    echo -e "${NC}"
+    echo -e "  ${DIM}Shared Intelligence Graph for AI Agents\n  by Easy Labs — https://itseasy.co${NC}"
+    echo -e "  ${DIM}v${VERSION}${NC}"
+    echo ""
+}
+
+show_help() {
+    show_banner
+    echo -e "${BOLD}USAGE${NC}"
+    echo "  engram <command> [options]"
+    echo ""
+    echo -e "${BOLD}COMMANDS${NC}"
+    echo -e "  ${GREEN}wizard${NC}              Run the interactive setup wizard"
+    echo -e "  ${GREEN}status${NC}              Show current system status"
+    echo -e "  ${GREEN}connect${NC}             Join a shared vault (shortcut for engram-connect join)"
+    echo -e "  ${GREEN}disconnect${NC}          Leave the shared vault"
+    echo -e "  ${GREEN}doctor${NC}              Run diagnostics and health checks"
+    echo ""
+    echo -e "${BOLD}WIZARD SECTIONS${NC} ${DIM}(use with: engram wizard --section <name>)${NC}"
+    echo -e "  vault               Obsidian vault path selection"
+    echo -e "  engine              Context engine (auto/file-based/lossless-claw)"
+    echo -e "  profile             Safety profile selection"
+    echo -e "  mode                Operating mode (standalone/connected/curator)"
+    echo -e "  guard               Guard rules, block levels, allowlists"
+    echo -e "  dependencies        GitNexus, lossless-claw, obsidian-headless"
+    echo -e "  all                 Full wizard (default)"
+    echo ""
+    echo -e "${BOLD}TOOLS${NC} ${DIM}(pass-through to plugin CLI tools)${NC}"
+    echo -e "  ${GREEN}guard${NC}               Manage guard rules    ${DIM}(engram guard rules|blocks|toggle|...)${NC}"
+    echo -e "  ${GREEN}memory${NC}              Query/promote memory  ${DIM}(engram memory query|promote|status)${NC}"
+    echo -e "  ${GREEN}ingest${NC}              Ingest files to vault ${DIM}(engram ingest <type> <source>)${NC}"
+    echo -e "  ${GREEN}brain${NC}               Brain tools           ${DIM}(engram brain expand|resolve|kpi|optimize)${NC}"
+    echo -e "  ${GREEN}vault${NC}               Vault management      ${DIM}(engram vault status|audit|backup|restore)${NC}"
+    echo -e "  ${GREEN}connector${NC}           Manage connectors     ${DIM}(engram connector list|add|remove|test)${NC}"
+    echo -e "  ${GREEN}watch${NC}               File watcher          ${DIM}(engram watch setup|run|status)${NC}"
+    echo ""
+    echo -e "${BOLD}OPTIONS${NC}"
+    echo "  -h, --help          Show this help"
+    echo "  -v, --version       Show version"
+    echo ""
+    echo -e "${BOLD}EXAMPLES${NC}"
+    echo "  engram wizard                          # Full interactive setup"
+    echo "  engram wizard --section guard           # Just configure the guard"
+    echo "  engram wizard --section profile          # Just pick a safety profile"
+    echo "  engram guard rules                      # List all guard rules"
+    echo "  engram guard toggle npm-publish          # Toggle a rule"
+    echo "  engram memory query payment              # Search memory for payment facts"
+    echo "  engram brain expand --consolidate        # Run mycelium consolidation"
+    echo "  engram status                            # System overview"
+    echo "  engram connect --token inv_abc123        # Join a shared vault"
+    echo ""
+}
+
+cmd_wizard() {
+    local section="all"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --section) section="$2"; shift 2 ;;
+            -h|--help)
+                echo "Usage: engram wizard [--section <name>]"
+                echo ""
+                echo "Sections: vault, engine, profile, mode, guard, dependencies, all"
+                exit 0
+                ;;
+            *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
+        esac
+    done
+
+    if [[ "$section" = "guard" ]]; then
+        exec "$PLUGIN_BIN/engram-guard" config
+    fi
+
+    if [[ ! -f "$INSTALL_SH" ]]; then
+        echo -e "${RED}INSTALL.sh not found at $INSTALL_SH${NC}"
+        echo "Run engram from the repo directory or install globally via npm install -g engram"
+        exit 1
+    fi
+
+    # TODO: section-specific wizard runs (for now, run full wizard)
+    if [[ "$section" != "all" ]]; then
+        echo -e "${YELLOW}Section-specific wizard not yet implemented.${NC}"
+        echo -e "Running full wizard. Use arrow keys to skip sections you don't want to change."
+        echo ""
+    fi
+
+    exec bash "$INSTALL_SH"
+}
+
+_source_env_config() {
+    # Source the LACP env config so env vars are available to subcommands
+    local env_file="$HOME/.openclaw/extensions/openclaw-lacp-fusion/config/.openclaw-lacp.env"
+    if [[ -f "$env_file" ]]; then
+        while IFS= read -r line; do
+            line="${line%%#*}"  # strip comments
+            line="${line#"${line%%[![:space:]]*}"}"  # trim leading whitespace
+            [[ -z "$line" ]] && continue
+            if [[ "$line" == *=* ]]; then
+                local key="${line%%=*}"
+                local val="${line#*=}"
+                # Only export if not already set in environment
+                if [[ -z "${!key:-}" ]]; then
+                    export "$key=$val"
+                fi
+            fi
+        done < "$env_file"
+    fi
+}
+
+cmd_status() {
+    _source_env_config
+    show_banner
+
+    echo -e "${BOLD}System Status${NC}"
+    echo ""
+
+    # Mode
+    local mode
+    mode=$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.openclaw/extensions/openclaw-lacp-fusion/lib'))
+try:
+    from mode import get_config
+    c = get_config()
+    print(f'mode={c.mode} mutations={c.mutations_enabled} vault={c.vault_path}')
+except Exception as e:
+    print(f'error={e}')
+" 2>/dev/null || echo "mode=unknown")
+
+    echo -e "  ${BOLD}Mode:${NC}         $(echo "$mode" | grep -o 'mode=[^ ]*' | cut -d= -f2)"
+    echo -e "  ${BOLD}Mutations:${NC}    $(echo "$mode" | grep -o 'mutations=[^ ]*' | cut -d= -f2)"
+    echo -e "  ${BOLD}Vault:${NC}        $(echo "$mode" | grep -o 'vault=.*' | cut -d= -f2)"
+    echo ""
+
+    # Plugin
+    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/index.ts ]]; then
+        echo -e "  ${GREEN}+${NC} Plugin installed"
+    else
+        echo -e "  ${RED}-${NC} Plugin not installed"
+    fi
+
+    # Guard
+    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/config/guard-rules.json ]]; then
+        local rule_count
+        rule_count=$(python3 -c "import json; d=json.load(open(os.path.expanduser('~/.openclaw/extensions/openclaw-lacp-fusion/config/guard-rules.json'))); print(len(d.get('rules',[])))" 2>/dev/null || echo "?")
+        echo -e "  ${GREEN}+${NC} Guard active ($rule_count rules)"
+    else
+        echo -e "  ${YELLOW}~${NC} Guard using factory defaults"
+    fi
+
+    # Vault
+    local vault_path
+    vault_path=$(echo "$mode" | grep -o 'vault=.*' | cut -d= -f2)
+    if [[ -n "$vault_path" ]] && [[ -d "$vault_path" ]]; then
+        local note_count
+        note_count=$(find "$vault_path" -name "*.md" -not -path "*/.obsidian/*" 2>/dev/null | wc -l | tr -d ' ')
+        echo -e "  ${GREEN}+${NC} Vault: $note_count notes"
+    else
+        echo -e "  ${YELLOW}~${NC} Vault not found or not configured"
+    fi
+
+    # ob sync
+    if command -v ob &>/dev/null; then
+        echo -e "  ${GREEN}+${NC} obsidian-headless installed"
+    else
+        echo -e "  ${DIM}-${NC} obsidian-headless not installed"
+    fi
+
+    # Tool log
+    local log_file=~/.openclaw/extensions/openclaw-lacp-fusion/logs/tool-calls.jsonl
+    if [[ -f "$log_file" ]]; then
+        local call_count
+        call_count=$(wc -l < "$log_file" | tr -d ' ')
+        echo -e "  ${GREEN}+${NC} Tool log: $call_count entries"
+    fi
+
+    echo ""
+}
+
+cmd_doctor() {
+    show_banner
+    echo -e "${BOLD}Running diagnostics...${NC}"
+    echo ""
+
+    local pass=0
+    local fail=0
+
+    # Check plugin
+    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/index.ts ]]; then
+        echo -e "  ${GREEN}pass${NC}  Plugin index.ts exists"
+        ((pass++))
+    else
+        echo -e "  ${RED}FAIL${NC}  Plugin index.ts missing"
+        ((fail++))
+    fi
+
+    # Check package.json
+    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/package.json ]]; then
+        echo -e "  ${GREEN}pass${NC}  package.json exists"
+        ((pass++))
+    else
+        echo -e "  ${RED}FAIL${NC}  package.json missing"
+        ((fail++))
+    fi
+
+    # Check SDK symlink
+    if [[ -d ~/.openclaw/extensions/openclaw-lacp-fusion/node_modules/openclaw ]] || [[ -L ~/.openclaw/extensions/openclaw-lacp-fusion/node_modules/openclaw ]]; then
+        echo -e "  ${GREEN}pass${NC}  OpenClaw SDK linked"
+        ((pass++))
+    else
+        echo -e "  ${RED}FAIL${NC}  OpenClaw SDK not linked"
+        ((fail++))
+    fi
+
+    # Check hooks
+    for hook in session-start pretool-guard stop-quality-gate write-validate; do
+        if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/hooks/handlers/${hook}.py ]]; then
+            echo -e "  ${GREEN}pass${NC}  Hook: ${hook}"
+            ((pass++))
+        else
+            echo -e "  ${RED}FAIL${NC}  Hook missing: ${hook}"
+            ((fail++))
+        fi
+    done
+
+    # Check lib modules
+    for mod in mycelium consolidation review_queue knowledge_gaps mode heartbeat; do
+        if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/lib/${mod}.py ]]; then
+            echo -e "  ${GREEN}pass${NC}  Module: ${mod}"
+            ((pass++))
+        else
+            echo -e "  ${YELLOW}warn${NC}  Module missing: ${mod}"
+        fi
+    done
+
+    # Check guard config
+    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/config/guard-rules.json ]]; then
+        echo -e "  ${GREEN}pass${NC}  Guard config"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  Guard config missing (using factory defaults)"
+    fi
+
+    # Run tests
+    echo ""
+    echo -e "  ${DIM}Running test suite...${NC}"
+    local test_result
+    test_result=$(cd "$ROOT_DIR" && python3 -m pytest plugin/lib/tests/test_mycelium.py -q 2>&1 | tail -1)
+    if echo "$test_result" | grep -q "passed"; then
+        echo -e "  ${GREEN}pass${NC}  Mycelium tests: $test_result"
+        ((pass++))
+    else
+        echo -e "  ${RED}FAIL${NC}  Mycelium tests: $test_result"
+        ((fail++))
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Results: ${pass} passed, ${fail} failed${NC}"
+    echo ""
+
+    [[ "$fail" -gt 0 ]] && exit 1
+    exit 0
+}
+
+# ─── Main router ──────────────────────────────────────────────────────────────
+
+if [[ $# -eq 0 ]]; then
+    show_help
+    exit 1
+fi
+
+case "$1" in
+    wizard|configure)
+        shift
+        cmd_wizard "$@"
+        ;;
+    status)
+        cmd_status
+        ;;
+    doctor)
+        cmd_doctor
+        ;;
+    connect)
+        shift
+        exec "$PLUGIN_BIN/engram-connect" join "$@"
+        ;;
+    disconnect)
+        shift
+        exec "$PLUGIN_BIN/engram-connect" disconnect "$@"
+        ;;
+    guard)
+        shift
+        exec "$PLUGIN_BIN/engram-guard" "$@"
+        ;;
+    memory)
+        shift
+        subcmd="${1:-}"; shift || true
+        case "$subcmd" in
+            query)   exec "$PLUGIN_BIN/engram-context" query --topic "$@" ;;
+            promote) exec "$PLUGIN_BIN/engram-promote" "$@" ;;
+            status)  exec "$PLUGIN_BIN/engram-memory-status" "$@" ;;
+            kpi)     exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
+            *)       echo "Usage: engram memory <query|promote|status|kpi> [args]"; exit 1 ;;
+        esac
+        ;;
+    ingest)
+        shift
+        exec "$PLUGIN_BIN/engram-brain-ingest" "$@"
+        ;;
+    brain)
+        shift
+        subcmd="${1:-}"; shift || true
+        case "$subcmd" in
+            expand)   exec "$PLUGIN_BIN/engram-brain-expand" "$@" ;;
+            resolve)  exec "$PLUGIN_BIN/engram-brain-resolve" "$@" ;;
+            kpi)      exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
+            optimize) exec "$PLUGIN_BIN/engram-obsidian-optimize" "$@" ;;
+            code)     exec "$PLUGIN_BIN/engram-brain-code" "$@" ;;
+            graph)    exec "$PLUGIN_BIN/engram-brain-graph" "$@" ;;
+            ingest)   exec "$PLUGIN_BIN/engram-brain-ingest" "$@" ;;
+            doctor)   exec "$PLUGIN_BIN/engram-brain-doctor" "$@" ;;
+            *)        echo "Usage: engram brain <expand|resolve|kpi|optimize|code|graph|ingest|doctor> [args]"; exit 1 ;;
+        esac
+        ;;
+    vault)
+        shift
+        exec "$PLUGIN_BIN/engram-obsidian" "$@"
+        ;;
+    connector)
+        shift
+        exec "$PLUGIN_BIN/engram-connector" "$@"
+        ;;
+    watch)
+        shift
+        exec "$PLUGIN_BIN/engram-ingest-watch" "$@"
+        ;;
+    -v|--version)
+        echo "engram v${VERSION}"
+        ;;
+    -h|--help|help)
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac

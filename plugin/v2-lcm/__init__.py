@@ -1,3 +1,3 @@
-"""OpenClaw LACP v2.1.0 — LCM Bidirectional Integration with Backend Abstraction."""
+"""OpenClaw LACP v2.2.0 — Config-driven backend selection."""
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"

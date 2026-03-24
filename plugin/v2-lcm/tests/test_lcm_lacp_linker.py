@@ -246,7 +246,7 @@ class TestSummaryNoteGeneration:
         assert "# LCM Summary: sum_note_test" in note
         assert "easy-api" in note
         assert "[[Finix Integration]]" in note
-        assert "v2.0.0" in note
+        assert "v2.1.0" in note
 
     def test_empty_refs(self):
         summary = {"summary_id": "sum_empty", "content": "Test.", "project": "test"}

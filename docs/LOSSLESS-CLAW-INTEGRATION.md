@@ -1,240 +1,255 @@
-# Lossless-Claw Integration
+# Lossless-Claw Integration Guide
+
+Comprehensive guide for integrating the lossless-claw (LCM) SQLite backend with OpenClaw LACP Fusion.
+
+---
 
 ## What is lossless-claw?
 
-Lossless-claw is the native LCM (Lossless Context Memory) context engine for OpenClaw LACP. It stores session summaries in a SQLite database organized as a directed acyclic graph (DAG). Each summary node can reference a parent, forming chains that represent full conversation histories across sessions.
+Lossless-claw is the native LCM (Lossless Context Machine) storage engine. It uses a local SQLite database (`lcm.db`) to store session summaries, context windows, and agent interactions in a structured, queryable format.
 
-Unlike the default file-based approach (which scans vault directories and memory files), lossless-claw provides:
+Unlike the default file-based backend (which reads from Obsidian vault markdown files), lossless-claw provides:
 
-- Structured storage with indexed queries instead of filesystem scans
-- DAG traversal to reconstruct full conversation history across sessions
-- Auto-discovery of summaries by date range, project, or conversation ID
-- Batch querying with configurable page sizes
+- **Structured storage** -- session summaries live in a SQLite database with indexed columns for fast lookup.
+- **DAG traversal** -- summaries form a directed acyclic graph via `parent_id` chains, enabling ancestry queries and context lineage tracking.
+- **Auto-discovery** -- the `discover` command can scan the LCM database for new summaries without manual file management.
+- **Batch queries** -- configurable batch sizes (`lcmQueryBatchSize`) for efficient bulk operations.
 
-The database lives at `~/.openclaw/lcm.db` by default and contains a `summaries` table with columns for `summary_id`, `content`, `parent_id`, `conversation_id`, `project`, `agent`, `timestamp`, `citations`, `tags`, and `metadata`.
+The database is stored at `~/.openclaw/lcm.db` by default and contains a `summaries` table with columns for `summary_id`, `content`, `project`, `parent_id`, `timestamp`, and metadata.
+
+---
 
 ## How to Enable
 
-Set `contextEngine` to `"lossless-claw"` in your plugin configuration.
+### 1. Set `contextEngine` in your openclaw.json
 
-### Config Example
-
-In `~/.openclaw/openclaw.json`:
+Add the plugin configuration to your OpenClaw gateway config at `~/.openclaw/openclaw.json`:
 
 ```json
 {
-  "plugins": {
-    "entries": {
-      "openclaw-lacp-fusion": {
-        "enabled": true,
-        "config": {
-          "contextEngine": "lossless-claw",
-          "lcmDbPath": "~/.openclaw/lcm.db",
-          "lcmQueryBatchSize": 50,
-          "promotionThreshold": 70,
-          "autoDiscoveryInterval": "6h"
-        }
-      }
+  "openclaw-lacp-fusion": {
+    "enabled": true,
+    "config": {
+      "contextEngine": "lossless-claw",
+      "lcmQueryBatchSize": 50,
+      "promotionThreshold": 70,
+      "autoDiscoveryInterval": "6h"
     }
   }
 }
 ```
 
-Or use a standalone plugin config file. See `plugin/config/example-openclaw-lacp.lossless-claw.json` for the minimal example.
+An example config file is available at:
 
-### Config Keys
+```
+plugin/config/example-openclaw-lacp.lossless-claw.json
+```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `contextEngine` | `string \| null` | `null` | Set to `"lossless-claw"` to enable. `null` uses file-based. |
-| `lcmDbPath` | `string` | `~/.openclaw/lcm.db` | Path to the LCM SQLite database. |
-| `lcmQueryBatchSize` | `int` | `50` | Maximum summaries returned per query (1-1000). |
-| `promotionThreshold` | `int` | `70` | Minimum score (0-100) for auto-promotion to LACP. |
-| `autoDiscoveryInterval` | `string` | `"6h"` | How often auto-discovery runs. Valid: 1h, 2h, 4h, 6h, 8h, 12h, 24h. |
+### 2. Verify the LCM database exists
 
-## Auto-Discovery
-
-Use the `--discover` flag on `openclaw-lacp-context` to find summaries by date range, project, or conversation ID without knowing specific summary IDs.
+The LCM database must be present at `~/.openclaw/lcm.db`. If you have been running LCM sessions, this file should already exist. You can verify:
 
 ```bash
-# Discover all summaries from the last 7 days
-openclaw-lacp-context inject --project easy-api --discover --since 2026-03-11
-
-# Discover summaries for a specific conversation
-openclaw-lacp-context inject --project easy-api --discover --conversation conv_abc123
-
-# Discover with project filter and date range
-openclaw-lacp-context inject --discover --project easy-checkout --since 2026-03-01 --until 2026-03-15
+ls -la ~/.openclaw/lcm.db
+sqlite3 ~/.openclaw/lcm.db ".tables"
 ```
 
-Auto-discovery requires `contextEngine: "lossless-claw"`. When using the file-based backend, `--discover` will scan directories but without DAG awareness or conversation-level grouping.
+You should see a `summaries` table (among others).
 
-## Context Injection Workflow
+---
 
-Context injection happens at session start. The flow is:
+## Auto-Discovery Usage
 
-```
-1. Session starts
-2. session-start hook fires
-3. openclaw-lacp-context inject runs
-4. Backend fetches relevant summaries (by project, keywords, recency)
-5. Facts are scored for relevance to the current session topic
-6. Top-scoring facts are formatted and prepended to the LCM context window
-7. Agent begins reasoning with accumulated organizational knowledge
-```
+Both `openclaw-lacp-promote` and `openclaw-lacp-context` support a `discover` subcommand that scans the LCM database for summaries.
 
-The injection command:
+### Discovering summaries for promotion
 
 ```bash
-openclaw-lacp-context inject \
-  --project easy-api \
-  --agent wren \
-  --topic "embedded-checkout" \
-  --depth 2 \
-  --format markdown \
-  --backend lcm
+openclaw-lacp-promote discover --project easy-api --since 2026-03-01 --limit 20
 ```
 
-This queries the LCM database for summaries related to "embedded-checkout" in the easy-api project, traverses parent chains up to depth 2, and outputs prompt-ready markdown.
+This queries the LCM database for recent summaries matching the project filter, then outputs them as JSON for review or piping into the promotion pipeline.
 
-## DAG Traversal
-
-The `traverse_dag` method walks parent chains to build full conversation history. Each summary in the `summaries` table has an optional `parent_id` column pointing to the preceding summary in the same conversation.
-
-```
-sum_003 (current)
-  └── parent_id → sum_002
-       └── parent_id → sum_001
-            └── parent_id → null (root)
-```
-
-Traversal starts at a given summary and walks backward through `parent_id` references until it reaches a root node (null parent) or hits the configured depth limit.
+### Discovering context for injection
 
 ```bash
-# Traverse from a specific summary, depth 5
-openclaw-lacp-context inject --summary sum_003 --depth 5 --backend lcm
+openclaw-lacp-context discover --topic "settlement" --project easy-api --limit 10
 ```
 
-The result includes:
+This searches the LCM database for summaries relevant to the given topic, suitable for injecting into a new session's context window.
 
-| Field | Description |
-|-------|-------------|
-| `root` | The earliest ancestor summary reached |
-| `chain` | Ordered list of summaries from current to root |
-| `depth_reached` | How many levels were traversed |
+### Overriding the backend at runtime
 
-The file-based backend does not support true DAG traversal. It returns a single-node chain if the summary is found by file search.
+If your config uses the file-based backend by default, you can override per-invocation:
+
+```bash
+openclaw-lacp-promote discover --backend lossless-claw --project easy-api
+openclaw-lacp-context discover --backend lossless-claw --topic "treasury"
+```
+
+---
+
+## Context Injection Workflow with LCM Backend
+
+When the lossless-claw backend is active, the context injection flow works as follows:
+
+1. **Session starts** -- the `session-start` hook fires.
+2. **Context discovery** -- `openclaw-lacp-context auto-inject` queries the LCM database for summaries related to the current project and task.
+3. **DAG traversal** -- the backend follows `parent_id` chains to gather ancestral context (not just the latest summary, but the lineage that led to it).
+4. **Fact scoring** -- gathered facts are scored by relevance to the current topic.
+5. **Injection** -- the top-N facts (controlled by `--max-facts`) are injected into the session's context window.
+6. **Metadata logging** -- the injection event is recorded in `context.json` and `injections.jsonl`.
+
+```
+Session Start
+    |
+    v
+LCM Database Query (summaries table)
+    |
+    v
+DAG Traversal (follow parent_id chains)
+    |
+    v
+Score & Rank Facts
+    |
+    v
+Inject top-N into context window
+    |
+    v
+Log injection metadata
+```
+
+---
+
+## DAG Traversal (parent_id Chains)
+
+Summaries in the LCM database are linked via `parent_id` references, forming a directed acyclic graph:
+
+```
+sum_001 (root session)
+  |
+  +-- sum_002 (follow-up session)
+  |     |
+  |     +-- sum_005 (deeper follow-up)
+  |
+  +-- sum_003 (parallel branch)
+        |
+        +-- sum_006
+```
+
+When the backend resolves context for a topic, it does not just return the single best-matching summary. It traverses the `parent_id` chain upward to gather the full lineage, giving the agent a richer understanding of how a decision evolved over multiple sessions.
+
+The traversal depth is controlled by the `--depth` flag on `openclaw-lacp-context inject` (default: 2 levels).
+
+### Example query pattern
+
+```sql
+-- Find a summary and its ancestors
+WITH RECURSIVE ancestors AS (
+  SELECT * FROM summaries WHERE summary_id = ?
+  UNION ALL
+  SELECT s.* FROM summaries s
+  JOIN ancestors a ON s.summary_id = a.parent_id
+)
+SELECT * FROM ancestors ORDER BY timestamp ASC;
+```
+
+---
 
 ## Migration from File-Based to LCM
 
-### Step 1: Ensure lcm.db exists
+Switching from the file-based backend to lossless-claw requires a single config change. No data migration is needed because the two backends read from different sources.
 
-The LCM database must exist at `~/.openclaw/lcm.db` (or your configured `lcmDbPath`) and contain a `summaries` table.
-
-```bash
-# Verify the database exists and has the right schema
-sqlite3 ~/.openclaw/lcm.db ".tables"
-# Expected output should include: summaries
-```
-
-If the database does not exist, it should be created by lossless-claw's own initialization process. LACP does not create this database -- it reads from it.
-
-### Step 2: Update config
-
-Set `contextEngine` to `"lossless-claw"` in your `openclaw.json`:
+### Before (file-based)
 
 ```json
 {
-  "plugins": {
-    "entries": {
-      "openclaw-lacp-fusion": {
-        "enabled": true,
-        "config": {
-          "contextEngine": "lossless-claw"
-        }
-      }
+  "openclaw-lacp-fusion": {
+    "enabled": true,
+    "config": {
+      "contextEngine": null,
+      "promotionThreshold": 70
     }
   }
 }
 ```
 
-### Step 3: Test with --backend flag
-
-Before committing to the config change, test with the CLI override:
-
-```bash
-# Test context injection with the LCM backend
-openclaw-lacp-context inject --project easy-api --backend lcm --format json
-
-# Test promotion with the LCM backend
-openclaw-lacp-promote auto --summary sum_abc123 --backend lcm
-```
-
-The `--backend` flag overrides the config-driven engine for that single invocation.
-
-### Step 4: Remove file-based overrides
-
-Once lossless-claw is working:
-
-1. Remove any `--backend file` flags from scripts or hooks.
-2. Remove explicit `--file` paths from context injection commands (the LCM backend queries the database directly).
-3. Keep vault and memory directories intact -- they are still used by Layer 1 and Layer 2 independently of the context engine.
-
-## Troubleshooting
-
-### Database not found
-
-```
-ValueError: lossless-claw backend requested but LCM database not found.
-Expected at: ~/.openclaw/lcm.db.
-```
-
-**Cause:** `contextEngine` is set to `"lossless-claw"` but `lcm.db` does not exist at the configured path.
-
-**Fix:** Either create the LCM database through lossless-claw's initialization, or set `contextEngine` to `null` to fall back to file-based.
-
-### Empty results from LCM queries
-
-**Cause:** The `summaries` table exists but contains no rows, or the project/date filters are too restrictive.
-
-**Fix:**
-```bash
-# Check row count
-sqlite3 ~/.openclaw/lcm.db "SELECT COUNT(*) FROM summaries;"
-
-# Check available projects
-sqlite3 ~/.openclaw/lcm.db "SELECT DISTINCT project FROM summaries;"
-
-# Broaden filters
-openclaw-lacp-context inject --discover --backend lcm
-```
-
-### Fallback to file-based
-
-If the LCM database becomes unavailable mid-session, the `get_backend` factory will raise a `ValueError`. To handle this gracefully, use the `--backend file` override or set `contextEngine` to `null` in config until the database issue is resolved.
-
-### Slow queries
-
-If discovery is slow on large databases, reduce `lcmQueryBatchSize`:
+### After (lossless-claw)
 
 ```json
 {
-  "config": {
-    "lcmQueryBatchSize": 20
+  "openclaw-lacp-fusion": {
+    "enabled": true,
+    "config": {
+      "contextEngine": "lossless-claw",
+      "lcmQueryBatchSize": 50,
+      "promotionThreshold": 70,
+      "autoDiscoveryInterval": "6h"
+    }
   }
 }
 ```
 
-## CLI Commands and the --backend Flag
+The file-based backend continues to work for `inject`, `query`, and `list` commands (reading from `MEMORY_ROOT` and `VAULT_ROOT`). The `discover` subcommand is only available with the lossless-claw backend.
 
-All v2-lcm CLI commands accept a `--backend` flag that overrides the config-driven engine selection:
+You can run both backends side by side during a transition period by using `--backend` to override per command.
 
-| Command | --backend support | Notes |
-|---------|-------------------|-------|
-| `openclaw-lacp-context` | Yes | `--backend lcm` or `--backend file` |
-| `openclaw-lacp-promote` | Yes | `--backend lcm` or `--backend file` |
-| `openclaw-lacp-share` | Yes | `--backend lcm` or `--backend file` |
-| `openclaw-lacp-calibrate` | Yes | `--backend lcm` or `--backend file` |
-| `openclaw-lacp-dedup` | Yes | `--backend lcm` or `--backend file` |
+---
 
-See [CLI-REFERENCE.md](./CLI-REFERENCE.md) for full command documentation.
+## Troubleshooting
+
+### Missing LCM database
+
+**Symptom:** `LCM database not found at ~/.openclaw/lcm.db`
+
+**Fix:** Ensure the LCM engine has been initialized and has run at least one session. The database is created automatically by LCM on first use. If you installed LCM in a non-standard location, check that the path is correct.
+
+### Wrong database path
+
+**Symptom:** `discover` returns no results even though you have sessions.
+
+**Fix:** The backend looks for `~/.openclaw/lcm.db` by default. If your database is elsewhere, you may need to symlink it or configure the `lcmDbPath` in the backend initialization. Check:
+
+```bash
+find ~ -name "lcm.db" -maxdepth 4 2>/dev/null
+```
+
+### No summaries table
+
+**Symptom:** SQLite error about missing table.
+
+**Fix:** The database exists but was not initialized by LCM. Verify:
+
+```bash
+sqlite3 ~/.openclaw/lcm.db ".schema summaries"
+```
+
+If the table does not exist, the database may be from a different application. Ensure you are pointing at the correct LCM database.
+
+### contextEngine not recognized
+
+**Symptom:** `discover requires the lossless-claw backend`
+
+**Fix:** The config is not being read, or `contextEngine` is set to `null`. Verify your `~/.openclaw/openclaw.json` has the correct structure:
+
+```bash
+cat ~/.openclaw/openclaw.json | jq '.plugins.entries["openclaw-lacp-fusion"].config.contextEngine'
+```
+
+Should output `"lossless-claw"`. If using the flat plugin config format, check:
+
+```bash
+cat ~/.openclaw/openclaw.json | jq '.["openclaw-lacp-fusion"].config.contextEngine'
+```
+
+### Auto-discovery returns stale results
+
+**Symptom:** `discover` keeps returning old summaries.
+
+**Fix:** Use the `--since` flag to filter by date:
+
+```bash
+openclaw-lacp-promote discover --project easy-api --since 2026-03-18
+```
+
+The `autoDiscoveryInterval` config key controls how often automatic discovery runs (valid values: `1h`, `2h`, `4h`, `6h`, `8h`, `12h`, `24h`). Adjust if needed.

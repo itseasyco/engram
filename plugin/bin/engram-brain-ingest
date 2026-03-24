@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""
+openclaw-brain-ingest: Layer 3 Ingestion Pipeline
+Converts transcripts, URLs, PDFs, video/audio, and files into structured indexed notes
+
+Usage:
+  openclaw-brain-ingest transcript <vault-path> <file> [--speaker <name>] [--date <date>]
+  openclaw-brain-ingest url <vault-path> <url> [--title <title>]
+  openclaw-brain-ingest pdf <vault-path> <file> [--title <title>]
+  openclaw-brain-ingest file <vault-path> <file> [--title <title>]
+  openclaw-brain-ingest video <vault-path> <file> [--title <title>] [--speaker <name>] [--model <whisper-model>]
+  openclaw-brain-ingest index <vault-path> [--qmd]
+"""
+
+import sys
+import json
+import argparse
+import subprocess
+import tempfile
+import shutil
+from pathlib import Path
+from datetime import datetime
+import hashlib
+
+MEDIA_EXTENSIONS = {
+    ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm",
+    ".mp3", ".wav", ".aac", ".ogg", ".opus", ".flac", ".m4a",
+}
+
+from pathlib import Path as _Path
+import sys as _sys
+_sys.path.insert(0, str(_Path(__file__).resolve().parent / "lib"))
+from mode_check import guard_or_exit
+
+_INGEST_MODE_STATUS = guard_or_exit("brain-ingest", json_output="--json" in _sys.argv)
+
+
+def ingest_transcript(vault_path, transcript_file, speaker=None, date=None):
+    """Ingest a transcript file"""
+    vault = Path(vault_path)
+    inbox = vault / "inbox" / "queue-generated"
+    inbox.mkdir(parents=True, exist_ok=True)
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
+    content = Path(transcript_file).read_text() if Path(transcript_file).exists() else ""
+    
+    title = f"Transcript — {speaker or 'Unknown'} ({date or 'undated'})"
+    slug = "transcript_" + hashlib.md5(title.encode()).hexdigest()[:8]
+    
+    note = f"""# {title}
+
+## Metadata
+- **Type:** Transcript
+- **Speaker:** {speaker or 'Unknown'}
+- **Date:** {date or 'Unknown'}
+- **Ingested:** {datetime.now().isoformat()}
+
+## Content
+
+{content}
+
+---
+Ingested by openclaw-brain-ingest
+"""
+    
+    output_file = inbox / f"{slug}.md"
+    output_file.write_text(note)
+    print(f"Ingested: {output_file}")
+    return str(output_file)
+
+
+def ingest_url(vault_path, url, title=None):
+    """Ingest content from a URL"""
+    vault = Path(vault_path)
+    inbox = vault / "inbox" / "queue-generated"
+    inbox.mkdir(parents=True, exist_ok=True)
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
+    title = title or url
+    slug = "url_" + hashlib.md5(url.encode()).hexdigest()[:8]
+    
+    note = f"""# {title}
+
+## Metadata
+- **Type:** URL
+- **Source:** [{url}]({url})
+- **Ingested:** {datetime.now().isoformat()}
+
+## Content
+
+(Content would be fetched from URL)
+
+---
+Ingested by openclaw-brain-ingest
+"""
+    
+    output_file = inbox / f"{slug}.md"
+    output_file.write_text(note)
+    print(f"Ingested: {output_file}")
+    return str(output_file)
+
+
+def ingest_pdf(vault_path, pdf_file, title=None):
+    """Ingest a PDF file"""
+    vault = Path(vault_path)
+    inbox = vault / "inbox" / "queue-generated"
+    inbox.mkdir(parents=True, exist_ok=True)
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
+    pdf_name = Path(pdf_file).name
+    title = title or Path(pdf_file).stem
+    slug = "pdf_" + hashlib.md5(pdf_file.encode()).hexdigest()[:8]
+    
+    note = f"""# {title}
+
+## Metadata
+- **Type:** PDF
+- **Filename:** `{pdf_name}`
+- **Ingested:** {datetime.now().isoformat()}
+
+## Content
+
+(PDF text would be extracted here)
+
+---
+Ingested by openclaw-brain-ingest
+"""
+    
+    output_file = inbox / f"{slug}.md"
+    output_file.write_text(note)
+    print(f"Ingested: {output_file}")
+    return str(output_file)
+
+
+def ingest_file(vault_path, file_path, title=None):
+    """Ingest a generic file"""
+    vault = Path(vault_path)
+    inbox = vault / "inbox" / "queue-generated"
+    inbox.mkdir(parents=True, exist_ok=True)
+    # In connected mode, force all writes to the agent inbox queue
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
+    file_obj = Path(file_path)
+    content = file_obj.read_text(errors='ignore') if file_obj.exists() else ""
+    
+    title = title or file_obj.stem
+    slug = "file_" + hashlib.md5(file_path.encode()).hexdigest()[:8]
+    
+    note = f"""# {title}
+
+## Metadata
+- **Type:** File
+- **Filename:** `{file_obj.name}`
+- **Ingested:** {datetime.now().isoformat()}
+
+## Content
+
+{content[:2000]}
+
+---
+Ingested by openclaw-brain-ingest
+"""
+    
+    output_file = inbox / f"{slug}.md"
+    output_file.write_text(note)
+    print(f"Ingested: {output_file}")
+    return str(output_file)
+
+
+def _extract_audio(video_path, output_path):
+    """Extract audio from video using ffmpeg."""
+    if not shutil.which("ffmpeg"):
+        raise FileNotFoundError("ffmpeg is required for video ingestion. Install: brew install ffmpeg")
+    cmd = [
+        "ffmpeg", "-i", str(video_path),
+        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        str(output_path), "-y", "-loglevel", "error",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {result.stderr.strip()}")
+
+
+def _transcribe_audio(audio_path, model="base"):
+    """Transcribe audio using Whisper CLI."""
+    if not shutil.which("whisper"):
+        raise FileNotFoundError("whisper is required for transcription. Install: pip install openai-whisper")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = [
+            "whisper", str(audio_path),
+            "--model", model,
+            "--output_format", "txt",
+            "--output_dir", tmpdir,
+            "--language", "en",
+        ]
+        print(f"Transcribing with Whisper ({model} model)...")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            if stderr:
+                print(f"Whisper stderr: {stderr}", file=sys.stderr)
+
+        txt_files = list(Path(tmpdir).glob("*.txt"))
+        if not txt_files:
+            raise RuntimeError("Whisper produced no output")
+
+        return txt_files[0].read_text(encoding="utf-8").strip()
+
+
+def _get_video_duration(video_path):
+    """Get video duration in seconds using ffprobe."""
+    if not shutil.which("ffprobe"):
+        return None
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        return float(result.stdout.strip()) if result.returncode == 0 else None
+    except (ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def ingest_video(vault_path, video_file, title=None, speaker=None, model="base"):
+    """Ingest a video or audio file by extracting audio, transcribing, and creating a vault note."""
+    vault = Path(vault_path)
+    inbox = vault / "inbox" / "queue-generated"
+    inbox.mkdir(parents=True, exist_ok=True)
+
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+
+    video = Path(video_file)
+    if not video.exists():
+        print(f"Error: file not found: {video_file}", file=sys.stderr)
+        sys.exit(1)
+
+    suffix = video.suffix.lower()
+    if suffix not in MEDIA_EXTENSIONS:
+        print(f"Error: unsupported format {suffix}. Supported: {', '.join(sorted(MEDIA_EXTENSIONS))}", file=sys.stderr)
+        sys.exit(1)
+
+    title = title or video.stem.replace("_", " ").replace("-", " ").title()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    duration = _get_video_duration(video)
+    duration_str = f"{int(duration // 60)}m {int(duration % 60)}s" if duration else "unknown"
+
+    # Audio-only files skip ffmpeg extraction
+    audio_extensions = {".mp3", ".wav", ".aac", ".ogg", ".opus", ".flac", ".m4a"}
+    is_audio_only = suffix in audio_extensions
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        if is_audio_only:
+            audio_path = video
+            print(f"Audio file detected: {video.name}")
+        else:
+            audio_path = Path(tmpdir) / "audio.wav"
+            print(f"Extracting audio from {video.name}...")
+            _extract_audio(video, audio_path)
+
+        transcript = _transcribe_audio(str(audio_path), model=model)
+
+    if not transcript:
+        print("Error: transcription produced no text", file=sys.stderr)
+        sys.exit(1)
+
+    word_count = len(transcript.split())
+    slug = "video_" + hashlib.md5(video_file.encode()).hexdigest()[:8]
+
+    note = f"""---
+title: "{title}"
+category: transcript
+tags: [meeting, video, transcript]
+created: {date_str}
+updated: {date_str}
+author: engram-ingest
+source: video-transcription
+status: active
+---
+
+# {title}
+
+## Metadata
+- **Type:** Video Transcript
+- **Source file:** `{video.name}`
+- **Speaker:** {speaker or 'Unknown'}
+- **Duration:** {duration_str}
+- **Words:** {word_count}
+- **Whisper model:** {model}
+- **Ingested:** {datetime.now().isoformat()}
+
+## Transcript
+
+{transcript}
+
+---
+Ingested by engram-brain-ingest (video)
+"""
+
+    output_file = inbox / f"{slug}.md"
+    output_file.write_text(note)
+    print(f"Ingested: {output_file} ({word_count} words, {duration_str})")
+    return str(output_file)
+
+
+def ingest_video_batch(vault_path, directory, title_prefix=None, speaker=None, model="base"):
+    """Ingest all video/audio files in a directory."""
+    dir_path = Path(directory)
+    if not dir_path.is_dir():
+        print(f"Error: not a directory: {directory}", file=sys.stderr)
+        sys.exit(1)
+
+    media_files = sorted(
+        f for f in dir_path.iterdir()
+        if f.suffix.lower() in MEDIA_EXTENSIONS and f.is_file()
+    )
+
+    if not media_files:
+        print(f"No media files found in {directory}")
+        return []
+
+    print(f"Found {len(media_files)} media files in {directory}")
+    results = []
+
+    for i, media_file in enumerate(media_files, 1):
+        title = f"{title_prefix} - {media_file.stem}" if title_prefix else None
+        print(f"\n[{i}/{len(media_files)}] Processing: {media_file.name}")
+        try:
+            result = ingest_video(vault_path, str(media_file), title=title, speaker=speaker, model=model)
+            results.append(result)
+        except Exception as e:
+            print(f"  Error: {e}", file=sys.stderr)
+            continue
+
+    print(f"\nBatch complete: {len(results)}/{len(media_files)} ingested")
+    return results
+
+
+def index_vault(vault_path, update_qmd=False):
+    """Rebuild vault index"""
+    vault = Path(vault_path)
+    inbox = vault / "inbox" / "queue-generated"
+    
+    # Find all .md files
+    files = list(inbox.glob("*.md"))
+    
+    # Build index
+    index_content = "# Ingested Notes Index\n\nAuto-generated.\n\n"
+    for f in sorted(files):
+        if f.name != "index.md":
+            index_content += f"- [{f.stem}]({f.name})\n"
+    
+    (inbox / "index.md").write_text(index_content)
+    print(f"Indexed: {inbox / 'index.md'}")
+    
+    if update_qmd:
+        print("Note: QMD update would run here")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Ingest content into knowledge graph")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    
+    # Transcript
+    trans_parser = subparsers.add_parser("transcript")
+    trans_parser.add_argument("vault_path")
+    trans_parser.add_argument("transcript_file")
+    trans_parser.add_argument("--speaker")
+    trans_parser.add_argument("--date")
+    
+    # URL
+    url_parser = subparsers.add_parser("url")
+    url_parser.add_argument("vault_path")
+    url_parser.add_argument("url")
+    url_parser.add_argument("--title")
+    
+    # PDF
+    pdf_parser = subparsers.add_parser("pdf")
+    pdf_parser.add_argument("vault_path")
+    pdf_parser.add_argument("pdf_file")
+    pdf_parser.add_argument("--title")
+    
+    # File
+    file_parser = subparsers.add_parser("file")
+    file_parser.add_argument("vault_path")
+    file_parser.add_argument("file_path")
+    file_parser.add_argument("--title")
+    
+    # Video (single file)
+    video_parser = subparsers.add_parser("video", help="Transcribe and ingest a video/audio file")
+    video_parser.add_argument("vault_path")
+    video_parser.add_argument("video_file")
+    video_parser.add_argument("--title")
+    video_parser.add_argument("--speaker")
+    video_parser.add_argument("--model", default="base", help="Whisper model: tiny, base, small, medium, large (default: base)")
+
+    # Video batch (whole directory)
+    batch_parser = subparsers.add_parser("video-batch", help="Transcribe and ingest all media in a directory")
+    batch_parser.add_argument("vault_path")
+    batch_parser.add_argument("directory")
+    batch_parser.add_argument("--title-prefix", help="Prefix for generated titles")
+    batch_parser.add_argument("--speaker")
+    batch_parser.add_argument("--model", default="base", help="Whisper model: tiny, base, small, medium, large (default: base)")
+
+    # Index
+    index_parser = subparsers.add_parser("index")
+    index_parser.add_argument("vault_path")
+    index_parser.add_argument("--qmd", action="store_true")
+
+    args = parser.parse_args()
+
+    if args.command == "transcript":
+        ingest_transcript(args.vault_path, args.transcript_file, args.speaker, args.date)
+    elif args.command == "url":
+        ingest_url(args.vault_path, args.url, args.title)
+    elif args.command == "pdf":
+        ingest_pdf(args.vault_path, args.pdf_file, args.title)
+    elif args.command == "file":
+        ingest_file(args.vault_path, args.file_path, args.title)
+    elif args.command == "video":
+        ingest_video(args.vault_path, args.video_file, args.title, args.speaker, args.model)
+    elif args.command == "video-batch":
+        ingest_video_batch(args.vault_path, args.directory, args.title_prefix, args.speaker, args.model)
+    elif args.command == "index":
+        index_vault(args.vault_path, args.qmd)
+
+
+if __name__ == "__main__":
+    main()

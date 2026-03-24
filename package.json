@@ -1,0 +1,51 @@
+{
+  "name": "@easylabs/engram",
+  "version": "2.2.0",
+  "description": "Shared intelligence graph for AI agents. Persistent memory, mycelium-powered curation, multi-agent knowledge sharing. Built for OpenClaw.",
+  "license": "MIT",
+  "author": "Easy Labs <hello@itseasy.co> (https://itseasy.co)",
+  "homepage": "https://github.com/itseasyco/engram",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itseasyco/engram"
+  },
+  "bugs": {
+    "url": "https://github.com/itseasyco/engram/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "engram": "./bin/engram"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "memory",
+    "knowledge-graph",
+    "obsidian",
+    "openclaw",
+    "mycelium",
+    "multi-agent",
+    "intelligence"
+  ],
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": { "optional": false }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin/",
+    "plugin/",
+    "docs/",
+    "INSTALL.sh",
+    "openclaw.plugin.json",
+    "plugin.json",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "openclaw-lacp": {
+  "openclaw-lacp-fusion": {
     "enabled": true,
     "config": {
       "contextEngine": "lossless-claw",
