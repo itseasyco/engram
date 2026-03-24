@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="2.2.0"
+VERSION=$(node -p "try{require(process.env.HOME+'/engram/package.json').version}catch(e){'2.2.0'}" 2>/dev/null || echo "2.2.0")
 
 # Resolve the real location of this script (follow npm link symlinks)
 _resolve_script_dir() {
