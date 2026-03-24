@@ -28,7 +28,7 @@ function runHandler(script: string, eventJson: string, logger?: { warn: (msg: st
       input: eventJson,
       encoding: "utf-8",
       timeout: 10_000,
-      env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir },
+      env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir, LACP_OBSIDIAN_VAULT: vaultPath },
     });
     return { stdout: result.trim() || null, exitCode: 0, blocked: false };
   } catch (err: any) {
@@ -49,7 +49,20 @@ function runHandler(script: string, eventJson: string, logger?: { warn: (msg: st
 
 // ─── CLI tool runner (async, for agent tools) ────────────────────────────────
 
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync as readFileSyncFs } from "node:fs";
+
+// Resolve vault path from env or config file
+function resolveVaultPath(): string {
+  if (process.env.LACP_OBSIDIAN_VAULT) return process.env.LACP_OBSIDIAN_VAULT;
+  try {
+    const envFile = join(pluginDir, "config", ".openclaw-lacp.env");
+    const content = readFileSyncFs(envFile, "utf-8");
+    const match = content.match(/^LACP_OBSIDIAN_VAULT=(.+)$/m);
+    if (match) return match[1].trim();
+  } catch {}
+  return join(process.env.HOME ?? "", ".openclaw", "data", "knowledge");
+}
+const vaultPath = resolveVaultPath();
 
 const toolLogPath = join(pluginDir, "logs", "tool-calls.jsonl");
 try { mkdirSync(join(pluginDir, "logs"), { recursive: true }); } catch {}
@@ -68,7 +81,7 @@ function runCli(cmd: string, args: string[], timeout = 30_000): Promise<{ stdout
     execFile(cmdPath, args, {
       encoding: "utf-8",
       timeout,
-      env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir },
+      env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir, LACP_OBSIDIAN_VAULT: vaultPath },
     }, (err, stdout, stderr) => {
       const result = {
         stdout: (stdout ?? "").trim(),
@@ -141,7 +154,7 @@ const lacpPlugin = {
             input: payload,
             encoding: "utf-8",
             timeout: 10_000,
-            env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir },
+            env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir, LACP_OBSIDIAN_VAULT: vaultPath },
           });
           logToolCall({ hook: "before_tool_call_result", exitCode: 0, blocked: false });
         } catch (err: any) {
@@ -227,7 +240,6 @@ const lacpPlugin = {
         model: Type.Optional(Type.String({ description: "Whisper model for video: tiny, base, small, medium, large. Default: base" })),
       }),
       async execute(_id, params: any) {
-        const vaultPath = process.env.LACP_OBSIDIAN_VAULT || join(process.env.HOME ?? "", ".openclaw", "data", "knowledge");
         const args = [params.type, vaultPath, params.source];
         if (params.title) {
           args.push(params.type === "video-batch" ? "--title-prefix" : "--title", params.title);
@@ -342,7 +354,6 @@ const lacpPlugin = {
           update_qmd: Type.Optional(Type.Boolean({ description: "Also update QMD vector embeddings. Default: false" })),
         }),
         async execute(_id, params: any) {
-          const vaultPath = process.env.LACP_OBSIDIAN_VAULT || join(process.env.HOME ?? "", ".openclaw", "data", "knowledge");
           const args = ["index", vaultPath];
           if (params.session_dir) args.splice(1, 0, params.session_dir);
           if (params.update_qmd) args.push("--update-qmd");
@@ -453,7 +464,7 @@ print(json.dumps(result, indent=2))
 `], {
             encoding: "utf-8",
             timeout: 10_000,
-            env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir },
+            env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir, LACP_OBSIDIAN_VAULT: vaultPath },
           });
           return textResult(result.trim());
         } catch (err: any) {
