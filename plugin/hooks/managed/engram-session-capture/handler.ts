@@ -9,12 +9,25 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const PLUGIN_DIR =
   process.env.OPENCLAW_PLUGIN_DIR ||
-  join(process.env.HOME ?? "", ".openclaw", "extensions", "engram");
+  join(process.env.HOME ?? "", ".openclaw", "extensions", "openclaw-lacp-fusion");
+
+// Read vault path from env config if not in environment
+function resolveVaultPath(): string {
+  if (process.env.LACP_OBSIDIAN_VAULT) return process.env.LACP_OBSIDIAN_VAULT;
+  try {
+    const envFile = join(PLUGIN_DIR, "config", ".openclaw-lacp.env");
+    const content = readFileSync(envFile, "utf-8");
+    const match = content.match(/^LACP_OBSIDIAN_VAULT=(.+)$/m);
+    if (match) return match[1].trim();
+  } catch {}
+  return join(process.env.HOME ?? "", ".openclaw", "data", "knowledge");
+}
+const VAULT_PATH = resolveVaultPath();
 
 function extractAgentName(sessionKey: string): string {
   // Session keys look like "agent:main:main" or "agent:wren:webchat"
@@ -41,8 +54,8 @@ function extractSessionContent(event: any): {
   const entry = ctx.previousSessionEntry || ctx.sessionEntry;
   let messages: string[] = [];
 
-  if (entry?.messages) {
-    // Extract the last 30 user/assistant messages
+  // First try: messages inline in entry
+  if (entry?.messages && Array.isArray(entry.messages) && entry.messages.length > 0) {
     const relevant = entry.messages
       .filter((m: any) => m.role === "user" || m.role === "assistant")
       .slice(-30);
@@ -58,10 +71,65 @@ function extractSessionContent(event: any): {
                 .map((c: any) => c.text)
                 .join("\n")
             : "";
-      // Truncate very long messages
       const trimmed = content.length > 500 ? content.substring(0, 500) + "..." : content;
       return `${role}: ${trimmed}`;
     });
+  }
+
+  // Second try: read from sessionFile on disk
+  if (messages.length === 0 && entry?.sessionFile) {
+    try {
+      let filePath = entry.sessionFile;
+
+      // The file might have been renamed to .deleted.* by the /new command
+      // existsSync and readdirSync imported at top
+      if (!existsSync(filePath)) {
+        // Look for the deleted version
+        const dir = join(filePath, "..");
+        const baseName = filePath.split("/").pop() || "";
+        try {
+          const files = readdirSync(dir);
+          const deleted = files.find((f: string) => f.startsWith(baseName + ".deleted.") || f.startsWith(baseName + ".reset."));
+          if (deleted) {
+            filePath = join(dir, deleted);
+            console.log(`[engram-session-capture] Using deleted session file: ${deleted}`);
+          }
+        } catch {}
+      }
+
+      if (existsSync(filePath)) {
+        // JSONL format: one JSON object per line
+        const raw = readFileSync(filePath, "utf-8");
+        const lines = raw.trim().split("\n").filter((l: string) => l.trim());
+
+        for (const line of lines.slice(-100)) {
+          try {
+            const obj = JSON.parse(line);
+            // JSONL format: {"type":"message", "message":{"role":"user","content":[...]}}
+            const msg = obj.message || obj;
+            if (msg.role === "user" || msg.role === "assistant") {
+              const role = msg.role;
+              const content =
+                typeof msg.content === "string"
+                  ? msg.content
+                  : Array.isArray(msg.content)
+                    ? msg.content
+                        .filter((c: any) => c.type === "text")
+                        .map((c: any) => c.text)
+                        .join("\n")
+                    : "";
+              const trimmed = content.length > 500 ? content.substring(0, 500) + "..." : content;
+              if (trimmed) messages.push(`${role}: ${trimmed}`);
+            }
+          } catch {}
+        }
+        console.log(`[engram-session-capture] Read ${messages.length} messages from sessionFile (JSONL)`);
+      } else {
+        console.log(`[engram-session-capture] Session file not found (even deleted version)`);
+      }
+    } catch (err: any) {
+      console.log(`[engram-session-capture] Failed to read sessionFile: ${err.message}`);
+    }
   }
 
   return {
@@ -136,15 +204,45 @@ function analyzeTranscript(messages: string[]): {
 }
 
 const handler = async (event: any) => {
+  console.log(`[engram-session-capture] Hook fired: type=${event.type} action=${event.action}`);
+
   // Only trigger on new/reset commands
   if (event.type !== "command") return;
   if (event.action !== "new" && event.action !== "reset") return;
 
+  console.log(`[engram-session-capture] Processing session capture...`);
+
   try {
     const { messages, agentName, sessionId, channel } = extractSessionContent(event);
 
+    console.log(`[engram-session-capture] Agent: ${agentName}, Messages: ${messages.length}, Session: ${sessionId}, Channel: ${channel}`);
+    console.log(`[engram-session-capture] Event keys: ${Object.keys(event).join(", ")}`);
+    console.log(`[engram-session-capture] Context keys: ${Object.keys(event.context || {}).join(", ")}`);
+
+    // Debug: check what's in the session entry
+    const ctx = event.context || {};
+    const prevEntry = ctx.previousSessionEntry;
+    const currEntry = ctx.sessionEntry;
+    const entry = prevEntry || currEntry;
+
+    console.log(`[engram-session-capture] prevEntry sessionId: ${prevEntry?.sessionId || "none"}, sessionFile: ${prevEntry?.sessionFile || "none"}`);
+    console.log(`[engram-session-capture] currEntry sessionId: ${currEntry?.sessionId || "none"}, sessionFile: ${currEntry?.sessionFile || "none"}`);
+    if (entry) {
+      console.log(`[engram-session-capture] Entry keys: ${Object.keys(entry).join(", ")}`);
+      console.log(`[engram-session-capture] Entry has messages: ${!!entry.messages}, type: ${typeof entry.messages}`);
+      if (entry.messages) {
+        console.log(`[engram-session-capture] Messages count: ${entry.messages.length}`);
+      }
+      // Check for alternative message storage
+      if (entry.sessionFile) console.log(`[engram-session-capture] sessionFile: ${entry.sessionFile}`);
+      if (entry.transcript) console.log(`[engram-session-capture] Has transcript: ${typeof entry.transcript}`);
+      if (entry.history) console.log(`[engram-session-capture] Has history: ${typeof entry.history}`);
+    } else {
+      console.log(`[engram-session-capture] No session entry found in context`);
+    }
+
     if (messages.length === 0) {
-      // No transcript to capture
+      console.log(`[engram-session-capture] No messages found, skipping capture`);
       return;
     }
 
@@ -180,7 +278,11 @@ print(json.dumps(result))
         input: payload,
         encoding: "utf-8",
         timeout: 10_000,
-        env: { ...process.env, OPENCLAW_PLUGIN_DIR: PLUGIN_DIR },
+        env: {
+          ...process.env,
+          OPENCLAW_PLUGIN_DIR: PLUGIN_DIR,
+          LACP_OBSIDIAN_VAULT: VAULT_PATH,
+        },
       },
     );
 

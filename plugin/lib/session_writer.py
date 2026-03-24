@@ -60,7 +60,7 @@ def _memory_root() -> Path:
         mode = _get_mode()
         if mode == "connected":
             return Path(vault) / "05_Inbox" / "queue-session"
-        return Path(vault) / "01_memory"
+        return Path(vault) / "memory"
 
 
 def _sanitize_agent_name(name: str) -> str:
@@ -106,7 +106,7 @@ def write_session_memory(
     time = _time_str(dt)
     agent_slug = _sanitize_agent_name(agent_name)
 
-    # Create daily folder: 01_memory/YYYY-MM/YYYY-MM-DD/ (standalone)
+    # Create daily folder: memory/YYYY-MM/YYYY-MM-DD/ (standalone)
     # or 05_Inbox/queue-session/ (connected, flat)
     month = dt.strftime("%Y-%m")
     mode = _get_mode()
