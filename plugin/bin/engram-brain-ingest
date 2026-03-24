@@ -22,10 +22,120 @@ from pathlib import Path
 from datetime import datetime
 import hashlib
 
+import re
+
 MEDIA_EXTENSIONS = {
     ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm",
     ".mp3", ".wav", ".aac", ".ogg", ".opus", ".flac", ".m4a",
 }
+
+
+def _slugify(text):
+    """Convert text to a clean prose-style filename slug.
+
+    Prose-style: 'payment-settlement-architecture' not 'file_c892a314'
+    Good for Obsidian graph readability and wikilinks.
+    """
+    text = text.strip()
+    # Remove common prefixes/noise
+    text = re.sub(r'^(transcript|file|url|pdf|video)\s*[—–-]\s*', '', text, flags=re.IGNORECASE)
+    text = text.lower()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_]+', '-', text)
+    text = re.sub(r'-+', '-', text).strip('-')
+    return text[:80] or "untitled"
+
+
+def _prose_title(filename):
+    """Generate a human-readable prose title from a filename.
+
+    'payment-checkout-flow.md' -> 'Payment Checkout Flow'
+    '2026-03-24-meeting-notes.txt' -> 'Meeting Notes (2026-03-24)'
+    """
+    stem = Path(filename).stem
+    # Extract date if present
+    date_match = re.match(r'^(\d{4}-\d{2}-\d{2})[_-]?(.*)', stem)
+    if date_match:
+        date_str = date_match.group(1)
+        rest = date_match.group(2).replace("-", " ").replace("_", " ").strip()
+        title = rest.title() if rest else "Notes"
+        return f"{title} ({date_str})"
+    # Clean up the stem
+    title = stem.replace("-", " ").replace("_", " ").strip().title()
+    return title or "Untitled"
+
+
+def _extract_tags(content, title=""):
+    """Extract relevant tags from content using keyword detection."""
+    tags = set()
+    combined = (title + " " + content).lower()
+
+    tag_keywords = {
+        "payment": ["payment", "finix", "brale", "settlement", "payout", "checkout"],
+        "api": ["api", "endpoint", "route", "rest", "graphql"],
+        "auth": ["auth", "login", "session", "token", "oauth", "passkey"],
+        "database": ["database", "migration", "rls", "supabase", "postgres", "schema"],
+        "architecture": ["architecture", "design", "system", "infrastructure"],
+        "meeting": ["meeting", "discussed", "agenda", "action items", "attendees"],
+        "security": ["security", "vulnerability", "audit", "encryption"],
+        "testing": ["test", "jest", "pytest", "coverage", "e2e", "maestro"],
+        "deployment": ["deploy", "ci/cd", "vercel", "render", "github actions"],
+        "frontend": ["react", "next.js", "tailwind", "component", "dashboard"],
+        "mobile": ["mobile", "ios", "android", "react native", "expo"],
+        "sdk": ["sdk", "client library", "integration"],
+    }
+
+    for tag, keywords in tag_keywords.items():
+        if any(kw in combined for kw in keywords):
+            tags.add(tag)
+
+    return sorted(tags) if tags else ["general"]
+
+
+def _detect_category(content, title="", source_type="file"):
+    """Detect the best vault category for this content."""
+    combined = (title + " " + content).lower()
+
+    if source_type == "transcript" or any(w in combined for w in ["meeting", "discussed", "agenda", "attendees", "speaker:"]):
+        return "sessions"
+    if any(w in combined for w in ["architecture", "system design", "infrastructure", "deployment"]):
+        return "engineering"
+    if any(w in combined for w in ["research", "analysis", "comparison", "evaluation"]):
+        return "reference"
+    if any(w in combined for w in ["roadmap", "feature", "prd", "requirement", "milestone"]):
+        return "projects"
+    if any(w in combined for w in ["strategy", "investor", "fundrais", "partnership", "revenue"]):
+        return "strategy"
+    return "inbox"
+
+
+def _build_frontmatter(title, category, tags, source_type, source_name=""):
+    """Generate YAML frontmatter."""
+    now = datetime.now().strftime("%Y-%m-%d")
+    tag_str = ", ".join(tags)
+    return f"""---
+title: "{title}"
+category: {category}
+tags: [{tag_str}]
+created: {now}
+updated: {now}
+author: engram-ingest
+source: {source_type}
+source_file: {source_name}
+status: active
+---"""
+
+
+def _resolve_inbox(vault_path):
+    """Resolve the inbox path, respecting mode."""
+    vault = Path(vault_path)
+    inbox = vault / "inbox" / "queue-generated"
+    inbox.mkdir(parents=True, exist_ok=True)
+    if _INGEST_MODE_STATUS == "redirected_to_inbox":
+        from mode import get_inbox_queue_path
+        inbox = Path(get_inbox_queue_path())
+        inbox.mkdir(parents=True, exist_ok=True)
+    return inbox
 
 from pathlib import Path as _Path
 import sys as _sys
@@ -37,36 +147,28 @@ _INGEST_MODE_STATUS = guard_or_exit("brain-ingest", json_output="--json" in _sys
 
 def ingest_transcript(vault_path, transcript_file, speaker=None, date=None):
     """Ingest a transcript file"""
-    vault = Path(vault_path)
-    inbox = vault / "inbox" / "queue-generated"
-    inbox.mkdir(parents=True, exist_ok=True)
-    # In connected mode, force all writes to the agent inbox queue
-    if _INGEST_MODE_STATUS == "redirected_to_inbox":
-        from mode import get_inbox_queue_path
-        inbox = Path(get_inbox_queue_path())
-        inbox.mkdir(parents=True, exist_ok=True)
-
+    inbox = _resolve_inbox(vault_path)
     content = Path(transcript_file).read_text() if Path(transcript_file).exists() else ""
-    
-    title = f"Transcript — {speaker or 'Unknown'} ({date or 'undated'})"
-    slug = "transcript_" + hashlib.md5(title.encode()).hexdigest()[:8]
-    
-    note = f"""# {title}
 
-## Metadata
-- **Type:** Transcript
-- **Speaker:** {speaker or 'Unknown'}
-- **Date:** {date or 'Unknown'}
-- **Ingested:** {datetime.now().isoformat()}
+    title = f"Transcript — {speaker or 'Unknown'} ({date or datetime.now().strftime('%Y-%m-%d')})"
+    slug = _slugify(title)
+    tags = _extract_tags(content, title)
+    tags.append("transcript")
+    category = "sessions"
+    frontmatter = _build_frontmatter(title, category, tags, "transcript", Path(transcript_file).name)
+
+    note = f"""{frontmatter}
+
+# {title}
+
+**Speaker:** {speaker or 'Unknown'}
+**Date:** {date or datetime.now().strftime('%Y-%m-%d')}
 
 ## Content
 
 {content}
-
----
-Ingested by openclaw-brain-ingest
 """
-    
+
     output_file = inbox / f"{slug}.md"
     output_file.write_text(note)
     print(f"Ingested: {output_file}")
@@ -75,33 +177,25 @@ Ingested by openclaw-brain-ingest
 
 def ingest_url(vault_path, url, title=None):
     """Ingest content from a URL"""
-    vault = Path(vault_path)
-    inbox = vault / "inbox" / "queue-generated"
-    inbox.mkdir(parents=True, exist_ok=True)
-    # In connected mode, force all writes to the agent inbox queue
-    if _INGEST_MODE_STATUS == "redirected_to_inbox":
-        from mode import get_inbox_queue_path
-        inbox = Path(get_inbox_queue_path())
-        inbox.mkdir(parents=True, exist_ok=True)
+    inbox = _resolve_inbox(vault_path)
+    title = title or url.split("//")[-1].split("/")[0]
+    slug = _slugify(title)
+    tags = _extract_tags(url, title)
+    tags.append("url")
+    category = _detect_category(title + " " + url, title, "url")
+    frontmatter = _build_frontmatter(title, category, tags, "url", url)
 
-    title = title or url
-    slug = "url_" + hashlib.md5(url.encode()).hexdigest()[:8]
-    
-    note = f"""# {title}
+    note = f"""{frontmatter}
 
-## Metadata
-- **Type:** URL
-- **Source:** [{url}]({url})
-- **Ingested:** {datetime.now().isoformat()}
+# {title}
+
+**Source:** [{url}]({url})
 
 ## Content
 
-(Content would be fetched from URL)
-
----
-Ingested by openclaw-brain-ingest
+(Content to be fetched and indexed)
 """
-    
+
     output_file = inbox / f"{slug}.md"
     output_file.write_text(note)
     print(f"Ingested: {output_file}")
@@ -110,34 +204,26 @@ Ingested by openclaw-brain-ingest
 
 def ingest_pdf(vault_path, pdf_file, title=None):
     """Ingest a PDF file"""
-    vault = Path(vault_path)
-    inbox = vault / "inbox" / "queue-generated"
-    inbox.mkdir(parents=True, exist_ok=True)
-    # In connected mode, force all writes to the agent inbox queue
-    if _INGEST_MODE_STATUS == "redirected_to_inbox":
-        from mode import get_inbox_queue_path
-        inbox = Path(get_inbox_queue_path())
-        inbox.mkdir(parents=True, exist_ok=True)
+    inbox = _resolve_inbox(vault_path)
+    pdf_path = Path(pdf_file)
+    title = title or _prose_title(pdf_path.name)
+    slug = _slugify(title)
+    tags = _extract_tags(title, title)
+    tags.append("pdf")
+    category = _detect_category(title, title, "pdf")
+    frontmatter = _build_frontmatter(title, category, tags, "pdf", pdf_path.name)
 
-    pdf_name = Path(pdf_file).name
-    title = title or Path(pdf_file).stem
-    slug = "pdf_" + hashlib.md5(pdf_file.encode()).hexdigest()[:8]
-    
-    note = f"""# {title}
+    note = f"""{frontmatter}
 
-## Metadata
-- **Type:** PDF
-- **Filename:** `{pdf_name}`
-- **Ingested:** {datetime.now().isoformat()}
+# {title}
+
+**Source file:** `{pdf_path.name}`
 
 ## Content
 
-(PDF text would be extracted here)
-
----
-Ingested by openclaw-brain-ingest
+(PDF text extraction pending)
 """
-    
+
     output_file = inbox / f"{slug}.md"
     output_file.write_text(note)
     print(f"Ingested: {output_file}")
@@ -146,37 +232,29 @@ Ingested by openclaw-brain-ingest
 
 def ingest_file(vault_path, file_path, title=None):
     """Ingest a generic file"""
-    vault = Path(vault_path)
-    inbox = vault / "inbox" / "queue-generated"
-    inbox.mkdir(parents=True, exist_ok=True)
-    # In connected mode, force all writes to the agent inbox queue
-    if _INGEST_MODE_STATUS == "redirected_to_inbox":
-        from mode import get_inbox_queue_path
-        inbox = Path(get_inbox_queue_path())
-        inbox.mkdir(parents=True, exist_ok=True)
-
+    inbox = _resolve_inbox(vault_path)
     file_obj = Path(file_path)
     content = file_obj.read_text(errors='ignore') if file_obj.exists() else ""
-    
-    title = title or file_obj.stem
-    slug = "file_" + hashlib.md5(file_path.encode()).hexdigest()[:8]
-    
-    note = f"""# {title}
 
-## Metadata
-- **Type:** File
-- **Filename:** `{file_obj.name}`
-- **Ingested:** {datetime.now().isoformat()}
+    title = title or _prose_title(file_obj.name)
+    slug = _slugify(title)
+    tags = _extract_tags(content, title)
+    category = _detect_category(content, title, "file")
+    frontmatter = _build_frontmatter(title, category, tags, "file", file_obj.name)
 
-## Content
+    note = f"""{frontmatter}
 
-{content[:2000]}
+# {title}
 
----
-Ingested by openclaw-brain-ingest
+{content}
 """
-    
+
     output_file = inbox / f"{slug}.md"
+    # Handle collision
+    if output_file.exists():
+        slug = slug + "-" + hashlib.md5(file_path.encode()).hexdigest()[:6]
+        output_file = inbox / f"{slug}.md"
+
     output_file.write_text(note)
     print(f"Ingested: {output_file}")
     return str(output_file)
