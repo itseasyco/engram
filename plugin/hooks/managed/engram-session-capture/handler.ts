@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 const PLUGIN_DIR =
   process.env.OPENCLAW_PLUGIN_DIR ||
-  join(process.env.HOME ?? "", ".openclaw", "extensions", "openclaw-lacp-fusion");
+  join(process.env.HOME ?? "", ".openclaw", "extensions", "engram");
 
 function extractAgentName(sessionKey: string): string {
   // Session keys look like "agent:main:main" or "agent:wren:webchat"

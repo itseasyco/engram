@@ -40,7 +40,7 @@ show_help() {
     echo -e "${BOLD}COMMANDS${NC}"
     echo -e "  ${GREEN}wizard${NC}              Run the interactive setup wizard"
     echo -e "  ${GREEN}status${NC}              Show current system status"
-    echo -e "  ${GREEN}connect${NC}             Join a shared vault (shortcut for openclaw-lacp-connect join)"
+    echo -e "  ${GREEN}connect${NC}             Join a shared vault (shortcut for engram-connect join)"
     echo -e "  ${GREEN}disconnect${NC}          Leave the shared vault"
     echo -e "  ${GREEN}doctor${NC}              Run diagnostics and health checks"
     echo ""
@@ -96,7 +96,7 @@ cmd_wizard() {
     done
 
     if [[ "$section" = "guard" ]]; then
-        exec "$PLUGIN_BIN/openclaw-guard" config
+        exec "$PLUGIN_BIN/engram-guard" config
     fi
 
     if [[ ! -f "$INSTALL_SH" ]]; then
@@ -310,57 +310,57 @@ case "$1" in
         ;;
     connect)
         shift
-        exec "$PLUGIN_BIN/openclaw-lacp-connect" join "$@"
+        exec "$PLUGIN_BIN/engram-connect" join "$@"
         ;;
     disconnect)
         shift
-        exec "$PLUGIN_BIN/openclaw-lacp-connect" disconnect "$@"
+        exec "$PLUGIN_BIN/engram-connect" disconnect "$@"
         ;;
     guard)
         shift
-        exec "$PLUGIN_BIN/openclaw-guard" "$@"
+        exec "$PLUGIN_BIN/engram-guard" "$@"
         ;;
     memory)
         shift
         subcmd="${1:-}"; shift || true
         case "$subcmd" in
-            query)   exec "$PLUGIN_BIN/openclaw-lacp-context" query --topic "$@" ;;
-            promote) exec "$PLUGIN_BIN/openclaw-lacp-promote" "$@" ;;
-            status)  exec "$PLUGIN_BIN/openclaw-memory-status" "$@" ;;
-            kpi)     exec "$PLUGIN_BIN/openclaw-memory-kpi" "$@" ;;
+            query)   exec "$PLUGIN_BIN/engram-context" query --topic "$@" ;;
+            promote) exec "$PLUGIN_BIN/engram-promote" "$@" ;;
+            status)  exec "$PLUGIN_BIN/engram-memory-status" "$@" ;;
+            kpi)     exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
             *)       echo "Usage: engram memory <query|promote|status|kpi> [args]"; exit 1 ;;
         esac
         ;;
     ingest)
         shift
-        exec "$PLUGIN_BIN/openclaw-brain-ingest" "$@"
+        exec "$PLUGIN_BIN/engram-brain-ingest" "$@"
         ;;
     brain)
         shift
         subcmd="${1:-}"; shift || true
         case "$subcmd" in
-            expand)   exec "$PLUGIN_BIN/openclaw-brain-expand" "$@" ;;
-            resolve)  exec "$PLUGIN_BIN/openclaw-brain-resolve" "$@" ;;
-            kpi)      exec "$PLUGIN_BIN/openclaw-memory-kpi" "$@" ;;
-            optimize) exec "$PLUGIN_BIN/openclaw-obsidian-optimize" "$@" ;;
-            code)     exec "$PLUGIN_BIN/openclaw-brain-code" "$@" ;;
-            graph)    exec "$PLUGIN_BIN/openclaw-brain-graph" "$@" ;;
-            ingest)   exec "$PLUGIN_BIN/openclaw-brain-ingest" "$@" ;;
-            doctor)   exec "$PLUGIN_BIN/openclaw-brain-doctor" "$@" ;;
+            expand)   exec "$PLUGIN_BIN/engram-brain-expand" "$@" ;;
+            resolve)  exec "$PLUGIN_BIN/engram-brain-resolve" "$@" ;;
+            kpi)      exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
+            optimize) exec "$PLUGIN_BIN/engram-obsidian-optimize" "$@" ;;
+            code)     exec "$PLUGIN_BIN/engram-brain-code" "$@" ;;
+            graph)    exec "$PLUGIN_BIN/engram-brain-graph" "$@" ;;
+            ingest)   exec "$PLUGIN_BIN/engram-brain-ingest" "$@" ;;
+            doctor)   exec "$PLUGIN_BIN/engram-brain-doctor" "$@" ;;
             *)        echo "Usage: engram brain <expand|resolve|kpi|optimize|code|graph|ingest|doctor> [args]"; exit 1 ;;
         esac
         ;;
     vault)
         shift
-        exec "$PLUGIN_BIN/openclaw-obsidian" "$@"
+        exec "$PLUGIN_BIN/engram-obsidian" "$@"
         ;;
     connector)
         shift
-        exec "$PLUGIN_BIN/openclaw-connector" "$@"
+        exec "$PLUGIN_BIN/engram-connector" "$@"
         ;;
     watch)
         shift
-        exec "$PLUGIN_BIN/openclaw-ingest-watch" "$@"
+        exec "$PLUGIN_BIN/engram-ingest-watch" "$@"
         ;;
     -v|--version)
         echo "engram v${VERSION}"

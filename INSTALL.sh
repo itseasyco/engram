@@ -890,7 +890,7 @@ PKGJSON
         # Bin scripts
         if [ -d "$SCRIPT_DIR/plugin/bin" ]; then
             mkdir -p "$PLUGIN_PATH/bin"
-            cp "$SCRIPT_DIR/plugin/bin"/openclaw-* "$PLUGIN_PATH/bin/" 2>/dev/null || true
+            cp "$SCRIPT_DIR/plugin/bin"/engram-* "$PLUGIN_PATH/bin/" 2>/dev/null || true
             chmod +x "$PLUGIN_PATH/bin"/* 2>/dev/null || true
             local bin_count
             bin_count=$(ls -1 "$PLUGIN_PATH/bin"/ 2>/dev/null | wc -l | tr -d ' ')
@@ -1321,7 +1321,7 @@ run_validation() {
 
     # Check bin scripts exist
     local bin_count
-    bin_count=$(ls -1 "$PLUGIN_PATH/bin"/openclaw-* 2>/dev/null | wc -l | tr -d ' ')
+    bin_count=$(ls -1 "$PLUGIN_PATH/bin"/engram-* 2>/dev/null | wc -l | tr -d ' ')
     if [ "$bin_count" -gt 0 ]; then
         (( pass++ )) || true
         log_success "$bin_count bin scripts installed"

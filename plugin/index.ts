@@ -1,5 +1,5 @@
 /**
- * openclaw-lacp-fusion — gateway entry point
+ * engram — gateway entry point
  *
  * Registers lifecycle hooks (Python scripts) and agent tools (CLI wrappers)
  * with the OpenClaw gateway.
@@ -204,7 +204,7 @@ const lacpPlugin = {
         if (params.project) args.push("--project", params.project);
         if (params.min_score) args.push("--min-score", String(params.min_score));
         args.push("--format", "text");
-        const result = await runCli("openclaw-lacp-context", args);
+        const result = await runCli("engram-context", args);
         return textResult(result.stdout || "No matching facts found.");
       },
     });
@@ -236,7 +236,7 @@ const lacpPlugin = {
         if (params.model) args.push("--model", params.model);
         // Video transcription can take a long time
         const timeout = params.type.startsWith("video") ? 600_000 : 60_000;
-        const result = await runCli("openclaw-brain-ingest", args, timeout);
+        const result = await runCli("engram-brain-ingest", args, timeout);
         if (result.exitCode !== 0) {
           return textResult(`Ingestion failed: ${result.stderr || result.stdout}`);
         }
@@ -263,12 +263,12 @@ const lacpPlugin = {
         const parts: string[] = [];
 
         if (show === "rules" || show === "all") {
-          const rules = await runCli("openclaw-guard", ["rules"]);
+          const rules = await runCli("engram-guard", ["rules"]);
           parts.push("## Guard Rules\n" + rules.stdout);
         }
         if (show === "blocks" || show === "all") {
           const tail = params.tail ? String(params.tail) : "10";
-          const blocks = await runCli("openclaw-guard", ["blocks", "--tail", tail]);
+          const blocks = await runCli("engram-guard", ["blocks", "--tail", tail]);
           parts.push("## Recent Blocks\n" + (blocks.stdout || "No recent blocks."));
         }
 
@@ -299,7 +299,7 @@ const lacpPlugin = {
           "--reasoning", params.reasoning,
         ];
         if (params.category) args.push("--category", params.category);
-        const result = await runCli("openclaw-lacp-promote", args);
+        const result = await runCli("engram-promote", args);
         if (result.exitCode !== 0) {
           return textResult(`Promotion failed: ${result.stderr || result.stdout}`);
         }
@@ -322,7 +322,7 @@ const lacpPlugin = {
         }),
         async execute(_id, params: any) {
           const cmd = params.audit ? "audit" : "status";
-          const result = await runCli("openclaw-obsidian", [cmd]);
+          const result = await runCli("engram-obsidian", [cmd]);
           return textResult(result.stdout || "Could not retrieve vault status.");
         },
       },
@@ -346,7 +346,7 @@ const lacpPlugin = {
           const args = ["index", vaultPath];
           if (params.session_dir) args.splice(1, 0, params.session_dir);
           if (params.update_qmd) args.push("--update-qmd");
-          const result = await runCli("openclaw-brain-graph", args, 60_000);
+          const result = await runCli("engram-brain-graph", args, 60_000);
           return textResult(result.stdout || "Knowledge graph indexed.");
         },
       },
@@ -379,7 +379,7 @@ const lacpPlugin = {
         ];
         if (params.superseded_by) args.push("--superseded-by", params.superseded_by);
         if (params.dry_run) args.push("--dry-run");
-        const result = await runCli("openclaw-brain-resolve", args);
+        const result = await runCli("engram-brain-resolve", args);
         return textResult(result.stdout || `brain-resolve failed: ${result.stderr}`);
       },
     });
@@ -397,7 +397,7 @@ const lacpPlugin = {
       async execute(_id, params: any) {
         const args = ["--json"];
         if (params.vault) args.push("--vault", params.vault);
-        const result = await runCli("openclaw-memory-kpi", args);
+        const result = await runCli("engram-memory-kpi", args);
         return textResult(result.stdout || `memory-kpi failed: ${result.stderr}`);
       },
     });
@@ -417,7 +417,7 @@ const lacpPlugin = {
         const args = ["--json"];
         if (params.vault) args.push("--vault", params.vault);
         if (params.dry_run) args.push("--dry-run");
-        const result = await runCli("openclaw-obsidian-optimize", args);
+        const result = await runCli("engram-obsidian-optimize", args);
         return textResult(result.stdout || `vault-optimize failed: ${result.stderr}`);
       },
     });
