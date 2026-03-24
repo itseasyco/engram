@@ -377,7 +377,7 @@ def execute_migration(vault_path: str, plan: dict, dry_run: bool = True) -> dict
     schema = generate_schema(vault_path)
     plugin_dir = os.environ.get(
         "OPENCLAW_PLUGIN_DIR",
-        os.path.expanduser("~/.openclaw/extensions/openclaw-lacp-fusion"),
+        os.path.expanduser("~/.openclaw/extensions/engram"),
     )
     schema_path = Path(plugin_dir) / "config" / "vault-schema.json"
     schema_path.parent.mkdir(parents=True, exist_ok=True)

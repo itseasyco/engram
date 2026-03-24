@@ -74,7 +74,7 @@ def _schema_path() -> Path:
     """Return path to vault-schema.json."""
     plugin_dir = os.environ.get(
         "OPENCLAW_PLUGIN_DIR",
-        os.path.expanduser("~/.openclaw/extensions/openclaw-lacp-fusion"),
+        os.path.expanduser("~/.openclaw/extensions/engram"),
     )
     return Path(plugin_dir) / "config" / "vault-schema.json"
 

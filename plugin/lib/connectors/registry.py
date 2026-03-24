@@ -36,7 +36,7 @@ BUILTIN_CONNECTORS: dict[str, str] = {
 PLUGIN_DIR = Path(
     os.environ.get(
         "OPENCLAW_PLUGIN_DIR",
-        Path.home() / ".openclaw" / "extensions" / "openclaw-lacp-fusion",
+        Path.home() / ".openclaw" / "extensions" / "engram",
     )
 )
 CONFIG_DIR = PLUGIN_DIR / "config"

@@ -28,4 +28,4 @@ No agent action needed. The capture happens automatically as a side effect of en
 ## Requirements
 
 - Python 3 must be installed
-- Engram plugin must be installed (`~/.openclaw/extensions/openclaw-lacp-fusion/`)
+- Engram plugin must be installed (`~/.openclaw/extensions/engram/`)

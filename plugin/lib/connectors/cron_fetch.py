@@ -58,7 +58,7 @@ class CronFetchConnector(Connector):
             plugin_dir = Path(
                 os.environ.get(
                     "OPENCLAW_PLUGIN_DIR",
-                    Path.home() / ".openclaw" / "extensions" / "openclaw-lacp-fusion",
+                    Path.home() / ".openclaw" / "extensions" / "engram",
                 )
             )
             p = plugin_dir / script_path

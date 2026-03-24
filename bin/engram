@@ -23,8 +23,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Find plugin bin: repo structure (plugin/bin) or installed extension
 if [ -d "$ROOT_DIR/plugin/bin" ]; then
     PLUGIN_BIN="$ROOT_DIR/plugin/bin"
-elif [ -d "$HOME/.openclaw/extensions/openclaw-lacp-fusion/bin" ]; then
-    PLUGIN_BIN="$HOME/.openclaw/extensions/openclaw-lacp-fusion/bin"
+elif [ -d "$HOME/.openclaw/extensions/engram/bin" ]; then
+    PLUGIN_BIN="$HOME/.openclaw/extensions/engram/bin"
 else
     echo "Error: Cannot find Engram plugin bin directory" >&2
     exit 1
@@ -146,7 +146,7 @@ cmd_wizard() {
 
 _source_env_config() {
     # Source the LACP env config so env vars are available to subcommands
-    local env_file="$HOME/.openclaw/extensions/openclaw-lacp-fusion/config/.openclaw-lacp.env"
+    local env_file="$HOME/.openclaw/extensions/engram/config/.openclaw-lacp.env"
     if [[ -f "$env_file" ]]; then
         while IFS= read -r line; do
             line="${line%%#*}"  # strip comments
@@ -175,7 +175,7 @@ cmd_status() {
     local mode
     mode=$(python3 -c "
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.openclaw/extensions/openclaw-lacp-fusion/lib'))
+sys.path.insert(0, os.path.expanduser('~/.openclaw/extensions/engram/lib'))
 try:
     from mode import get_config
     c = get_config()
@@ -190,16 +190,16 @@ except Exception as e:
     echo ""
 
     # Plugin
-    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/index.ts ]]; then
+    if [[ -f ~/.openclaw/extensions/engram/index.ts ]]; then
         echo -e "  ${GREEN}+${NC} Plugin installed"
     else
         echo -e "  ${RED}-${NC} Plugin not installed"
     fi
 
     # Guard
-    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/config/guard-rules.json ]]; then
+    if [[ -f ~/.openclaw/extensions/engram/config/guard-rules.json ]]; then
         local rule_count
-        rule_count=$(python3 -c "import json; d=json.load(open(os.path.expanduser('~/.openclaw/extensions/openclaw-lacp-fusion/config/guard-rules.json'))); print(len(d.get('rules',[])))" 2>/dev/null || echo "?")
+        rule_count=$(python3 -c "import json; d=json.load(open(os.path.expanduser('~/.openclaw/extensions/engram/config/guard-rules.json'))); print(len(d.get('rules',[])))" 2>/dev/null || echo "?")
         echo -e "  ${GREEN}+${NC} Guard active ($rule_count rules)"
     else
         echo -e "  ${YELLOW}~${NC} Guard using factory defaults"
@@ -224,7 +224,7 @@ except Exception as e:
     fi
 
     # Tool log
-    local log_file=~/.openclaw/extensions/openclaw-lacp-fusion/logs/tool-calls.jsonl
+    local log_file=~/.openclaw/extensions/engram/logs/tool-calls.jsonl
     if [[ -f "$log_file" ]]; then
         local call_count
         call_count=$(wc -l < "$log_file" | tr -d ' ')
@@ -243,7 +243,7 @@ cmd_doctor() {
     local fail=0
 
     # Check plugin
-    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/index.ts ]]; then
+    if [[ -f ~/.openclaw/extensions/engram/index.ts ]]; then
         echo -e "  ${GREEN}pass${NC}  Plugin index.ts exists"
         ((pass++))
     else
@@ -252,7 +252,7 @@ cmd_doctor() {
     fi
 
     # Check package.json
-    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/package.json ]]; then
+    if [[ -f ~/.openclaw/extensions/engram/package.json ]]; then
         echo -e "  ${GREEN}pass${NC}  package.json exists"
         ((pass++))
     else
@@ -261,7 +261,7 @@ cmd_doctor() {
     fi
 
     # Check SDK symlink
-    if [[ -d ~/.openclaw/extensions/openclaw-lacp-fusion/node_modules/openclaw ]] || [[ -L ~/.openclaw/extensions/openclaw-lacp-fusion/node_modules/openclaw ]]; then
+    if [[ -d ~/.openclaw/extensions/engram/node_modules/openclaw ]] || [[ -L ~/.openclaw/extensions/engram/node_modules/openclaw ]]; then
         echo -e "  ${GREEN}pass${NC}  OpenClaw SDK linked"
         ((pass++))
     else
@@ -271,7 +271,7 @@ cmd_doctor() {
 
     # Check hooks
     for hook in session-start pretool-guard stop-quality-gate write-validate; do
-        if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/hooks/handlers/${hook}.py ]]; then
+        if [[ -f ~/.openclaw/extensions/engram/hooks/handlers/${hook}.py ]]; then
             echo -e "  ${GREEN}pass${NC}  Hook: ${hook}"
             ((pass++))
         else
@@ -282,7 +282,7 @@ cmd_doctor() {
 
     # Check lib modules
     for mod in mycelium consolidation review_queue knowledge_gaps mode heartbeat; do
-        if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/lib/${mod}.py ]]; then
+        if [[ -f ~/.openclaw/extensions/engram/lib/${mod}.py ]]; then
             echo -e "  ${GREEN}pass${NC}  Module: ${mod}"
             ((pass++))
         else
@@ -291,7 +291,7 @@ cmd_doctor() {
     done
 
     # Check guard config
-    if [[ -f ~/.openclaw/extensions/openclaw-lacp-fusion/config/guard-rules.json ]]; then
+    if [[ -f ~/.openclaw/extensions/engram/config/guard-rules.json ]]; then
         echo -e "  ${GREEN}pass${NC}  Guard config"
         ((pass++))
     else
