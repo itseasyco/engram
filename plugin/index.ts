@@ -36,7 +36,7 @@ function runHandler(script: string, eventJson: string, logger?: { warn: (msg: st
     const stderr = err.stderr?.toString().trim() ?? "";
     const stdout = err.stdout?.toString().trim() ?? "";
     if (exitCode !== 0 && logger) {
-      logger.warn(`[lacp] ${script} exited ${exitCode}: ${stderr || stdout || "unknown error"}`);
+      logger.warn(`[engram] ${script} exited ${exitCode}: ${stderr || stdout || "unknown error"}`);
     }
     return {
       stdout: stdout || null,
@@ -475,7 +475,7 @@ print(json.dumps(result, indent=2))
 
     const toolCount = 10;
     api.logger.info(
-      `[lacp] Plugin loaded (version=${process.env.npm_package_version ?? "2.2.0"}, hooks=4, tools=${toolCount})`,
+      `[engram] Plugin loaded (version=${process.env.npm_package_version ?? "2.2.0"}, hooks=4, tools=${toolCount})`,
     );
   },
 };
