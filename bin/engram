@@ -405,14 +405,14 @@ case "$1" in
         echo ""
 
         # Find what's installed
-        local ext_dir=""
+        ext_dir=""
         if [ -d "$HOME/.openclaw/extensions/engram" ]; then
             ext_dir="$HOME/.openclaw/extensions/engram"
         elif [ -d "$HOME/.openclaw/extensions/openclaw-lacp-fusion" ]; then
             ext_dir="$HOME/.openclaw/extensions/openclaw-lacp-fusion"
         fi
 
-        local hook_dir="$HOME/.openclaw/hooks/engram-session-capture"
+        hook_dir="$HOME/.openclaw/hooks/engram-session-capture"
 
         echo "  This will remove:"
         if [ -n "$ext_dir" ]; then
@@ -454,7 +454,7 @@ case "$1" in
 
         # Clean gateway config
         if command -v jq &>/dev/null && [ -f "$HOME/.openclaw/openclaw.json" ]; then
-            local tmp
+            tmp=""
             tmp=$(mktemp)
             jq '
                 del(.plugins.entries["openclaw-lacp-fusion"]) |
