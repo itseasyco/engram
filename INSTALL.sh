@@ -35,7 +35,7 @@ _install_cleanup() {
 trap _install_cleanup EXIT
 
 PLUGIN_NAME="engram"
-PLUGIN_VERSION="2.2.0"
+PLUGIN_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "2.2.0")
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
 GATEWAY_CONFIG="$OPENCLAW_HOME/openclaw.json"
