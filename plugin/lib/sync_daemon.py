@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ob sync daemon management for openclaw-lacp-fusion.
+ob sync daemon management for engram.
 
 Manages `ob sync --continuous` as a background daemon:
   - macOS: launchd plist

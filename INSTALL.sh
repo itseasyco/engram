@@ -4,7 +4,7 @@ set -euo pipefail
 # OpenClaw LACP Fusion Plugin Installer
 # Version: 2.2.0
 # Interactive CLI wizard for configuring and installing the plugin
-# Installs to ~/.openclaw/extensions/openclaw-lacp-fusion/
+# Installs to ~/.openclaw/extensions/engram/
 
 # Require Bash 4.0+ (for associative arrays)
 # Bash 3.2+ is fine (macOS default)
@@ -24,7 +24,7 @@ _install_cleanup() {
             echo "  2. If gateway config is broken: restore from backup:"
             echo "     cp ~/.openclaw/openclaw.json.bak.* ~/.openclaw/openclaw.json"
             echo "  3. To remove partial install:"
-            echo "     rm -rf ~/.openclaw/extensions/openclaw-lacp-fusion"
+            echo "     rm -rf ~/.openclaw/extensions/engram"
             echo ""
         else
             echo -e "\033[1;33mInstallation cancelled.\033[0m"
@@ -34,7 +34,7 @@ _install_cleanup() {
 }
 trap _install_cleanup EXIT
 
-PLUGIN_NAME="openclaw-lacp-fusion"
+PLUGIN_NAME="engram"
 PLUGIN_VERSION="2.2.0"
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
@@ -1170,8 +1170,8 @@ update_gateway_config() {
     if [ "$HAS_JQ" != "true" ]; then
         log_warning "Skipping gateway config update (jq not installed)"
         log_info "  Add manually to $GATEWAY_CONFIG:"
-        echo '  "plugins.allow": add "openclaw-lacp-fusion"'
-        echo '  "plugins.entries.openclaw-lacp-fusion": { "enabled": true, "config": { ... } }'
+        echo '  "plugins.allow": add "engram"'
+        echo '  "plugins.entries.engram": { "enabled": true, "config": { ... } }'
         return
     fi
 
@@ -1180,7 +1180,7 @@ update_gateway_config() {
     log_info "Gateway config backed up"
 
     # Check if plugin already registered
-    if jq -e '.plugins.entries["openclaw-lacp-fusion"]' "$GATEWAY_CONFIG" &>/dev/null; then
+    if jq -e '.plugins.entries["engram"]' "$GATEWAY_CONFIG" &>/dev/null; then
         log_warning "Plugin already registered in gateway config"
         return
     fi
@@ -1223,7 +1223,7 @@ update_gateway_config() {
        --arg mode "$WIZARD_MODE" \
        --arg mutations "$mutations_enabled" \
        --arg curatorUrl "$WIZARD_CURATOR_URL" '
-      .plugins.entries["openclaw-lacp-fusion"] = {
+      .plugins.entries["engram"] = {
         "enabled": true,
         "config": {
           "profile": $profile,
@@ -1245,9 +1245,9 @@ update_gateway_config() {
     # Add install record
     tmp=$(mktemp)
     jq --arg ver "$PLUGIN_VERSION" --arg path "$PLUGIN_PATH" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" '
-      .plugins.installs["openclaw-lacp-fusion"] = {
+      .plugins.installs["engram"] = {
         "source": "path",
-        "spec": "openclaw-lacp-fusion",
+        "spec": "engram",
         "installPath": $path,
         "version": $ver,
         "resolvedVersion": $ver,
@@ -1370,7 +1370,7 @@ run_validation() {
 
     # Check gateway registration
     if [ "$HAS_JQ" = "true" ]; then
-        if jq -e '.plugins.entries["openclaw-lacp-fusion"].enabled' "$GATEWAY_CONFIG" &>/dev/null; then
+        if jq -e '.plugins.entries["engram"].enabled' "$GATEWAY_CONFIG" &>/dev/null; then
             (( pass++ )) || true
             log_success "Plugin registered in gateway config"
         else
