@@ -397,11 +397,15 @@ check_and_install_qmd() {
 }
 
 check_and_install_obsidian_cli() {
-    if command -v obsidian-cli &>/dev/null; then
-        local obs_ver
-        obs_ver=$(obsidian-cli --version 2>/dev/null || echo "unknown")
-        log_success "Obsidian CLI found"
-        return 0
+    # The npm package is "obsidian-cli" but the binary it installs is "obsidian"
+    # We need to distinguish the CLI from the Obsidian desktop app
+    if command -v obsidian &>/dev/null; then
+        if obsidian --help 2>&1 | head -1 | grep -q "Usage:"; then
+            log_success "Obsidian CLI found ($(which obsidian))"
+            return 0
+        fi
+        # "obsidian" exists but it's the desktop app, not the CLI
+        log_warning "Found Obsidian desktop app but not the CLI"
     fi
 
     log_warning "Obsidian CLI not found"
@@ -427,12 +431,38 @@ check_and_install_obsidian_cli() {
             fi
         fi
 
-        if command -v obsidian-cli &>/dev/null; then
+        # Refresh PATH hash and verify
+        hash -r 2>/dev/null
+
+        # Ensure npm global bin is in PATH for the user's shell
+        local npm_bin
+        npm_bin=$(npm bin -g 2>/dev/null || echo "")
+        if [ -n "$npm_bin" ] && ! echo "$PATH" | tr ':' '\n' | grep -q "^${npm_bin}$"; then
+            local shell_rc=""
+            case "$(basename "${SHELL:-/bin/bash}")" in
+                zsh)  shell_rc="$HOME/.zshrc" ;;
+                bash) shell_rc="$HOME/.bashrc" ;;
+                fish) shell_rc="$HOME/.config/fish/config.fish" ;;
+                *)    shell_rc="$HOME/.profile" ;;
+            esac
+            if [ -n "$shell_rc" ] && [ -f "$shell_rc" ]; then
+                if ! grep -q "$npm_bin" "$shell_rc" 2>/dev/null; then
+                    echo "" >> "$shell_rc"
+                    echo "# Added by Engram installer — npm global bin" >> "$shell_rc"
+                    echo "export PATH=\"$npm_bin:\$PATH\"" >> "$shell_rc"
+                    log_info "Added npm bin to $shell_rc"
+                    export PATH="$npm_bin:$PATH"
+                fi
+            fi
+        fi
+
+        if command -v obsidian &>/dev/null && obsidian --help 2>&1 | head -1 | grep -q "Usage:"; then
             log_success "Verified: Obsidian CLI ready"
             return 0
         else
-            log_error "obsidian-cli command not found after install"
-            return 1
+            log_warning "Obsidian CLI installed but 'obsidian' command not found in current session"
+            log_info "Restart your terminal or run: source ~/.zshrc"
+            return 0
         fi
     else
         log_info "Skipped Obsidian CLI installation"
