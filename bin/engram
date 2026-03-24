@@ -378,8 +378,7 @@ case "$1" in
             doctor)   exec "$PLUGIN_BIN/engram-brain-doctor" "$@" ;;
             heal)
                 _source_env_config
-                local vault="${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}"
-                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "$vault" "$@"
+                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}" "$@"
                 ;;
             *)        echo "Usage: engram brain <expand|resolve|kpi|optimize|code|graph|ingest|doctor|heal> [args]"; exit 1 ;;
         esac
