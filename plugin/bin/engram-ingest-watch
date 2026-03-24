@@ -257,34 +257,34 @@ def extract_url_from_file(file_path):
 
 
 def find_ingest_bin():
-    """Find the openclaw-brain-ingest binary."""
+    """Find the engram-brain-ingest binary."""
     # Sibling in same bin/ dir
     here = Path(__file__).resolve().parent
-    candidate = here / "openclaw-brain-ingest"
+    candidate = here / "engram-brain-ingest"
     if candidate.exists():
         return str(candidate)
     # Fall back to PATH
-    found = shutil.which("openclaw-brain-ingest")
+    found = shutil.which("engram-brain-ingest")
     if found:
         return found
-    return "openclaw-brain-ingest"
+    return "engram-brain-ingest"
 
 
 def find_graph_bin():
-    """Find the openclaw-brain-graph binary."""
+    """Find the engram-brain-graph binary."""
     here = Path(__file__).resolve().parent
-    candidate = here / "openclaw-brain-graph"
+    candidate = here / "engram-brain-graph"
     if candidate.exists():
         return str(candidate)
-    found = shutil.which("openclaw-brain-graph")
+    found = shutil.which("engram-brain-graph")
     if found:
         return found
-    return "openclaw-brain-graph"
+    return "engram-brain-graph"
 
 
 def run_ingest(file_type, vault_path, file_path):
     """
-    Run openclaw-brain-ingest for a single file.
+    Run engram-brain-ingest for a single file.
     Returns (success: bool, command: str, error_message: str|None).
     """
     ingest_bin = find_ingest_bin()
@@ -315,7 +315,7 @@ def run_ingest(file_type, vault_path, file_path):
 
 
 def run_graph_index(vault_path):
-    """Run openclaw-brain-graph index <vault> --update-qmd."""
+    """Run engram-brain-graph index <vault> --update-qmd."""
     graph_bin = find_graph_bin()
     vault = str(resolve_path(vault_path))
     cmd = [graph_bin, "index", vault, "--update-qmd"]
