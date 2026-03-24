@@ -427,7 +427,7 @@ case "$1" in
         echo -e "  ${DIM}Your LACP memory files will NOT be deleted.${NC}"
         echo ""
 
-        if [ "$1" = "--yes" ] || [ "$1" = "-y" ]; then
+        if [ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ]; then
             :
         else
             echo -en "  Proceed with uninstall? [y/N]: "
