@@ -91,6 +91,9 @@ show_help() {
     echo -e "  ${GREEN}connector${NC}           Manage connectors     ${DIM}(engram connector list|add|remove|test)${NC}"
     echo -e "  ${GREEN}watch${NC}               File watcher          ${DIM}(engram watch setup|run|status)${NC}"
     echo ""
+    echo -e "${BOLD}MANAGEMENT${NC}"
+    echo -e "  ${GREEN}uninstall${NC}           Remove Engram (preserves vault data)"
+    echo ""
     echo -e "${BOLD}OPTIONS${NC}"
     echo "  -h, --help          Show this help"
     echo "  -v, --version       Show version"
@@ -394,6 +397,84 @@ case "$1" in
     watch)
         shift
         exec "$PLUGIN_BIN/engram-ingest-watch" "$@"
+        ;;
+    uninstall)
+        shift
+        echo ""
+        echo -e "${BOLD}Engram Uninstall${NC}"
+        echo ""
+
+        # Find what's installed
+        local ext_dir=""
+        if [ -d "$HOME/.openclaw/extensions/engram" ]; then
+            ext_dir="$HOME/.openclaw/extensions/engram"
+        elif [ -d "$HOME/.openclaw/extensions/openclaw-lacp-fusion" ]; then
+            ext_dir="$HOME/.openclaw/extensions/openclaw-lacp-fusion"
+        fi
+
+        local hook_dir="$HOME/.openclaw/hooks/engram-session-capture"
+
+        echo "  This will remove:"
+        if [ -n "$ext_dir" ]; then
+            echo "    - Plugin: $ext_dir"
+        fi
+        if [ -d "$hook_dir" ]; then
+            echo "    - Hook: $hook_dir"
+        fi
+        echo "    - Gateway config entries for engram/openclaw-lacp-fusion"
+        echo ""
+        echo -e "  ${DIM}Your vault data (Cortex) will NOT be deleted.${NC}"
+        echo -e "  ${DIM}Your LACP memory files will NOT be deleted.${NC}"
+        echo ""
+
+        if [ "$1" = "--yes" ] || [ "$1" = "-y" ]; then
+            :
+        else
+            echo -en "  Proceed with uninstall? [y/N]: "
+            read -r confirm
+            case "$confirm" in
+                [yY]|[yY][eE][sS]) ;;
+                *) echo "  Cancelled."; exit 0 ;;
+            esac
+        fi
+
+        echo ""
+
+        # Remove plugin extension
+        if [ -n "$ext_dir" ] && [ -d "$ext_dir" ]; then
+            rm -rf "$ext_dir"
+            echo -e "  ${GREEN}✓${NC} Removed $ext_dir"
+        fi
+
+        # Remove managed hook
+        if [ -d "$hook_dir" ]; then
+            rm -rf "$hook_dir"
+            echo -e "  ${GREEN}✓${NC} Removed $hook_dir"
+        fi
+
+        # Clean gateway config
+        if command -v jq &>/dev/null && [ -f "$HOME/.openclaw/openclaw.json" ]; then
+            local tmp
+            tmp=$(mktemp)
+            jq '
+                del(.plugins.entries["openclaw-lacp-fusion"]) |
+                del(.plugins.entries["engram"]) |
+                .plugins.allow = [.plugins.allow[] | select(. != "openclaw-lacp-fusion" and . != "engram")] |
+                del(.plugins.installs["openclaw-lacp-fusion"]) |
+                del(.plugins.installs["engram"]) |
+                del(.hooks.internal.entries["engram-session-capture"])
+            ' "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
+            echo -e "  ${GREEN}✓${NC} Cleaned gateway config"
+        else
+            echo -e "  ${YELLOW}!${NC} Could not clean gateway config (jq not found). Edit ~/.openclaw/openclaw.json manually."
+        fi
+
+        # Unlink npm global
+        npm unlink -g @easylabs/engram 2>/dev/null && echo -e "  ${GREEN}✓${NC} Unlinked npm global" || true
+
+        echo ""
+        echo -e "  ${GREEN}Engram uninstalled.${NC} Restart OpenClaw: openclaw gateway restart"
+        echo ""
         ;;
     -v|--version)
         echo "engram v${VERSION}"
