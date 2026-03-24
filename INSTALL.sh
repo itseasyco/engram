@@ -1444,9 +1444,109 @@ print_summary() {
     echo ""
 }
 
+# ─── Load config from JSON file (--from-config mode) ────────────────────────
+
+load_config_from_json() {
+    local config_file="$1"
+
+    if [ ! -f "$config_file" ]; then
+        log_error "Config file not found: $config_file"
+        exit 1
+    fi
+
+    if ! command -v node &>/dev/null; then
+        log_error "node is required to parse wizard config JSON"
+        exit 1
+    fi
+
+    # Parse JSON config using node (portable, no jq dependency for this step)
+    WIZARD_VAULT=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).vault_path" 2>/dev/null)
+    WIZARD_CONTEXT_ENGINE=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).context_engine" 2>/dev/null)
+    WIZARD_PROFILE=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).profile" 2>/dev/null)
+    WIZARD_MODE=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).mode" 2>/dev/null)
+    WIZARD_POLICY_TIER=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).policy_tier" 2>/dev/null)
+    WIZARD_CODE_GRAPH=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).code_graph" 2>/dev/null)
+    WIZARD_PROVENANCE=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).provenance" 2>/dev/null)
+    WIZARD_GUARD_LEVEL=$(node -p "JSON.parse(require('fs').readFileSync('$config_file','utf8')).guard_level" 2>/dev/null)
+    WIZARD_CURATOR_URL=$(node -p "var v=JSON.parse(require('fs').readFileSync('$config_file','utf8')).curator_url;v||''" 2>/dev/null)
+    WIZARD_CURATOR_TOKEN=$(node -p "var v=JSON.parse(require('fs').readFileSync('$config_file','utf8')).curator_token;v||''" 2>/dev/null)
+
+    # Defaults for values the wizard may not set
+    WIZARD_LOCAL_FIRST="true"
+    WIZARD_DISABLED_RULES=()
+    WIZARD_RULE_OVERRIDES=()
+
+    # Validate required fields
+    if [ -z "$WIZARD_VAULT" ] || [ "$WIZARD_VAULT" = "undefined" ]; then
+        log_error "Missing vault_path in config file"
+        exit 1
+    fi
+    if [ -z "$WIZARD_PROFILE" ] || [ "$WIZARD_PROFILE" = "undefined" ]; then
+        log_error "Missing profile in config file"
+        exit 1
+    fi
+
+    # Set defaults for optional fields
+    if [ -z "$WIZARD_MODE" ] || [ "$WIZARD_MODE" = "undefined" ]; then WIZARD_MODE="standalone"; fi
+    if [ -z "$WIZARD_CONTEXT_ENGINE" ] || [ "$WIZARD_CONTEXT_ENGINE" = "undefined" ]; then WIZARD_CONTEXT_ENGINE="file-based"; fi
+    if [ -z "$WIZARD_POLICY_TIER" ] || [ "$WIZARD_POLICY_TIER" = "undefined" ]; then WIZARD_POLICY_TIER="review"; fi
+    if [ -z "$WIZARD_CODE_GRAPH" ] || [ "$WIZARD_CODE_GRAPH" = "undefined" ]; then WIZARD_CODE_GRAPH="false"; fi
+    if [ -z "$WIZARD_PROVENANCE" ] || [ "$WIZARD_PROVENANCE" = "undefined" ]; then WIZARD_PROVENANCE="true"; fi
+    if [ -z "$WIZARD_GUARD_LEVEL" ] || [ "$WIZARD_GUARD_LEVEL" = "undefined" ]; then WIZARD_GUARD_LEVEL="block"; fi
+
+    # Resolve context engine (same logic as interactive wizard, but non-interactive)
+    if [ "$WIZARD_CONTEXT_ENGINE" = "lossless-claw" ]; then
+        if [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ]; then
+            WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
+        else
+            log_warning "lossless-claw not installed — falling back to file-based"
+            WIZARD_CONTEXT_ENGINE_RESOLVED="file-based"
+        fi
+    elif [ "$WIZARD_CONTEXT_ENGINE" = "auto" ]; then
+        if [ -d "$OPENCLAW_HOME/extensions/lossless-claw" ]; then
+            WIZARD_CONTEXT_ENGINE_RESOLVED="lossless-claw"
+        else
+            WIZARD_CONTEXT_ENGINE_RESOLVED="file-based"
+        fi
+    else
+        WIZARD_CONTEXT_ENGINE_RESOLVED="$WIZARD_CONTEXT_ENGINE"
+    fi
+
+    # Set DETECTED_VAULT for use by installation steps
+    DETECTED_VAULT="$WIZARD_VAULT"
+
+    log_success "Loaded wizard config from $config_file"
+    echo ""
+    echo -e "${BOLD}Configuration (from wizard):${NC}"
+    echo -e "  Vault:           ${GREEN}${WIZARD_VAULT}${NC}"
+    echo -e "  Context engine:  ${GREEN}${WIZARD_CONTEXT_ENGINE_RESOLVED}${NC}"
+    echo -e "  Safety profile:  ${GREEN}${WIZARD_PROFILE}${NC}"
+    echo -e "  Operating mode:  ${GREEN}${WIZARD_MODE}${NC}"
+    echo -e "  Policy tier:     ${GREEN}${WIZARD_POLICY_TIER}${NC}"
+    echo -e "  Code graph:      ${GREEN}${WIZARD_CODE_GRAPH}${NC}"
+    echo -e "  Provenance:      ${GREEN}${WIZARD_PROVENANCE}${NC}"
+    echo -e "  Guard level:     ${GREEN}${WIZARD_GUARD_LEVEL}${NC}"
+    echo ""
+}
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 main() {
+    local from_config=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from-config)
+                from_config="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
     echo ""
     echo -e "${BOLD}${CYAN}"
     echo "  ███████╗███╗   ██╗ ██████╗ ██████╗  █████╗ ███╗   ███╗"
@@ -1464,8 +1564,13 @@ main() {
     detect_environment
     log_info "Detected OS: $DETECTED_OS"
 
-    # Run interactive wizard
-    run_wizard
+    if [ -n "$from_config" ]; then
+        # Non-interactive mode: load config from JSON file
+        load_config_from_json "$from_config"
+    else
+        # Interactive mode: run the wizard prompts
+        run_wizard
+    fi
 
     echo ""
     INSTALL_STARTED=true

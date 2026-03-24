@@ -137,14 +137,35 @@ cmd_wizard() {
         exit 1
     fi
 
-    # TODO: section-specific wizard runs (for now, run full wizard)
-    if [[ "$section" != "all" ]]; then
-        echo -e "${YELLOW}Section-specific wizard not yet implemented.${NC}"
-        echo -e "Running full wizard. Use arrow keys to skip sections you don't want to change."
-        echo ""
-    fi
+    # Run Node.js interactive wizard (outputs config to /tmp/engram-wizard-config.json)
+    local wizard_mjs="$ROOT_DIR/bin/wizard.mjs"
+    local wizard_config="/tmp/engram-wizard-config.json"
 
-    exec bash "$INSTALL_SH"
+    if [[ -f "$wizard_mjs" ]]; then
+        # Run the Node wizard; if it exits non-zero (user cancelled), propagate
+        node "$wizard_mjs" || exit $?
+
+        if [[ ! -f "$wizard_config" ]]; then
+            echo -e "${RED}Wizard did not produce config file at $wizard_config${NC}"
+            exit 1
+        fi
+
+        # Hand off to INSTALL.sh with the wizard config
+        exec bash "$INSTALL_SH" --from-config "$wizard_config"
+    else
+        # Fallback: no Node wizard available, run legacy interactive INSTALL.sh
+        echo -e "${YELLOW}Node wizard not found at $wizard_mjs — falling back to legacy prompts.${NC}"
+        echo ""
+
+        # TODO: section-specific wizard runs (for now, run full wizard)
+        if [[ "$section" != "all" ]]; then
+            echo -e "${YELLOW}Section-specific wizard not yet implemented.${NC}"
+            echo -e "Running full wizard. Use arrow keys to skip sections you don't want to change."
+            echo ""
+        fi
+
+        exec bash "$INSTALL_SH"
+    fi
 }
 
 _source_env_config() {
