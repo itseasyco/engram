@@ -36,6 +36,7 @@ path_to_slug() {
 # ============================================================================
 
 vault_status() {
+  set +o pipefail
   local vault="$1"
 
   echo -e "${BLUE}Obsidian Vault Status${NC}"
@@ -57,7 +58,7 @@ vault_status() {
   echo "Total notes: $total_files"
 
   # Count per directory
-  local dirs=("00_Index.md" "01_Projects" "02_Concepts" "03_People" "04_Systems" "05_Inbox")
+  local dirs=("home" "projects" "engineering" "knowledge" "inbox" "memory" "reference")
   for dir in "${dirs[@]}"; do
     if [ -d "$vault/$dir" ]; then
       local count
@@ -101,7 +102,7 @@ vault_audit() {
   fi
 
   # Check structure
-  local required_dirs=("01_Projects" "02_Concepts" "05_Inbox")
+  local required_dirs=("projects" "engineering" "inbox")
   for dir in "${required_dirs[@]}"; do
     if [ -d "$vault/$dir" ]; then
       log_success "$dir/ present"
@@ -122,7 +123,7 @@ vault_audit() {
     if [ "$linked" -eq 0 ] && [ "$basename" != "00_Index" ] && [ "$basename" != "index" ]; then
       ((orphan_count++))
     fi
-  done < <(find "$vault" -name "*.md" -not -path "*/.obsidian/*" -not -path "*/05_Inbox/*" 2>/dev/null)
+  done < <(find "$vault" -name "*.md" -not -path "*/.obsidian/*" -not -path "*/inbox/**" 2>/dev/null)
 
   if [ "$orphan_count" -gt 0 ]; then
     log_warn "$orphan_count orphan notes (no backlinks)"
@@ -137,7 +138,7 @@ vault_audit() {
     # Extract [[links]] from file
     while IFS= read -r link; do
       [ -z "$link" ] && continue
-      if [ ! -f "$vault/$link.md" ] && [ ! -f "$vault/01_Projects/$link.md" ] && [ ! -f "$vault/02_Concepts/$link.md" ]; then
+      if [ ! -f "$vault/$link.md" ] && [ ! -f "$vault/projects/$link.md" ] && [ ! -f "$vault/knowledge/$link.md" ]; then
         ((broken_links++))
       fi
     done < <(grep -o '\[\[[^]]*\]\]' "$file" 2>/dev/null | sed 's/\[\[//;s/\]\]//' | head -20)
@@ -179,7 +180,7 @@ vault_apply() {
     return 1
   fi
 
-  local project_dir="$vault/01_Projects/$slug"
+  local project_dir="$vault/projects/$slug"
   mkdir -p "$project_dir"
 
   # Copy seed files
