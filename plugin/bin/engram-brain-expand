@@ -154,8 +154,8 @@ expand_layer1() {
   echo -e "${BLUE}Expanding Layer 1: Session Memory${NC}"
 
   if [ ! -d "$memory_dir" ]; then
-    log_error "Memory directory not found: $memory_dir"
-    return 1
+    log_info "No legacy project memory at $memory_dir (using Cortex vault instead)"
+    return 0
   fi
 
   # Deduplicate
