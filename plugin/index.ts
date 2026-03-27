@@ -451,17 +451,18 @@ const lacpPlugin = {
         files_modified: Type.Optional(Type.Array(Type.String(), { description: "Files modified" })),
       }),
       async execute(_id, params: any) {
-        const script = join(pluginDir, "lib", "session_writer.py");
         const payload = JSON.stringify(params);
         try {
-          const result = execFileSync("python3", ["-c", `
-import json, sys, os
-sys.path.insert(0, os.path.join("${pluginDir}", "lib"))
-from session_writer import write_session_memory
-params = json.loads('''${payload.replace(/'/g, "\\'")}''')
-result = write_session_memory(**params)
-print(json.dumps(result, indent=2))
-`], {
+          // Pass params via stdin to avoid code injection through python3 -c templating
+          const result = execFileSync("python3", ["-c",
+            `import json, sys, os\n` +
+            `sys.path.insert(0, os.path.join(os.environ["OPENCLAW_PLUGIN_DIR"], "lib"))\n` +
+            `from session_writer import write_session_memory\n` +
+            `params = json.load(sys.stdin)\n` +
+            `result = write_session_memory(**params)\n` +
+            `print(json.dumps(result, indent=2))`
+          ], {
+            input: payload,
             encoding: "utf-8",
             timeout: 10_000,
             env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir, LACP_OBSIDIAN_VAULT: vaultPath },

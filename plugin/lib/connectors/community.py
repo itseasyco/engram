@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -178,6 +179,38 @@ class DiscoveredConnector:
                 f"Community connector '{self.connector_type}' at "
                 f"{self.package_dir} is missing index.py"
             )
+
+        # Security: validate manifest was loaded and connector is from the
+        # expected extensions directory before executing arbitrary code
+        extensions_root = Path(
+            os.environ.get("OPENCLAW_HOME", Path.home() / ".openclaw")
+        ) / "extensions"
+        try:
+            resolved = self.package_dir.resolve()
+            expected = extensions_root.resolve()
+            if not str(resolved).startswith(str(expected)):
+                raise CommunityConnectorError(
+                    f"Community connector '{self.connector_type}' is outside "
+                    f"the extensions directory ({extensions_root}). "
+                    f"Refusing to load from {self.package_dir}"
+                )
+        except OSError as exc:
+            raise CommunityConnectorError(
+                f"Cannot verify connector path: {exc}"
+            ) from exc
+
+        # Security: check file permissions — warn if world-writable
+        try:
+            stat = index_py.stat()
+            if stat.st_mode & 0o002:  # world-writable
+                import warnings
+                warnings.warn(
+                    f"Community connector '{self.connector_type}' index.py is "
+                    f"world-writable ({oct(stat.st_mode)}). This is a security risk.",
+                    stacklevel=2,
+                )
+        except OSError:
+            pass
 
         module_name = f"_community_connector_{self.connector_type.replace('-', '_')}"
 
