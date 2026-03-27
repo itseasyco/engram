@@ -2,7 +2,9 @@
 
 **By [Easy Labs](https://itseasy.co)**
 
-**v2.3.0** -- Persistent agent memory, mycelium-powered knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
+**v1.0.0-alpha** -- Persistent agent memory, mycelium-powered knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
+
+Inspired by [LACP](https://github.com/0xNyk/lacp) by [@0xNyk](https://github.com/0xNyk) — the original local agent context protocol that showed agents could have persistent memory.
 
 [![npm](https://img.shields.io/npm/v/@easylabs/engram)](https://www.npmjs.com/package/@easylabs/engram)
 
@@ -1017,6 +1019,7 @@ These hooks are fully implemented and tested. They will activate once the host p
 - Built-in AST parsing only covers Python. JS/TS/Go/Rust files are counted but not parsed. Install [GitNexus](https://github.com/gitnexus/gitnexus) (`npm install -g gitnexus`) for full multi-language support.
 
 **Ingestion:**
+- Video/audio ingestion (`engram-brain-ingest video`) requires `ffmpeg` and OpenAI Whisper. These are not bundled — install separately.
 - PDF text extraction requires `pdftotext` (poppler-utils). Without it, a basic byte-level fallback is used. Install via `brew install poppler` (macOS) or `apt install poppler-utils` (Linux).
 
 **Shared vault (connected/curator modes):**

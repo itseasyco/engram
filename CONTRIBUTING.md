@@ -12,8 +12,8 @@ Be respectful, inclusive, and constructive. We're all here to make agent safety 
 
 ```bash
 # Fork on GitHub, then:
-git clone https://github.com/YOUR-USERNAME/openclaw-lacp-fusion.git
-cd openclaw-lacp-fusion
+git clone https://github.com/YOUR-USERNAME/engram.git
+cd engram
 git remote add upstream https://github.com/openclaw/plugins.git
 ```
 
@@ -311,8 +311,8 @@ Use cases and benefits.
 
 ```bash
 # Clone repo
-git clone https://github.com/YOUR-USERNAME/openclaw-lacp-fusion.git
-cd openclaw-lacp-fusion
+git clone https://github.com/YOUR-USERNAME/engram.git
+cd engram
 
 # Create virtual environment
 python3 -m venv venv

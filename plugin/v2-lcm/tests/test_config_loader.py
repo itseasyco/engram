@@ -72,7 +72,7 @@ class TestLoadFromFile:
         gw.write_text(json.dumps({
             "plugins": {
                 "entries": {
-                    "openclaw-lacp-fusion": {
+                    "engram": {
                         "enabled": True,
                         "config": {
                             "contextEngine": "lossless-claw",
@@ -89,7 +89,7 @@ class TestLoadFromFile:
     def test_file_values_override_defaults(self, tmp_path):
         gw = tmp_path / "openclaw.json"
         gw.write_text(json.dumps({
-            "plugins": {"entries": {"openclaw-lacp-fusion": {
+            "plugins": {"entries": {"engram": {
                 "enabled": True,
                 "config": {"promotionThreshold": 85}
             }}}
@@ -100,7 +100,7 @@ class TestLoadFromFile:
     def test_unset_keys_keep_defaults(self, tmp_path):
         gw = tmp_path / "openclaw.json"
         gw.write_text(json.dumps({
-            "plugins": {"entries": {"openclaw-lacp-fusion": {
+            "plugins": {"entries": {"engram": {
                 "enabled": True,
                 "config": {"contextEngine": "lossless-claw"}
             }}}
@@ -119,7 +119,7 @@ class TestDisabledPlugin:
     def test_disabled_plugin_returns_defaults(self, tmp_path):
         gw = tmp_path / "openclaw.json"
         gw.write_text(json.dumps({
-            "plugins": {"entries": {"openclaw-lacp-fusion": {
+            "plugins": {"entries": {"engram": {
                 "enabled": False,
                 "config": {
                     "contextEngine": "lossless-claw",
@@ -177,7 +177,7 @@ class TestOverrides:
     def test_overrides_applied_over_file_config(self, tmp_path):
         gw = tmp_path / "openclaw.json"
         gw.write_text(json.dumps({
-            "plugins": {"entries": {"openclaw-lacp-fusion": {
+            "plugins": {"entries": {"engram": {
                 "enabled": True,
                 "config": {"promotionThreshold": 60}
             }}}
@@ -343,7 +343,7 @@ class TestLoadGatewayConfig:
     def test_handles_disabled_plugin(self, tmp_path):
         f = tmp_path / "disabled.json"
         f.write_text(json.dumps({
-            "plugins": {"entries": {"openclaw-lacp-fusion": {
+            "plugins": {"entries": {"engram": {
                 "enabled": False,
                 "config": {"contextEngine": "lossless-claw"},
             }}}
@@ -358,7 +358,7 @@ class TestLoadGatewayConfig:
     def test_returns_config_for_enabled_plugin(self, tmp_path):
         f = tmp_path / "good.json"
         f.write_text(json.dumps({
-            "plugins": {"entries": {"openclaw-lacp-fusion": {
+            "plugins": {"entries": {"engram": {
                 "enabled": True,
                 "config": {"lcmQueryBatchSize": 100},
             }}}

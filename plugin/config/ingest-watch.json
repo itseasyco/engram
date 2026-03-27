@@ -11,5 +11,5 @@
     }
   ],
   "cron_registered": false,
-  "processed_log": "~/.openclaw/extensions/openclaw-lacp-fusion/logs/ingest-watch.jsonl"
+  "processed_log": "~/.openclaw/extensions/engram/logs/ingest-watch.jsonl"
 }

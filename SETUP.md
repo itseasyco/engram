@@ -1,11 +1,11 @@
 # Repository Setup & Deployment Guide
 
-This guide covers setting up the openclaw-lacp-fusion repository for distribution and deployment.
+This guide covers setting up the engram repository for distribution and deployment.
 
 ## Repository Structure
 
 ```
-openclaw-lacp-fusion/
+engram/
 ├── README.md                    Main documentation
 ├── LICENSE                      MIT license
 ├── INSTALL.sh                   Installation script
@@ -39,7 +39,7 @@ openclaw-lacp-fusion/
 │   └── ROUTING-REFERENCE.md     Routing details
 │
 ├── releases/                    Distribution packages
-│   └── openclaw-lacp-fusion-1.0.0.zip
+│   └── engram-1.0.0.zip
 │
 └── .github/                     GitHub configuration
     ├── workflows/               CI/CD workflows
@@ -55,7 +55,7 @@ openclaw-lacp-fusion/
 
 ```bash
 git clone https://github.com/openclaw/plugins.git
-cd openclaw-lacp-fusion
+cd engram
 ```
 
 ### 2. Install Development Environment
@@ -89,7 +89,7 @@ python3 -m pytest plugin/hooks/tests/test_session_start.py -v
 
 ```bash
 # On GitHub, create:
-# - Name: openclaw-lacp-fusion
+# - Name: engram
 # - Description: LACP integration for OpenClaw
 # - Visibility: Public
 # - License: MIT
@@ -101,10 +101,10 @@ python3 -m pytest plugin/hooks/tests/test_session_start.py -v
 ### 2. Add Remote & Push
 
 ```bash
-cd /path/to/openclaw-lacp-fusion-repo
+cd /path/to/engram-repo
 
 # Add remote
-git remote add origin https://github.com/openclaw/openclaw-lacp-fusion.git
+git remote add origin https://github.com/openclaw/engram.git
 
 # Push to GitHub
 git branch -M main
@@ -115,7 +115,7 @@ git push -u origin main
 
 #### General
 - Description: "LACP integration for OpenClaw — hooks, policy, memory, verification"
-- Website: https://github.com/openclaw/openclaw-lacp-fusion
+- Website: https://github.com/openclaw/engram
 - Topics: `hooks`, `policy`, `safety`, `verification`, `openclaw`
 
 #### Branches
@@ -156,7 +156,7 @@ git push origin v1.0.1
 # - Tag: v1.0.1
 # - Title: v1.0.1
 # - Description: Use CHANGELOG.md
-# - Attach: releases/openclaw-lacp-fusion-1.0.1.zip
+# - Attach: releases/engram-1.0.1.zip
 
 # 5. Publish
 # Click "Publish release"
@@ -209,23 +209,23 @@ jobs:
 
 ```bash
 # Users download from:
-# https://github.com/openclaw/openclaw-lacp-fusion/releases/download/v1.0.0/
+# https://github.com/openclaw/engram/releases/download/v1.0.0/
 
 # Or via latest:
-# https://github.com/openclaw/openclaw-lacp-fusion/releases/latest
+# https://github.com/openclaw/engram/releases/latest
 ```
 
 ### 2. Package Registries
 
 #### Homebrew (macOS)
 
-Create `Formula/openclaw-lacp-fusion.rb`:
+Create `Formula/engram.rb`:
 
 ```ruby
 class OpenclawLacpFusion < Formula
   desc "LACP integration for OpenClaw"
-  homepage "https://github.com/openclaw/openclaw-lacp-fusion"
-  url "https://github.com/openclaw/openclaw-lacp-fusion/releases/download/v1.0.0/openclaw-lacp-fusion-1.0.0.zip"
+  homepage "https://github.com/openclaw/engram"
+  url "https://github.com/openclaw/engram/releases/download/v1.0.0/engram-1.0.0.zip"
   sha256 "..."
   
   depends_on "bash" => "5.0"
@@ -241,7 +241,7 @@ Then submit to Homebrew:
 
 ```bash
 brew tap-new openclaw/plugins
-brew extract --version=1.0.0 openclaw-lacp-fusion openclaw/plugins
+brew extract --version=1.0.0 engram openclaw/plugins
 ```
 
 #### NPM (Node.js)
@@ -250,7 +250,7 @@ Create `package.json`:
 
 ```json
 {
-  "name": "openclaw-lacp-fusion",
+  "name": "engram",
   "version": "1.0.0",
   "description": "LACP integration for OpenClaw",
   "bin": {
@@ -258,7 +258,7 @@ Create `package.json`:
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/openclaw/openclaw-lacp-fusion.git"
+    "url": "https://github.com/openclaw/engram.git"
   },
   "keywords": ["openclaw", "hooks", "policy", "safety"],
   "author": "OpenClaw Community",
@@ -278,9 +278,9 @@ Register on clawhub.com:
 
 ```json
 {
-  "name": "openclaw-lacp-fusion",
+  "name": "engram",
   "version": "1.0.0",
-  "downloadUrl": "https://github.com/openclaw/openclaw-lacp-fusion/releases/download/v1.0.0/openclaw-lacp-fusion-1.0.0.zip",
+  "downloadUrl": "https://github.com/openclaw/engram/releases/download/v1.0.0/engram-1.0.0.zip",
   "checksum": "sha256:...",
   "requirements": {
     "openclaw": ">=0.23.0",
@@ -379,7 +379,7 @@ python3 -m pytest -vv --tb=long
 
 ## Support
 
-- **GitHub Issues:** https://github.com/openclaw/openclaw-lacp-fusion/issues
+- **GitHub Issues:** https://github.com/openclaw/engram/issues
 - **Discord:** https://discord.com/invite/clawd
 - **Email:** plugins@openclaw.ai
 

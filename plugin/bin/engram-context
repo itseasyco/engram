@@ -752,7 +752,7 @@ cmd_discover() {
     local config_engine=""
     local gateway_config="${HOME}/.openclaw/openclaw.json"
     if [[ -f "$gateway_config" ]] && command -v jq &>/dev/null; then
-        config_engine=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.contextEngine // ""' "$gateway_config" 2>/dev/null || true)
+        config_engine=$(jq -r '.plugins.entries["engram"].config.contextEngine // ""' "$gateway_config" 2>/dev/null || true)
     fi
 
     local active_backend="${backend_override:-$config_engine}"

@@ -121,16 +121,16 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ```bash
 # Backup current
-cp -r ~/.openclaw/plugins/openclaw-lacp-fusion ~/.openclaw/plugins/openclaw-lacp-fusion.1.0.0
+cp -r ~/.openclaw/plugins/engram ~/.openclaw/plugins/engram.1.0.0
 
 # Download and install new version
-wget https://github.com/itseasyco/openclaw-lacp-fusion/releases/download/v1.0.1/openclaw-lacp-fusion-1.0.1.zip
-unzip openclaw-lacp-fusion-1.0.1.zip
-cd openclaw-lacp-fusion
+wget https://github.com/itseasyco/engram/releases/download/v1.0.1/engram-1.0.1.zip
+unzip engram-1.0.1.zip
+cd engram
 bash INSTALL.sh
 
 # Verify
-python3 -m pytest ~/.openclaw/plugins/openclaw-lacp-fusion/hooks/tests/ -v
+python3 -m pytest ~/.openclaw/plugins/engram/hooks/tests/ -v
 ```
 
 ### From 1.0.x to 2.0.0 (when available)
@@ -151,7 +151,7 @@ Breaking changes will be documented in the release notes. A migration guide will
 
 ## Support
 
-- **GitHub Issues:** https://github.com/itseasyco/openclaw-lacp-fusion/issues
+- **GitHub Issues:** https://github.com/itseasyco/engram/issues
 - **Discord:** https://discord.com/invite/clawd
 - **Email:** plugins@openclaw.ai
 

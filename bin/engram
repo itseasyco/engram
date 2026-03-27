@@ -429,8 +429,8 @@ case "$1" in
         ext_dir=""
         if [ -d "$HOME/.openclaw/extensions/engram" ]; then
             ext_dir="$HOME/.openclaw/extensions/engram"
-        elif [ -d "$HOME/.openclaw/extensions/openclaw-lacp-fusion" ]; then
-            ext_dir="$HOME/.openclaw/extensions/openclaw-lacp-fusion"
+        elif [ -d "$HOME/.openclaw/extensions/engram" ]; then
+            ext_dir="$HOME/.openclaw/extensions/engram"
         fi
 
         hook_dir="$HOME/.openclaw/hooks/engram-session-capture"
@@ -442,7 +442,7 @@ case "$1" in
         if [ -d "$hook_dir" ]; then
             echo "    - Hook: $hook_dir"
         fi
-        echo "    - Gateway config entries for engram/openclaw-lacp-fusion"
+        echo "    - Gateway config entries for engram/engram"
         echo ""
         echo -e "  ${DIM}Your vault data (Cortex) will NOT be deleted.${NC}"
         echo -e "  ${DIM}Your LACP memory files will NOT be deleted.${NC}"
@@ -478,10 +478,10 @@ case "$1" in
             tmp=""
             tmp=$(mktemp)
             jq '
-                del(.plugins.entries["openclaw-lacp-fusion"]) |
                 del(.plugins.entries["engram"]) |
-                .plugins.allow = [.plugins.allow[] | select(. != "openclaw-lacp-fusion" and . != "engram")] |
-                del(.plugins.installs["openclaw-lacp-fusion"]) |
+                del(.plugins.entries["engram"]) |
+                .plugins.allow = [.plugins.allow[] | select(. != "engram" and . != "engram")] |
+                del(.plugins.installs["engram"]) |
                 del(.plugins.installs["engram"]) |
                 del(.hooks.internal.entries["engram-session-capture"])
             ' "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"

@@ -1,12 +1,12 @@
 {
-  "id": "openclaw-lacp-fusion",
+  "id": "engram",
   "kind": "provider",
   "name": "OpenClaw LACP Fusion",
   "version": "2.2.0",
   "description": "Local Agent Control Plane — hooks, policy gates, memory scaffolding, knowledge graph, code intelligence, and provenance tracking",
   "author": "Easy Labs",
   "license": "MIT",
-  "repository": "https://github.com/openclaw/plugins/openclaw-lacp-fusion",
+  "repository": "https://github.com/openclaw/plugins/engram",
   "uiHints": {
     "profile": {
       "label": "Safety Profile",
@@ -163,7 +163,7 @@
     }
   },
   "slots": {
-    "safetyEngine": "openclaw-lacp-fusion"
+    "safetyEngine": "engram"
   },
   "capabilities": [
     "execution-hooks",

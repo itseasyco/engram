@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: openclaw-lacp-validate [--fix] [--verbose] [--json]
 
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
-PLUGIN_NAME="openclaw-lacp-fusion"
+PLUGIN_NAME="engram"
 PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
 GATEWAY_CONFIG="$OPENCLAW_HOME/openclaw.json"
 
@@ -122,29 +122,29 @@ section_gateway() {
     fi
 
     # plugins.allow
-    if jq -e '.plugins.allow | index("openclaw-lacp-fusion")' "$GATEWAY_CONFIG" &>/dev/null; then
-        check_pass "Plugin in allow list" "plugins.allow contains openclaw-lacp-fusion"
+    if jq -e '.plugins.allow | index("engram")' "$GATEWAY_CONFIG" &>/dev/null; then
+        check_pass "Plugin in allow list" "plugins.allow contains engram"
     else
         check_fail "Plugin in allow list" "Not in plugins.allow"
         if [ "$FIX" = "true" ]; then
             local tmp
             tmp=$(mktemp)
-            jq '.plugins.allow += ["openclaw-lacp-fusion"]' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
+            jq '.plugins.allow += ["engram"]' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
             echo -e "    ${GREEN}Fixed: added to plugins.allow${NC}"
         fi
     fi
 
     # plugins.entries
-    if jq -e '.plugins.entries["openclaw-lacp-fusion"].enabled == true' "$GATEWAY_CONFIG" &>/dev/null; then
-        check_pass "Plugin entry enabled" "plugins.entries.openclaw-lacp-fusion.enabled = true"
+    if jq -e '.plugins.entries["engram"].enabled == true' "$GATEWAY_CONFIG" &>/dev/null; then
+        check_pass "Plugin entry enabled" "plugins.entries.engram.enabled = true"
     else
         check_fail "Plugin entry" "Not found or not enabled in plugins.entries"
     fi
 
     # Config values
-    if jq -e '.plugins.entries["openclaw-lacp-fusion"].config.profile' "$GATEWAY_CONFIG" &>/dev/null; then
+    if jq -e '.plugins.entries["engram"].config.profile' "$GATEWAY_CONFIG" &>/dev/null; then
         local profile
-        profile=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.profile' "$GATEWAY_CONFIG")
+        profile=$(jq -r '.plugins.entries["engram"].config.profile' "$GATEWAY_CONFIG")
         check_pass "Profile configured" "profile = $profile"
     else
         check_warn "Profile configured" "No profile set (will use default: balanced)"
@@ -266,7 +266,7 @@ section_knowledge() {
     # Load config to find vault path
     local vault_path=""
     if command -v jq &>/dev/null && [ -f "$GATEWAY_CONFIG" ]; then
-        vault_path=$(jq -r '.plugins.entries["openclaw-lacp-fusion"].config.obsidianVault // empty' "$GATEWAY_CONFIG" 2>/dev/null)
+        vault_path=$(jq -r '.plugins.entries["engram"].config.obsidianVault // empty' "$GATEWAY_CONFIG" 2>/dev/null)
     fi
     # Expand tilde
     vault_path="${vault_path/#\~/$HOME}"

@@ -1,10 +1,10 @@
 {
-  "id": "openclaw-lacp-fusion",
+  "id": "engram",
   "name": "OpenClaw LACP Fusion",
   "version": "1.0.0",
   "author": "OpenClaw Community",
   "license": "MIT",
-  "repository": "https://github.com/openclaw/plugins/openclaw-lacp-fusion",
+  "repository": "https://github.com/openclaw/plugins/engram",
   "description": "LACP (Local Agent Control Plane) integration for OpenClaw — hooks, policy gates, gated execution, memory scaffolding, and evidence verification. Provides execution safety, policy enforcement, and comprehensive audit logging.",
   "keywords": [
     "hooks",
@@ -63,7 +63,7 @@
   },
   "installation": {
     "method": "direct",
-    "path": "~/.openclaw/plugins/openclaw-lacp-fusion"
+    "path": "~/.openclaw/plugins/engram"
   },
   "configuration": {
     "schema": "config/policy/risk-policy.json",

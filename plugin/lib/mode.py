@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mode configuration for openclaw-lacp-fusion.
+Mode configuration for engram.
 
 Three operating modes:
   - standalone: local vault, all commands active (default)
@@ -81,7 +81,7 @@ def _read_env_config() -> dict:
     """
     openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
     candidates = [
-        Path(openclaw_home) / "extensions" / "openclaw-lacp-fusion" / "config" / ".openclaw-lacp.env",
+        Path(openclaw_home) / "extensions" / "engram" / "config" / ".openclaw-lacp.env",
     ]
     for path in candidates:
         if path.exists():
