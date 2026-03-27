@@ -293,19 +293,40 @@ async function main() {
 
   const deps = detectDependencies();
 
-  // ── Install missing core dependencies ─────────────────────────────────
+  // ── Install required dependencies automatically ────────────────────────
 
-  const missing = [];
-  if (!deps.pdftotext) missing.push({ id: 'poppler', label: 'poppler (pdftotext)', install: deps.brew ? 'brew install poppler' : 'sudo apt-get install -y poppler-utils', hint: 'PDF text extraction' });
-  if (!deps.ffmpeg) missing.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
-  if (!deps.insanelyFastWhisper) missing.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pip3 install insanely-fast-whisper', hint: 'audio transcription (GPU-accelerated)' });
+  const required = [];
+  if (!deps.qmd) required.push({ id: 'qmd', label: 'QMD', install: 'npm install -g @nicepkg/qmd', hint: 'semantic search and memory backend (required)' });
+  if (!deps.pdftotext) required.push({ id: 'poppler', label: 'poppler (pdftotext)', install: deps.brew ? 'brew install poppler' : 'sudo apt-get install -y poppler-utils', hint: 'PDF text extraction (required)' });
 
-  if (missing.length > 0) {
-    log.info(`${yellow('!')} ${missing.length} core dependenc${missing.length === 1 ? 'y' : 'ies'} not found`);
+  if (required.length > 0) {
+    log.info(`Installing ${required.length} required dependenc${required.length === 1 ? 'y' : 'ies'}...`);
+    const s = spinner();
+    for (const dep of required) {
+      s.start(`Installing ${dep.label}...`);
+      try {
+        await runCommand(dep.install);
+        s.stop(`${green('+')} ${dep.label} installed`);
+      } catch (err) {
+        s.stop(`${red('x')} ${dep.label} failed: ${err.message}`);
+        log.warn(`Install manually: ${dep.install}`);
+      }
+    }
+    Object.assign(deps, detectDependencies());
+  } else {
+    log.success('Required dependencies found (QMD, poppler)');
+  }
 
+  // ── Offer optional dependencies ──────────────────────────────────────
+
+  const optional = [];
+  if (!deps.ffmpeg) optional.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
+  if (!deps.insanelyFastWhisper) optional.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pip3 install insanely-fast-whisper', hint: 'audio transcription (GPU-accelerated)' });
+
+  if (optional.length > 0) {
     const toInstall = handleCancel(await multiselect({
-      message: 'Install missing dependencies?',
-      options: missing.map(m => ({
+      message: 'Install optional dependencies?',
+      options: optional.map(m => ({
         value: m.id,
         label: m.label,
         hint: `${m.hint} — ${dim(m.install)}`,
@@ -316,7 +337,7 @@ async function main() {
     if (toInstall.length > 0) {
       const s = spinner();
       for (const depId of toInstall) {
-        const dep = missing.find(m => m.id === depId);
+        const dep = optional.find(m => m.id === depId);
         s.start(`Installing ${dep.label}...`);
         try {
           await runCommand(dep.install);
@@ -326,11 +347,8 @@ async function main() {
           log.warn(`You can install manually: ${dep.install}`);
         }
       }
-      // Re-detect after install
       Object.assign(deps, detectDependencies());
     }
-  } else {
-    log.success('All core dependencies found');
   }
 
   const contextStatus = [];

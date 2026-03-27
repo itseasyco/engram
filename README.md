@@ -54,8 +54,8 @@ Engram is for teams and individuals who run agents on real codebases and need gu
 | Node.js | >= 22 | CLI and wizard |
 | Python | >= 3.9 | Hook handlers and lib modules |
 | Bash | >= 4.0 | CLI tools are bash/python scripts |
+| QMD | required | Semantic search and memory backend — installed by wizard |
 | Obsidian | (optional) | Knowledge graph vault (Layer 2) |
-| qmd | (optional) | Semantic search indexing |
 | ffmpeg | (optional) | Video/audio ingestion (Layer 3) |
 | insanely-fast-whisper | (optional) | GPU-accelerated audio transcription |
 
@@ -1033,16 +1033,24 @@ engram wizard --section agents
 
 ## Dependencies
 
-The wizard detects and installs required dependencies based on the features you enable. Core dependencies are installed automatically. Optional integrations are offered during setup:
+The wizard detects and installs dependencies automatically. Core dependencies are required. Optional integrations are offered during setup:
 
-| Dependency | Installed by wizard | What it enables |
-|-----------|-------------------|-----------------|
-| poppler (pdftotext) | Yes, if ingestion enabled | PDF text extraction |
-| ffmpeg | Yes, if media ingestion enabled | Video/audio processing |
-| GitNexus | Optional (offered during setup) | Multi-language AST, call graphs, complexity analysis |
-| lossless-claw | Optional (offered during setup) | Native LCM SQLite context engine |
-| obsidian-headless (ob) | Optional (offered during setup) | Multi-machine vault sync for connected/curator modes |
-| QMD | Optional (offered during setup) | Semantic search indexing on vault |
+**Required (installed automatically):**
+
+| Dependency | What it enables |
+|-----------|-----------------|
+| QMD | Semantic search, memory backend, context injection — the core of the memory system |
+| poppler (pdftotext) | PDF text extraction for ingestion |
+
+**Optional (offered during setup):**
+
+| Dependency | What it enables |
+|-----------|-----------------|
+| ffmpeg | Video/audio processing for media ingestion |
+| insanely-fast-whisper | GPU-accelerated audio transcription |
+| GitNexus | Multi-language AST, call graphs, complexity analysis |
+| lossless-claw | Native LCM SQLite context engine (alternative to file-based) |
+| obsidian-headless (ob) | Multi-machine vault sync for connected/curator modes |
 
 ---
 
