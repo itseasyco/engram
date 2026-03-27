@@ -56,8 +56,14 @@ show_banner() {
     echo "  ███████╗██║ ╚████║╚██████╔╝██║  ██║██║  ██║██║ ╚═╝ ██║"
     echo "  ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝"
     echo -e "${NC}"
-    echo -e "  ${DIM}Shared Intelligence Graph for AI Agents\n  by Easy Labs — https://itseasy.co${NC}"
+    echo -e "  ${DIM}Shared Intelligence Graph for AI Agents${NC}"
     echo -e "  ${DIM}v${VERSION}${NC}"
+    echo ""
+    echo -e "  ${DIM}by${NC}"
+    echo -e "  ${BOLD}${DIM}      ___  __ _ ____  _   | __ _| |__ ___${NC}"
+    echo -e "  ${BOLD}${DIM}     / -_)/ _\` (_-< || |  | / _\` | '_ (_-<${NC}"
+    echo -e "  ${BOLD}${DIM}     \\___|\\__,_/__/\\_, |  |_\\__,_|_.__/__/${NC}"
+    echo -e "  ${BOLD}${DIM}                   |__/    itseasy.co${NC}"
     echo ""
 }
 
