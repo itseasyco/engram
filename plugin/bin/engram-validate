@@ -195,15 +195,15 @@ section_bin() {
     [ "$JSON_OUTPUT" != "true" ] && echo -e "\n${BOLD}Bin Scripts${NC}"
 
     local core_bins=(
-        "openclaw-memory-init"
-        "openclaw-memory-append"
-        "openclaw-gated-run"
-        "openclaw-route"
-        "openclaw-verify"
-        "openclaw-brain-graph"
-        "openclaw-brain-ingest"
-        "openclaw-agent-id"
-        "openclaw-provenance"
+        "engram-memory-init"
+        "engram-memory-append"
+        "engram-gated-run"
+        "engram-route"
+        "engram-verify"
+        "engram-brain-graph"
+        "engram-brain-ingest"
+        "engram-agent-id"
+        "engram-provenance"
     )
 
     local found=0

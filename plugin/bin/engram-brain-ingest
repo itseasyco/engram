@@ -175,14 +175,40 @@ def ingest_transcript(vault_path, transcript_file, speaker=None, date=None):
     return str(output_file)
 
 
+def _fetch_url(url, timeout=30):
+    """Fetch text content from a URL. Returns the body text or an error string."""
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "engram-brain-ingest/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
+        return f"(Failed to fetch URL: {exc})"
+
+    # Strip HTML tags if the response looks like HTML
+    if "<html" in raw[:1000].lower() or "<head" in raw[:1000].lower():
+        # Simple tag stripping — good enough for ingestion notes
+        clean = re.sub(r"<script[^>]*>.*?</script>", "", raw, flags=re.DOTALL | re.IGNORECASE)
+        clean = re.sub(r"<style[^>]*>.*?</style>", "", clean, flags=re.DOTALL | re.IGNORECASE)
+        clean = re.sub(r"<[^>]+>", " ", clean)
+        clean = re.sub(r"\s{2,}", "\n", clean).strip()
+        return clean[:10000]  # cap at 10k chars for vault notes
+    return raw[:10000]
+
+
 def ingest_url(vault_path, url, title=None):
     """Ingest content from a URL"""
     inbox = _resolve_inbox(vault_path)
     title = title or url.split("//")[-1].split("/")[0]
     slug = _slugify(title)
-    tags = _extract_tags(url, title)
+
+    # Fetch the actual content
+    content = _fetch_url(url)
+
+    tags = _extract_tags(content + " " + url, title)
     tags.append("url")
-    category = _detect_category(title + " " + url, title, "url")
+    category = _detect_category(title + " " + url + " " + content[:500], title, "url")
     frontmatter = _build_frontmatter(title, category, tags, "url", url)
 
     note = f"""{frontmatter}
@@ -193,7 +219,7 @@ def ingest_url(vault_path, url, title=None):
 
 ## Content
 
-(Content to be fetched and indexed)
+{content}
 """
 
     output_file = inbox / f"{slug}.md"
@@ -202,15 +228,56 @@ def ingest_url(vault_path, url, title=None):
     return str(output_file)
 
 
+def _extract_pdf_text(pdf_path):
+    """Extract text from a PDF. Tries pdftotext (poppler) first, falls back to Python."""
+    pdf_path = str(pdf_path)
+
+    # Try pdftotext (poppler-utils) — best quality
+    if shutil.which("pdftotext"):
+        try:
+            result = subprocess.run(
+                ["pdftotext", "-layout", pdf_path, "-"],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()[:20000]
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    # Fallback: read raw bytes and extract text-like content
+    try:
+        raw = Path(pdf_path).read_bytes()
+        # Extract strings between parentheses (PDF text objects) and between BT/ET blocks
+        import codecs
+        text_parts = []
+        for match in re.finditer(rb'\(([^)]{2,})\)', raw):
+            try:
+                decoded = match.group(1).decode('utf-8', errors='ignore')
+                if any(c.isalpha() for c in decoded):
+                    text_parts.append(decoded)
+            except Exception:
+                continue
+        if text_parts:
+            return "\n".join(text_parts)[:20000]
+    except Exception:
+        pass
+
+    return "(PDF text extraction failed — install poppler-utils: brew install poppler)"
+
+
 def ingest_pdf(vault_path, pdf_file, title=None):
     """Ingest a PDF file"""
     inbox = _resolve_inbox(vault_path)
     pdf_path = Path(pdf_file)
     title = title or _prose_title(pdf_path.name)
     slug = _slugify(title)
-    tags = _extract_tags(title, title)
+
+    # Extract actual text from the PDF
+    content = _extract_pdf_text(pdf_path)
+
+    tags = _extract_tags(content[:2000] + " " + title, title)
     tags.append("pdf")
-    category = _detect_category(title, title, "pdf")
+    category = _detect_category(content[:2000] + " " + title, title, "pdf")
     frontmatter = _build_frontmatter(title, category, tags, "pdf", pdf_path.name)
 
     note = f"""{frontmatter}
@@ -221,7 +288,7 @@ def ingest_pdf(vault_path, pdf_file, title=None):
 
 ## Content
 
-(PDF text extraction pending)
+{content}
 """
 
     output_file = inbox / f"{slug}.md"

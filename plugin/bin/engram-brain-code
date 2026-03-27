@@ -164,36 +164,119 @@ class CodeIntelligence:
             "call_graph_depth": depth
         }
     
-    def get_impact(self, file_path: str) -> Dict[str, Any]:
-        """Get impact analysis for a file change"""
-        
+    def get_usages(self, symbol: str) -> Dict[str, Any]:
+        """Find all references to a symbol across the codebase.
+
+        Returns every location where the symbol appears — as a definition,
+        a call, an import, or a reference in the call graph.
+        """
+        usages = []
+
+        # 1. Definitions: where is this symbol defined?
+        for sym_name, occurrences in self.symbols.items():
+            if sym_name == symbol:
+                for occ in occurrences:
+                    usages.append({
+                        "type": "definition",
+                        "symbol": sym_name,
+                        "file": occ["file"],
+                        "line": occ.get("lineno"),
+                        "kind": occ.get("type"),
+                    })
+
+        # 2. Call graph: who calls this symbol?
+        for caller, callees in self.call_graph.items():
+            if symbol in callees:
+                # Find where the caller is defined to get the file
+                caller_files = []
+                for occ in self.symbols.get(caller, []):
+                    caller_files.append(occ["file"])
+                usages.append({
+                    "type": "caller",
+                    "symbol": caller,
+                    "files": caller_files or ["<unknown>"],
+                })
+
+        # 3. Call graph: what does this symbol call?
+        if symbol in self.call_graph:
+            for callee in self.call_graph[symbol]:
+                usages.append({
+                    "type": "callee",
+                    "symbol": callee,
+                })
+
+        # 4. Imports: which files import a module containing this symbol?
+        for file_path, imports in self.imports.items():
+            for imp in imports:
+                if symbol in imp or imp.endswith(f".{symbol}"):
+                    usages.append({
+                        "type": "import",
+                        "file": file_path,
+                        "import_path": imp,
+                    })
+
+        return {
+            "symbol": symbol,
+            "total_usages": len(usages),
+            "usages": usages,
+        }
+
+    def get_impact(self, file_path: str, scope: str = "transitive") -> Dict[str, Any]:
+        """Get impact analysis for a file change.
+
+        scope: "direct" — only immediate dependents
+               "transitive" — full blast radius (callers of callers)
+        """
+
         file_rel = str(Path(file_path).relative_to(self.repo_path))
-        
+
         # Find all symbols in this file
         symbols_in_file = []
         for symbol_name, occurrences in self.symbols.items():
             for occ in occurrences:
                 if occ["file"] == file_rel:
                     symbols_in_file.append(symbol_name)
-        
+
         # Find all files that import from this file
         dependents = []
         for other_file, imports in self.imports.items():
-            # Check if imports from this file
             if any(file_rel in imp for imp in imports):
                 dependents.append(other_file)
-        
-        # Find all symbols that might be affected
-        affected_symbols = set()
-        for symbol in symbols_in_file:
-            affected_symbols.add(symbol)
-            # Add callers of this symbol
-            for caller, callees in self.call_graph.items():
-                if symbol in callees:
-                    affected_symbols.add(caller)
-        
+
+        # Find affected symbols
+        affected_symbols = set(symbols_in_file)
+
+        if scope == "transitive":
+            # Walk callers transitively
+            queue = list(symbols_in_file)
+            visited = set(symbols_in_file)
+            while queue:
+                sym = queue.pop(0)
+                for caller, callees in self.call_graph.items():
+                    if sym in callees and caller not in visited:
+                        visited.add(caller)
+                        affected_symbols.add(caller)
+                        queue.append(caller)
+            # Also find transitive file dependents
+            transitive_files = set(dependents)
+            queue = list(dependents)
+            while queue:
+                dep = queue.pop(0)
+                for other_file, imports in self.imports.items():
+                    if any(dep in imp for imp in imports) and other_file not in transitive_files:
+                        transitive_files.add(other_file)
+                        queue.append(other_file)
+            dependents = list(transitive_files)
+        else:
+            # Direct only: just immediate callers
+            for symbol in symbols_in_file:
+                for caller, callees in self.call_graph.items():
+                    if symbol in callees:
+                        affected_symbols.add(caller)
+
         return {
             "file": file_rel,
+            "scope": scope,
             "symbols_in_file": symbols_in_file,
             "dependent_files": dependents,
             "affected_symbols": list(affected_symbols),
@@ -287,8 +370,13 @@ def main():
     impact_parser = subparsers.add_parser("impact", help="Impact analysis")
     impact_parser.add_argument("repo_path")
     impact_parser.add_argument("file")
-    impact_parser.add_argument("--scope", action="store_true", help="Show full impact scope")
+    impact_parser.add_argument("--scope", choices=["direct", "transitive"], default="transitive", help="Impact scope: direct (immediate dependents) or transitive (full blast radius)")
     
+    # Find-usages subcommand
+    usages_parser = subparsers.add_parser("find-usages", help="Find all references to a symbol")
+    usages_parser.add_argument("repo_path")
+    usages_parser.add_argument("symbol", help="Symbol name to search for")
+
     # Export subcommand
     export_parser = subparsers.add_parser("export", help="Export analysis")
     export_parser.add_argument("repo_path")
@@ -330,9 +418,14 @@ def main():
         
         elif args.command == "impact":
             intelligence.analyze()  # First analyze
-            impact = intelligence.get_impact(args.file)
+            impact = intelligence.get_impact(args.file, scope=args.scope)
             print(json.dumps(impact, indent=2))
         
+        elif args.command == "find-usages":
+            intelligence.analyze()
+            usages = intelligence.get_usages(args.symbol)
+            print(json.dumps(usages, indent=2))
+
         elif args.command == "export":
             analysis = intelligence.analyze()
             Path(args.output_json).write_text(json.dumps(analysis, indent=2))

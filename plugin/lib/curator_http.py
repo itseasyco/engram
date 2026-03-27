@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Curator HTTP surface for engram.
+Curator HTTP surface for openclaw-lacp-fusion.
 
 Minimal HTTP server with 3 endpoints, all behind token authentication:
   POST /validate — Validate an invite token, return vault config

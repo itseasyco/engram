@@ -1,0 +1,86 @@
+{
+  "id": "openclaw-lacp-fusion",
+  "name": "OpenClaw LACP Fusion",
+  "version": "1.0.0",
+  "author": "OpenClaw Community",
+  "license": "MIT",
+  "repository": "https://github.com/openclaw/plugins/openclaw-lacp-fusion",
+  "description": "LACP (Local Agent Control Plane) integration for OpenClaw — hooks, policy gates, gated execution, memory scaffolding, and evidence verification. Provides execution safety, policy enforcement, and comprehensive audit logging.",
+  "keywords": [
+    "hooks",
+    "policy",
+    "safety",
+    "verification",
+    "audit",
+    "memory",
+    "evidence",
+    "lossless-context"
+  ],
+  "components": {
+    "hooks": {
+      "enabled": true,
+      "handlers": [
+        "session-start",
+        "pretool-guard",
+        "stop-quality-gate",
+        "write-validate"
+      ],
+      "description": "Execution hooks for git context injection, dangerous pattern blocking, quality gates, and schema validation"
+    },
+    "policy": {
+      "enabled": true,
+      "features": [
+        "risk-based-routing",
+        "approval-caching",
+        "cost-ceilings",
+        "gated-execution"
+      ],
+      "description": "Policy routing engine with three-tier safety model (safe/review/critical)"
+    },
+    "memory": {
+      "enabled": true,
+      "features": [
+        "per-project-sessions",
+        "execution-logging",
+        "context-preservation"
+      ],
+      "description": "Session memory scaffolding for per-project agent memory management"
+    },
+    "verification": {
+      "enabled": true,
+      "modes": [
+        "heuristic",
+        "test-based",
+        "llm-evaluation"
+      ],
+      "description": "Task verification with multiple evidence modes"
+    }
+  },
+  "requirements": {
+    "openclaw": ">=0.23.0",
+    "python": ">=3.9",
+    "bash": ">=5.0"
+  },
+  "installation": {
+    "method": "direct",
+    "path": "~/.openclaw/plugins/openclaw-lacp-fusion"
+  },
+  "configuration": {
+    "schema": "config/policy/risk-policy.json",
+    "profiles": [
+      "profiles/minimal-stop.json",
+      "profiles/balanced.json",
+      "profiles/hardened-exec.json"
+    ]
+  },
+  "dependencies": [],
+  "conflicts": [],
+  "metadata": {
+    "testCoverage": "122/122 tests passing",
+    "documentationLines": 2400,
+    "codeLines": 15000,
+    "phases": 4,
+    "agentsUsed": 11,
+    "wallClockTime": "2.5 hours"
+  }
+}

@@ -139,10 +139,15 @@ class CalibrationTracker:
         min_threshold: float = 40,
         max_threshold: float = 95,
         step: float = 5,
+        min_samples: int = 10,
     ) -> float:
-        """Find the threshold that maximizes F1 score."""
+        """Find the threshold that maximizes F1 score.
+
+        Requires at least min_samples labeled records before adjusting,
+        to avoid wild swings from insufficient data.
+        """
         labeled = self.get_records(labeled_only=True)
-        if not labeled:
+        if not labeled or len(labeled) < min_samples:
             return self._data.get("current_threshold", 70)
 
         best_threshold = self._data.get("current_threshold", 70)

@@ -75,7 +75,7 @@ class WebhookConnector(Connector):
             plugin_dir = Path(
                 os.environ.get(
                     "OPENCLAW_PLUGIN_DIR",
-                    Path.home() / ".openclaw" / "extensions" / "engram",
+                    Path.home() / ".openclaw" / "extensions" / "openclaw-lacp-fusion",
                 )
             )
             p = plugin_dir / script_path

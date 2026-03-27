@@ -132,11 +132,29 @@ class SemanticDedup:
         cache_dir: Optional[str] = None,
         threshold: float = 0.85,
         max_cache_size: int = 500,
+        log_path: Optional[str] = None,
     ):
         self.vault_path = Path(vault_path) if vault_path else Path.home() / ".openclaw" / "vault"
         cache_path = Path(cache_dir) if cache_dir else self.vault_path / ".openclaw-lacp-embeddings"
         self.threshold = threshold
         self.cache = EmbeddingCache(cache_path, max_size=max_cache_size)
+        self._log_path = Path(log_path) if log_path else Path.home() / ".openclaw" / "logs" / "dedup.jsonl"
+
+    def _log_decision(self, fact: str, decision: str, top_similarity: float, matched_fact: str = "") -> None:
+        """Append a dedup decision to the audit log."""
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "fact_hash": hashlib.sha256(fact.encode()).hexdigest()[:16],
+                "decision": decision,
+                "similarity": round(top_similarity, 4),
+                "matched_fact_hash": hashlib.sha256(matched_fact.encode()).hexdigest()[:16] if matched_fact else "",
+            }
+            with open(self._log_path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except OSError:
+            pass  # logging is best-effort
 
     def similarity(self, text_a: str, text_b: str) -> float:
         """Compute semantic similarity between two texts."""
@@ -182,7 +200,11 @@ class SemanticDedup:
     def is_duplicate(self, new_fact: str, threshold: Optional[float] = None) -> bool:
         """Check if a fact is a duplicate of any existing vault fact."""
         matches = self.find_similar(new_fact, threshold=threshold, max_results=1)
-        return len(matches) > 0 and matches[0]["should_skip"]
+        is_dup = len(matches) > 0 and matches[0]["should_skip"]
+        top_sim = matches[0]["similarity"] if matches else 0.0
+        matched = matches[0]["fact"] if matches else ""
+        self._log_decision(new_fact, "skip" if is_dup else "promote", top_sim, matched)
+        return is_dup
 
     def _load_vault_facts(self) -> list[dict]:
         """Load all facts from vault markdown files."""

@@ -173,7 +173,13 @@ def main():
     result = validate(file_path)
     print(json.dumps(result))
 
+    # Exit code protocol (standardized across all hooks):
+    #   0 = allow (PASS or SKIP)
+    #   1 = block (FAIL — validation errors that should prevent write)
+    #   2 = warn (WARN — non-fatal issues, write proceeds)
     if result["status"] == "FAIL":
+        sys.exit(1)
+    elif result["status"] == "WARN":
         sys.exit(2)
     sys.exit(0)
 

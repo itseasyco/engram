@@ -31,7 +31,7 @@ def _resolve_plugin_dir() -> Path:
     env_dir = os.getenv("OPENCLAW_PLUGIN_DIR", "").strip()
     if env_dir:
         return Path(env_dir).expanduser().resolve()
-    return Path.home() / ".openclaw" / "extensions" / "engram"
+    return Path.home() / ".openclaw" / "extensions" / "openclaw-lacp-fusion"
 
 
 PLUGIN_DIR = _resolve_plugin_dir()

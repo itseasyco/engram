@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Invite token system for engram.
+Invite token system for openclaw-lacp-fusion.
 
 Tokens gate membership in a shared vault cluster. The curator generates tokens,
 connected nodes redeem them during the join flow.

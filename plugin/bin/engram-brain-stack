@@ -575,8 +575,7 @@ main() {
     
     expand)
       shift
-      log_error "expand: not yet implemented"
-      exit 1
+      exec bash "$(dirname "$0")/engram-brain-expand" "$@"
       ;;
     
     help|--help|-h)

@@ -2,7 +2,9 @@
 
 **By [Easy Labs](https://itseasy.co)**
 
-**v2.2.0** -- Persistent agent memory, mycelium-powered knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
+**v2.3.0** -- Persistent agent memory, mycelium-powered knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
+
+[![npm](https://img.shields.io/npm/v/@easylabs/engram)](https://www.npmjs.com/package/@easylabs/engram)
 
 ![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![OpenClaw >= 0.23.0](https://img.shields.io/badge/openclaw-%3E%3D0.23.0-green.svg)
@@ -965,6 +967,64 @@ cd plugin && python -m pytest -v
 # Specific test file
 cd plugin && python -m pytest hooks/tests/test_pretool_guard.py -v
 ```
+
+---
+
+## Using Hooks with Claude Code (without OpenClaw)
+
+Engram's hooks can be integrated directly into Claude Code via its native hooks system in `~/.claude/settings.json`. This works today — no OpenClaw gateway required.
+
+Add to your `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "session_initialization": [
+      {
+        "command": "python3 ~/.openclaw/extensions/engram/plugin/hooks/handlers/session-start.py",
+        "timeout": 10000
+      }
+    ],
+    "agent_stop": [
+      {
+        "command": "python3 ~/.openclaw/extensions/engram/plugin/hooks/handlers/stop-quality-gate.py",
+        "timeout": 5000
+      }
+    ]
+  }
+}
+```
+
+**What works today with Claude Code hooks:**
+- `session-start` (session_initialization) — injects git context and LACP memory into every session
+- `stop-quality-gate` (agent_stop) — catches premature stops, rationalization patterns, incomplete work
+
+**What requires OpenClaw lifecycle events (not yet available):**
+- `pretool-guard` (pre_tool_use) — needs a trigger point before each tool call, which Claude Code does not expose yet
+- `write-validate` (file_write) — needs a trigger point before file writes, which Claude Code does not expose yet
+
+These hooks are fully implemented and tested. They will activate once the host platform exposes the corresponding lifecycle events.
+
+---
+
+## Current Limitations
+
+**Hooks:**
+- The `pretool-guard` and `write-validate` hooks depend on `pre_tool_use` and `file_write` lifecycle events not yet exposed by OpenClaw or Claude Code. Only `session_initialization` and `agent_stop` are currently wired.
+- Hook exit code protocol is standardized (0=allow, 1=block, 2=warn) but the gateway does not yet consume exit codes from all hook types uniformly.
+
+**Code intelligence:**
+- Built-in AST parsing only covers Python. JS/TS/Go/Rust files are counted but not parsed. Install [GitNexus](https://github.com/gitnexus/gitnexus) (`npm install -g gitnexus`) for full multi-language support.
+
+**Ingestion:**
+- PDF text extraction requires `pdftotext` (poppler-utils). Without it, a basic byte-level fallback is used. Install via `brew install poppler` (macOS) or `apt install poppler-utils` (Linux).
+
+**Shared vault (connected/curator modes):**
+- Requires `obsidian-headless` (`ob`) for vault sync. This is an experimental dependency.
+- The setup wizard (`INSTALL.sh`) does not yet include mode selection — configure manually via config files.
+
+**Execution lifecycle:**
+- The 12-state lifecycle (SUBMITTED through COMPLETED) is specced but not tracked at runtime. The gated-run system covers the core approval/execution flow but does not emit state transitions.
 
 ---
 

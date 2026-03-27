@@ -68,6 +68,9 @@ register_agent() {
 }
 EOF
   
+  # Restrict identity file permissions (owner read/write only)
+  chmod 600 "$agent_file"
+
   # Try to store key in keychain (macOS)
   if command -v security >/dev/null 2>&1; then
     # Generate a dummy key for now (actual signing key would go here)

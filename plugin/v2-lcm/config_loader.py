@@ -1,7 +1,7 @@
 """
 Config Loader — Load and validate openclaw-lacp plugin configuration.
 
-Reads from openclaw.json plugins.entries.engram.config
+Reads from openclaw.json plugins.entries.openclaw-lacp-fusion.config
 and validates against the expected schema for backend selection.
 """
 
@@ -80,7 +80,7 @@ Returns:
             return {}
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        plugin_entry = data.get("plugins", {}).get("entries", {}).get("engram", {})
+        plugin_entry = data.get("plugins", {}).get("entries", {}).get("openclaw-lacp-fusion", {})
         if plugin_entry.get("enabled", False) is False:
             return {}
         return plugin_entry.get("config", {})

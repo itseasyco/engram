@@ -10,6 +10,7 @@ Manages per-project sharing configurations with role-based access:
 Policies stored in config/.openclaw-lacp-sharing.json.
 """
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -50,6 +51,7 @@ class SharingPolicy:
             "version": "2.0.0",
             "agents": {},
             "projects": {},
+            "promotions": {},
             "audit_log": [],
         }
 
@@ -89,7 +91,11 @@ class SharingPolicy:
 
         # Also track in project-centric view
         if project not in self._data["projects"]:
-            self._data["projects"][project] = {"agents": {}}
+            self._data["projects"][project] = {
+                "agents": {},
+                "max_facts": 0,
+                "auto_promote": False,
+            }
         self._data["projects"][project]["agents"][agent_id] = role
 
         self._audit("grant_access", agent_id=agent_id, project=project, role=role)
@@ -127,11 +133,27 @@ class SharingPolicy:
         return "read" in ROLE_PERMISSIONS.get(role, [])
 
     def can_promote(self, agent_id: str, project: str) -> bool:
-        """Check if agent can promote facts to a project."""
+        """Check if agent can promote facts to a project.
+
+        Returns False if:
+          - agent has no role or role lacks 'promote' permission
+          - project has a max_facts cap and it's been reached
+        """
         role = self.get_role(agent_id, project)
         if role is None:
             return False
-        return "promote" in ROLE_PERMISSIONS.get(role, [])
+        if "promote" not in ROLE_PERMISSIONS.get(role, []):
+            return False
+
+        # Enforce max_facts cap if set
+        project_data = self._data["projects"].get(project, {})
+        max_facts = project_data.get("max_facts", 0)
+        if max_facts > 0:
+            current_count = len(self._data.get("promotions", {}).get(project, {}))
+            if current_count >= max_facts:
+                return False
+
+        return True
 
     def can_edit(self, agent_id: str, project: str) -> bool:
         """Check if agent can edit facts in a project."""
@@ -185,9 +207,66 @@ class SharingPolicy:
                 })
         return projects
 
-    def record_promotion(self, agent_id: str, project: str, fact_id: str) -> None:
-        """Record that an agent promoted a fact (for dedup tracking)."""
+    def set_project_policy(
+        self, project: str, max_facts: int = 0, auto_promote: bool = False
+    ) -> None:
+        """Set per-project policies.
+
+        Args:
+            project: project name
+            max_facts: max facts allowed (0 = unlimited)
+            auto_promote: if True, high-scoring facts skip manual review
+        """
+        if project not in self._data["projects"]:
+            self._data["projects"][project] = {"agents": {}}
+        self._data["projects"][project]["max_facts"] = max_facts
+        self._data["projects"][project]["auto_promote"] = auto_promote
+        self._audit("set_project_policy", project=project, max_facts=max_facts, auto_promote=auto_promote)
+
+    def get_project_policy(self, project: str) -> dict:
+        """Get per-project policy settings."""
+        project_data = self._data["projects"].get(project, {})
+        return {
+            "max_facts": project_data.get("max_facts", 0),
+            "auto_promote": project_data.get("auto_promote", False),
+        }
+
+    def record_promotion(self, agent_id: str, project: str, fact_id: str, fact_text: str = "") -> None:
+        """Record that an agent promoted a fact.
+
+        Stores a hash of the fact text for cross-agent dedup lookups.
+        """
+        if "promotions" not in self._data:
+            self._data["promotions"] = {}
+        if project not in self._data["promotions"]:
+            self._data["promotions"][project] = {}
+
+        fact_hash = hashlib.sha256(fact_text.encode()).hexdigest()[:16] if fact_text else fact_id
+        self._data["promotions"][project][fact_hash] = {
+            "agent_id": agent_id,
+            "fact_id": fact_id,
+            "promoted_at": datetime.now(timezone.utc).isoformat(),
+        }
         self._audit("promote", agent_id=agent_id, project=project, fact_id=fact_id)
+
+    def is_cross_agent_duplicate(self, project: str, fact_text: str, requesting_agent: str = "") -> dict:
+        """Check if any agent has already promoted this fact to the project.
+
+        Returns:
+            {"duplicate": bool, "promoted_by": str, "promoted_at": str}
+            If not a duplicate, promoted_by and promoted_at are empty.
+        """
+        fact_hash = hashlib.sha256(fact_text.encode()).hexdigest()[:16]
+        promotions = self._data.get("promotions", {}).get(project, {})
+        existing = promotions.get(fact_hash)
+
+        if existing and existing["agent_id"] != requesting_agent:
+            return {
+                "duplicate": True,
+                "promoted_by": existing["agent_id"],
+                "promoted_at": existing.get("promoted_at", ""),
+            }
+        return {"duplicate": False, "promoted_by": "", "promoted_at": ""}
 
     def _audit(self, action: str, **kwargs) -> None:
         """Append to audit log."""

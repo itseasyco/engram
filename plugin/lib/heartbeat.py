@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Heartbeat system for engram.
+Heartbeat system for openclaw-lacp-fusion.
 
 Curator side: write_heartbeat() after each cycle.
 Connected side: check_heartbeat() to detect outages.

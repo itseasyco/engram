@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "vault_path": "/Volumes/Cortex",
+  "check_interval_minutes": 30,
+  "update_graph_after_ingest": true,
+  "watch_dirs": [
+    {
+      "path": "~/engram-watch-test",
+      "pattern": "*",
+      "enabled": true
+    }
+  ],
+  "cron_registered": false,
+  "processed_log": "~/.openclaw/extensions/openclaw-lacp-fusion/logs/ingest-watch.jsonl"
+}

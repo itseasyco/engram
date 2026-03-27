@@ -1,0 +1,18 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Tests
+**/tests/
+**/test_*.py
+
+# Dev artifacts
+node_modules/
+.claude/
+.git/
+.DS_Store
+*.log
+
+# Example configs
+config/example-*

@@ -157,8 +157,12 @@ EOF
   # Append to chain
   local chain_file="$provenance_dir/chain.jsonl"
   mkdir -p "$provenance_dir"
+  # Temporarily unlock if read-only from a previous seal
+  [ -f "$chain_file" ] && chmod 644 "$chain_file" 2>/dev/null || true
   echo "$receipt" >> "$chain_file"
-  
+  # Seal chain file as read-only
+  chmod 444 "$chain_file"
+
   # Clean up temp file
   rm -f "$session_file"
   
@@ -212,16 +216,32 @@ verify_chain() {
       continue
     fi
     
-    # Verify hash chain continuity
+    # Verify hash chain continuity (prev_hash links to previous receipt)
     if [ "$prev_hash" != "$receipt_prev_hash" ]; then
-      log_error "Line $line_num ($session_id): hash mismatch!"
+      log_error "Line $line_num ($session_id): chain link mismatch!"
       log_error "  Expected prev: $prev_hash"
       log_error "  Got prev: $receipt_prev_hash"
       ((errors++))
-    else
-      log_success "Line $line_num ($session_id): hash verified"
     fi
-    
+
+    # Verify hash integrity (recompute next_hash from prev_hash + execution)
+    local execution_json
+    execution_json=$(echo "$line" | jq -c '.execution // empty' 2>/dev/null || echo "")
+    if [ -n "$execution_json" ]; then
+      local recomputed_hash
+      recomputed_hash=$(compute_hash "$receipt_prev_hash" "$execution_json")
+      if [ "$recomputed_hash" != "$receipt_next_hash" ]; then
+        log_error "Line $line_num ($session_id): hash integrity FAILED (receipt tampered)"
+        log_error "  Stored next_hash:     $receipt_next_hash"
+        log_error "  Recomputed next_hash: $recomputed_hash"
+        ((errors++))
+      else
+        log_success "Line $line_num ($session_id): chain + integrity verified"
+      fi
+    else
+      log_warn "Line $line_num ($session_id): no execution data, chain-only check"
+    fi
+
     prev_hash="$receipt_next_hash"
   done < "$chain_file"
   

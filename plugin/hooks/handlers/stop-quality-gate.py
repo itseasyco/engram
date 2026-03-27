@@ -358,12 +358,22 @@ def main() -> None:
 
 
 def _emit(result: CheckResult) -> None:
-    """Output hook protocol JSON."""
+    """Output hook protocol JSON and exit with standard code.
+
+    Exit code protocol (standardized across all hooks):
+      0 = allow
+      1 = block
+      2 = warn (non-fatal)
+    """
     if result.decision == "block":
         print(json.dumps({"decision": "block", "reason": result.reason}))
+        sys.exit(1)
     elif result.system_message:
         print(json.dumps({"decision": "allow", "systemMessage": result.system_message}))
+    # allow = exit 0 (falls through to default)
 
 
 if __name__ == "__main__":
     main()
+    # If main() completes without _emit calling sys.exit(1), we allowed
+    sys.exit(0)

@@ -101,7 +101,7 @@ GATES_FAILED=false
 # ============================================================================
 
 # Call routing engine to get tier and cost ceiling
-ROUTING_OUTPUT=$(bash "$SCRIPT_DIR/openclaw-route" "$AGENT_ID" "$CHANNEL_NAME" "$TASK_DESC" 2>/dev/null || echo '{"tier":"unknown","cost_ceiling_usd":0,"approval_required":false}')
+ROUTING_OUTPUT=$(bash "$SCRIPT_DIR/engram-route" "$AGENT_ID" "$CHANNEL_NAME" "$TASK_DESC" 2>/dev/null || echo '{"tier":"unknown","cost_ceiling_usd":0,"approval_required":false}')
 
 TIER=$(echo "$ROUTING_OUTPUT" | jq -r '.tier // "unknown"')
 COST_CEILING=$(echo "$ROUTING_OUTPUT" | jq -r '.cost_ceiling_usd // 0')

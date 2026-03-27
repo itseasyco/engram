@@ -62,8 +62,18 @@ if [[ ! -d "$SESSION_DIR" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$SESSION_DIR/context.json" ]] || [[ ! -f "$SESSION_DIR/memory.md" ]]; then
-  echo -e "${RED}ERROR: Missing context.json or memory.md in $SESSION_DIR${NC}" >&2
+if [[ ! -f "$SESSION_DIR/context.json" ]]; then
+  echo -e "${RED}ERROR: Missing context.json in $SESSION_DIR${NC}" >&2
+  exit 1
+fi
+
+# Support both MEMORY.md (created by init) and memory.md
+MEMORY_FILE="$SESSION_DIR/MEMORY.md"
+if [[ ! -f "$MEMORY_FILE" ]]; then
+  MEMORY_FILE="$SESSION_DIR/memory.md"
+fi
+if [[ ! -f "$MEMORY_FILE" ]]; then
+  echo -e "${RED}ERROR: Missing MEMORY.md or memory.md in $SESSION_DIR${NC}" >&2
   exit 1
 fi
 
@@ -129,8 +139,7 @@ jq \
 
 echo -e "${GREEN}✓${NC} Updated context.json"
 
-# Append to memory.md
-MEMORY_FILE="$SESSION_DIR/memory.md"
+# Append to memory file (MEMORY_FILE resolved earlier to handle MEMORY.md vs memory.md)
 
 # Build execution summary
 {
@@ -160,14 +169,14 @@ MEMORY_FILE="$SESSION_DIR/memory.md"
   fi
 } >> "$MEMORY_FILE"
 
-echo -e "${GREEN}✓${NC} Appended to memory.md"
+echo -e "${GREEN}✓${NC} Appended to $(basename "$MEMORY_FILE")"
 
 # Commit to git if enabled
 if [[ "$GIT_COMMIT" == "true" ]] && [[ -d "$SESSION_DIR/.git" ]]; then
   cd "$SESSION_DIR"
   
   # Stage changes
-  git add memory.md context.json
+  git add "$(basename "$MEMORY_FILE")" context.json
   
   # Create commit message
   COMMIT_MSG="append: execution results — cost=\$${COST}"

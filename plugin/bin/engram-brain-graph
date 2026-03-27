@@ -44,6 +44,11 @@ Commands:
   mcp-config <vault-path>           Generate MCP config for Obsidian integration
     --output <path>                  Config output path (default: stderr)
     
+  find-connections <vault-path> "<query>"  Find related notes by traversing wikilinks
+    --max-depth <n>                  Max traversal depth (default: 2)
+    --min-score <float>              Min relatedness score (default: 0.2)
+    --limit <n>                      Max results (default: 10)
+
   status <vault-path>                Check graph initialization status
     --details                        Show detailed graph statistics
 
@@ -112,8 +117,24 @@ init_graph() {
   log_info "Initializing knowledge graph for $project_name"
   log_info "Vault path: $vault_path"
   
-  # Create vault structure
-  mkdir -p "$vault_path"/{inbox,projects,agents,patterns,decisions,references}
+  # Create vault structure using vault-schema.json if available, otherwise defaults
+  local schema_file
+  schema_file="$(cd "$(dirname "$0")/.." && pwd)/config/vault-schema.json"
+  if [ -f "$schema_file" ]; then
+    # Read folder paths from vault-schema.json (curator may have customized these)
+    local folders
+    folders=$(jq -r '.paths | to_entries[] | .value' "$schema_file" 2>/dev/null | grep -v '\.' | sort -u)
+    while IFS= read -r folder; do
+      [ -n "$folder" ] && mkdir -p "$vault_path/$folder"
+    done <<< "$folders"
+  else
+    # Fallback to numbered defaults matching vault_paths.py _DEFAULTS
+    mkdir -p "$vault_path"/{00_Index,01_Projects,02_Concepts,03_People,04_Systems}
+    mkdir -p "$vault_path"/05_Inbox/{queue-agent,queue-cicd,queue-human,queue-external,queue-session,review-stale}
+    mkdir -p "$vault_path"/{06_Planning,07_Research,08_Strategy}
+    mkdir -p "$vault_path"/09_Changelog/{branches,merged,releases,deploys,environments}
+    mkdir -p "$vault_path"/{10_Templates,99_Archive}
+  fi
   
   # Create vault config (obsidian.json)
   mkdir -p "$vault_path/.obsidian"
@@ -135,12 +156,9 @@ Semantic knowledge graph for \`$project_path\`.
 
 ## Structure
 
-- **inbox/** — Incoming notes, auto-ingested via \`openclaw-brain-ingest\`
-- **projects/** — Project-specific knowledge (architecture, decisions, patterns)
-- **agents/** — Agent-specific learnings and preferences
-- **patterns/** — Code patterns, conventions, best practices
-- **decisions/** — Architectural and design decisions (ADRs)
-- **references/** — External references, links, documentation
+Folder layout is driven by \`config/vault-schema.json\` and can be customized by the curator.
+
+Run \`engram-brain-graph init\` to regenerate from the current schema.
 
 ## Indexing
 
@@ -593,6 +611,81 @@ NOTE_EOF
   echo ""
 }
 
+# Find connections via wikilink traversal
+find_connections() {
+  local vault_path="$1"
+  local query="$2"
+  local max_depth="${3:-2}"
+  local min_score="${4:-0.2}"
+  local limit="${5:-10}"
+
+  if [ ! -d "$vault_path" ]; then
+    log_error "Vault not found: $vault_path"
+    exit 1
+  fi
+
+  # Use Python to call wikilink_weaver's relatedness scoring
+  local lib_dir
+  lib_dir="$(cd "$(dirname "$0")/../lib" && pwd)"
+
+  python3 - "$vault_path" "$query" "$max_depth" "$min_score" "$limit" "$lib_dir" << 'PYEOF'
+import sys, json, os
+vault_path, query, max_depth, min_score, limit, lib_dir = sys.argv[1:7]
+max_depth, min_score, limit = int(max_depth), float(min_score), int(limit)
+
+sys.path.insert(0, os.path.dirname(lib_dir))
+from lib.wikilink_weaver import _load_notes_for_weaving, compute_relatedness
+from pathlib import Path
+
+vault = Path(vault_path)
+notes = _load_notes_for_weaving(vault)
+
+# Build a pseudo-query note from the search terms
+query_note = {"title": query, "tags": query.lower().split(), "body": query}
+
+# Score all notes against the query
+scored = []
+for stem, note in notes.items():
+    score = compute_relatedness(query_note, note)
+    if score >= min_score:
+        scored.append({"note": stem, "score": round(score, 4), "path": str(note["path"]), "links": list(note["links"])})
+
+scored.sort(key=lambda x: x["score"], reverse=True)
+seed_results = scored[:limit]
+
+# BFS traversal from seed results through wikilinks
+if max_depth > 0 and seed_results:
+    visited = {r["note"] for r in seed_results}
+    frontier = [(r["note"], 0) for r in seed_results]
+    traversed = []
+    while frontier:
+        stem, depth = frontier.pop(0)
+        if depth >= max_depth:
+            continue
+        if stem in notes:
+            for linked in notes[stem]["links"]:
+                if linked not in visited and linked in notes:
+                    visited.add(linked)
+                    link_note = notes[linked]
+                    link_score = compute_relatedness(query_note, link_note)
+                    traversed.append({
+                        "note": linked,
+                        "score": round(link_score, 4),
+                        "path": str(link_note["path"]),
+                        "reached_via": stem,
+                        "depth": depth + 1,
+                    })
+                    frontier.append((linked, depth + 1))
+
+    # Merge and sort
+    all_results = seed_results + sorted(traversed, key=lambda x: x["score"], reverse=True)
+else:
+    all_results = seed_results
+
+print(json.dumps({"query": query, "results": all_results[:limit * 2], "total_notes": len(notes)}, indent=2))
+PYEOF
+}
+
 # Main dispatcher
 main() {
   if [[ $# -lt 1 ]]; then
@@ -667,6 +760,27 @@ main() {
         esac
       done
       generate_mcp_config "$vault_path" "$output_path"
+      ;;
+    find-connections)
+      if [[ $# -lt 2 ]]; then
+        echo "Usage: engram-brain-graph find-connections <vault-path> \"<query>\" [--max-depth N] [--min-score F] [--limit N]"
+        exit 1
+      fi
+      local vault_path="$1"
+      local query="$2"
+      shift 2
+      local max_depth="2"
+      local min_score="0.2"
+      local limit="10"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --max-depth) max_depth="$2"; shift 2 ;;
+          --min-score) min_score="$2"; shift 2 ;;
+          --limit) limit="$2"; shift 2 ;;
+          *) echo "Unknown option: $1"; exit 1 ;;
+        esac
+      done
+      find_connections "$vault_path" "$query" "$max_depth" "$min_score" "$limit"
       ;;
     status)
       if [[ $# -lt 1 ]]; then

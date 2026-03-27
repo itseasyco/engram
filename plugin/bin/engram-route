@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_ROOT="$(dirname "$SCRIPT_DIR")"
-POLICY_FILE="$TEST_ROOT/config/policy/risk-policy.json"
+POLICY_FILE="$TEST_ROOT/policy/risk-policy.json"
 
 AGENT_ID="$1"
 CHANNEL_NAME="$2"

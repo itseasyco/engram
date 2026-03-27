@@ -195,10 +195,10 @@ check_layer3() {
   # Check ingest script availability
   local bin_dir
   bin_dir="$(cd "$(dirname "$0")" && pwd)"
-  if [ -x "$bin_dir/openclaw-brain-ingest" ]; then
-    log_ok "openclaw-brain-ingest available"
+  if [ -x "$bin_dir/engram-brain-ingest" ]; then
+    log_ok "engram-brain-ingest available"
   else
-    log_warn "openclaw-brain-ingest not found"
+    log_warn "engram-brain-ingest not found"
     ((warnings++))
   fi
 
@@ -295,8 +295,8 @@ check_layer5() {
     # Quick integrity check
     local bin_dir
     bin_dir="$(cd "$(dirname "$0")" && pwd)"
-    if [ -x "$bin_dir/openclaw-provenance" ]; then
-      if bash "$bin_dir/openclaw-provenance" verify --project "$project" > /dev/null 2>&1; then
+    if [ -x "$bin_dir/engram-provenance" ]; then
+      if bash "$bin_dir/engram-provenance" verify --project "$project" > /dev/null 2>&1; then
         log_ok "Chain integrity: VERIFIED"
       else
         log_fail "Chain integrity: FAILED"
