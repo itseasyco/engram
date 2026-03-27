@@ -1052,7 +1052,7 @@ The wizard detects and installs required dependencies based on the features you 
 - The `pretool-guard` and `write-validate` hooks depend on `pre_tool_use` and `file_write` lifecycle events not yet exposed by the OpenClaw gateway. These hooks are fully implemented and tested, but will only activate once OpenClaw introduces these trigger points. Currently only `session_initialization` (session-start) and `agent_stop` (stop-quality-gate) are wired.
 
 **Code intelligence:**
-- Built-in AST parsing covers Python only. If GitNexus is not installed, JS/TS/Go/Rust files are counted but not parsed. The wizard offers to install GitNexus during setup.
+- Built-in AST parsing covers Python only. If GitNexus is not installed, JS/TS/Go/Rust files are counted but not parsed. The wizard offers to install GitNexus during setup. To add additional repos after setup, run `gitnexus analyze <repo-path>` or instruct your agent to initialize the repo with `engram-brain-code analyze <repo-path>`.
 
 **Ingestion:**
 - Video/audio ingestion (`engram-brain-ingest video`) is a work in progress — the pipeline is not fully integrated yet.
