@@ -342,30 +342,72 @@ def _extract_audio(video_path, output_path):
 
 
 def _transcribe_audio(audio_path, model="base"):
-    """Transcribe audio using Whisper CLI."""
-    if not shutil.which("whisper"):
-        raise FileNotFoundError("whisper is required for transcription. Install: pip install openai-whisper")
+    """Transcribe audio using insanely-fast-whisper (GPU-accelerated) or openai-whisper fallback."""
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # Prefer insanely-fast-whisper (much faster, GPU support)
+    if shutil.which("insanely-fast-whisper"):
+        model_id = {
+            "tiny": "openai/whisper-tiny",
+            "base": "openai/whisper-base",
+            "small": "openai/whisper-small",
+            "medium": "openai/whisper-medium",
+            "large": "openai/whisper-large-v3",
+        }.get(model, f"openai/whisper-{model}")
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            output_path = tmp.name
+
         cmd = [
-            "whisper", str(audio_path),
-            "--model", model,
-            "--output_format", "txt",
-            "--output_dir", tmpdir,
-            "--language", "en",
+            "insanely-fast-whisper",
+            "--file-name", str(audio_path),
+            "--model-name", model_id,
+            "--transcript-path", output_path,
         ]
-        print(f"Transcribing with Whisper ({model} model)...")
+        print(f"Transcribing with insanely-fast-whisper ({model} model)...")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         if result.returncode != 0:
             stderr = result.stderr.strip()
             if stderr:
-                print(f"Whisper stderr: {stderr}", file=sys.stderr)
+                print(f"insanely-fast-whisper stderr: {stderr}", file=sys.stderr)
 
-        txt_files = list(Path(tmpdir).glob("*.txt"))
-        if not txt_files:
-            raise RuntimeError("Whisper produced no output")
+        try:
+            import json as _json
+            data = _json.loads(Path(output_path).read_text())
+            text = data.get("text", "")
+            if not text and "chunks" in data:
+                text = " ".join(c.get("text", "") for c in data["chunks"])
+            return text.strip()
+        except Exception:
+            raise RuntimeError("insanely-fast-whisper produced no usable output")
+        finally:
+            Path(output_path).unlink(missing_ok=True)
 
-        return txt_files[0].read_text(encoding="utf-8").strip()
+    # Fallback to openai-whisper CLI
+    if shutil.which("whisper"):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = [
+                "whisper", str(audio_path),
+                "--model", model,
+                "--output_format", "txt",
+                "--output_dir", tmpdir,
+                "--language", "en",
+            ]
+            print(f"Transcribing with whisper ({model} model)...")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            if result.returncode != 0:
+                stderr = result.stderr.strip()
+                if stderr:
+                    print(f"whisper stderr: {stderr}", file=sys.stderr)
+
+            txt_files = list(Path(tmpdir).glob("*.txt"))
+            if not txt_files:
+                raise RuntimeError("whisper produced no output")
+
+            return txt_files[0].read_text(encoding="utf-8").strip()
+
+    raise FileNotFoundError(
+        "No transcription tool found. Install: pip3 install insanely-fast-whisper"
+    )
 
 
 def _get_video_duration(video_path):

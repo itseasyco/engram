@@ -141,6 +141,19 @@ function scanForVaults() {
 function detectDependencies() {
   const deps = {};
 
+  // Core tools
+  deps.python3 = commandExists('python3');
+  deps.pip = commandExists('pip3') || commandExists('pip');
+  deps.brew = commandExists('brew');
+  deps.apt = commandExists('apt-get');
+
+  // PDF extraction
+  deps.pdftotext = commandExists('pdftotext');
+
+  // Media ingestion
+  deps.ffmpeg = commandExists('ffmpeg');
+  deps.insanelyFastWhisper = commandExists('insanely-fast-whisper');
+
   // QMD
   deps.qmd = commandExists('qmd');
   if (deps.qmd) {
@@ -279,6 +292,46 @@ async function main() {
   log.message(dim('Controls how LACP stores and retrieves context facts.'));
 
   const deps = detectDependencies();
+
+  // ── Install missing core dependencies ─────────────────────────────────
+
+  const missing = [];
+  if (!deps.pdftotext) missing.push({ id: 'poppler', label: 'poppler (pdftotext)', install: deps.brew ? 'brew install poppler' : 'sudo apt-get install -y poppler-utils', hint: 'PDF text extraction' });
+  if (!deps.ffmpeg) missing.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
+  if (!deps.insanelyFastWhisper) missing.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pip3 install insanely-fast-whisper', hint: 'audio transcription (GPU-accelerated)' });
+
+  if (missing.length > 0) {
+    log.info(`${yellow('!')} ${missing.length} core dependenc${missing.length === 1 ? 'y' : 'ies'} not found`);
+
+    const toInstall = handleCancel(await multiselect({
+      message: 'Install missing dependencies?',
+      options: missing.map(m => ({
+        value: m.id,
+        label: m.label,
+        hint: `${m.hint} — ${dim(m.install)}`,
+      })),
+      required: false,
+    })) || [];
+
+    if (toInstall.length > 0) {
+      const s = spinner();
+      for (const depId of toInstall) {
+        const dep = missing.find(m => m.id === depId);
+        s.start(`Installing ${dep.label}...`);
+        try {
+          await runCommand(dep.install);
+          s.stop(`${green('+')} ${dep.label} installed`);
+        } catch (err) {
+          s.stop(`${red('x')} ${dep.label} failed: ${err.message}`);
+          log.warn(`You can install manually: ${dep.install}`);
+        }
+      }
+      // Re-detect after install
+      Object.assign(deps, detectDependencies());
+    }
+  } else {
+    log.success('All core dependencies found');
+  }
 
   const contextStatus = [];
   if (deps.losslessClaw) contextStatus.push('lossless-claw extension detected');

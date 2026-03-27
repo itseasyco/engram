@@ -19,7 +19,7 @@ Inspired by [LACP](https://github.com/0xNyk/lacp) by [@0xNyk](https://github.com
 
 Engram brings persistent agent memory into your development workflow. It gives your agents session memory that survives across conversations, a knowledge graph backed by Obsidian, safety hooks that block dangerous operations before they execute, and a hash-chained provenance trail for every session.
 
-The plugin implements a 5-layer memory system: per-project session memory with daily structure, an Obsidian-backed knowledge graph with QMD semantic search, an ingestion pipeline for external content (including video and audio via Whisper), AST-level code intelligence, and cryptographic provenance receipts. These layers work together so that every agent session starts with institutional context and ends with auditable evidence of what happened.
+The plugin implements a 5-layer memory system: per-project session memory with daily structure, an Obsidian-backed knowledge graph with QMD semantic search, an ingestion pipeline for external content (including video and audio via insanely-fast-whisper), AST-level code intelligence, and cryptographic provenance receipts. These layers work together so that every agent session starts with institutional context and ends with auditable evidence of what happened.
 
 Engram is for teams and individuals who run agents on real codebases and need guardrails (blocking `npm publish`, `git reset --hard`, secrets access), persistent memory (facts that carry between sessions), and a clear audit trail. It is local-first by default -- all data stays on your machine.
 
@@ -30,7 +30,7 @@ Engram is for teams and individuals who run agents on real codebases and need gu
 - Per-project session memory with daily folder structure and per-agent session files
 - Session auto-capture hook (fires automatically on `/new` and `/reset`)
 - Obsidian-backed knowledge graph with QMD semantic search
-- Video and audio ingestion via ffmpeg + Whisper transcription
+- Video and audio ingestion via ffmpeg + insanely-fast-whisper transcription
 - Vault doctor: scan orphans, fix frontmatter, add tags, rename hash files
 - Vault migration tool for restructuring existing vaults into Engram-compatible layout
 - 8-step curator maintenance cycle (inbox processing, consolidation, wikilinks, staleness, conflicts, schema, index, health)
@@ -57,7 +57,7 @@ Engram is for teams and individuals who run agents on real codebases and need gu
 | Obsidian | (optional) | Knowledge graph vault (Layer 2) |
 | qmd | (optional) | Semantic search indexing |
 | ffmpeg | (optional) | Video/audio ingestion (Layer 3) |
-| whisper | (optional) | Audio transcription for media ingestion |
+| insanely-fast-whisper | (optional) | GPU-accelerated audio transcription |
 
 ### Install
 
@@ -440,12 +440,12 @@ engram ingest audio ~/obsidian/vault ./voice-memo.mp3 \
 engram ingest video-batch ~/obsidian/vault ./recordings/ \
   --date-from-filename --parallel 4
 
-# Customize Whisper model for better accuracy
+# Customize whisper model for better accuracy
 engram ingest video ~/obsidian/vault ./presentation.mov \
   --whisper-model large --language en
 ```
 
-The pipeline: ffmpeg extracts audio -> Whisper transcribes to text -> transcript is structured into an Obsidian note with timestamps, speaker labels, and metadata.
+The pipeline: ffmpeg extracts audio -> insanely-fast-whisper transcribes to text -> transcript is structured into an Obsidian note with timestamps, speaker labels, and metadata.
 
 ### 3. Cron-based Sweep
 
@@ -1005,25 +1005,63 @@ While Engram is designed for the OpenClaw gateway, two of the four hooks can als
 
 ---
 
+## Multi-Agent Setup
+
+The setup wizard scans your `openclaw.json` for configured agents and lets you choose which ones get Engram memory tools.
+
+```bash
+engram wizard
+```
+
+During setup, the wizard will:
+
+1. Detect all agents in your OpenClaw config
+2. Let you select which agents should use Engram
+3. Append Engram tool documentation to each agent's `TOOLS.md`
+4. Initialize the knowledge graph, agent identity, and provenance chain
+5. Wire up integrations (lossless-claw, GitNexus, QMD, MCP servers) based on your choices
+
+Each selected agent gets a `TOOLS.md` section that teaches it when and how to use the memory tools — query before investigating, promote facts as they're discovered, ingest external references, save session state.
+
+To add Engram to additional agents later:
+
+```bash
+engram wizard --section agents
+```
+
+---
+
+## Dependencies
+
+The wizard detects and installs required dependencies based on the features you enable. Core dependencies are installed automatically. Optional integrations are offered during setup:
+
+| Dependency | Installed by wizard | What it enables |
+|-----------|-------------------|-----------------|
+| poppler (pdftotext) | Yes, if ingestion enabled | PDF text extraction |
+| ffmpeg | Yes, if media ingestion enabled | Video/audio processing |
+| GitNexus | Optional (offered during setup) | Multi-language AST, call graphs, complexity analysis |
+| lossless-claw | Optional (offered during setup) | Native LCM SQLite context engine |
+| obsidian-headless (ob) | Optional (offered during setup) | Multi-machine vault sync for connected/curator modes |
+| QMD | Optional (offered during setup) | Semantic search indexing on vault |
+
+---
+
 ## Current Limitations
 
-**Hooks:**
-- The `pretool-guard` and `write-validate` hooks depend on `pre_tool_use` and `file_write` lifecycle events not yet exposed by OpenClaw or Claude Code. Only `session_initialization` and `agent_stop` are currently wired.
-- Hook exit code protocol is standardized (0=allow, 1=block, 2=warn) but the gateway does not yet consume exit codes from all hook types uniformly.
+**Hooks — waiting on OpenClaw lifecycle methods:**
+- The `pretool-guard` and `write-validate` hooks depend on `pre_tool_use` and `file_write` lifecycle events not yet exposed by the OpenClaw gateway. These hooks are fully implemented and tested, but will only activate once OpenClaw introduces these trigger points. Currently only `session_initialization` (session-start) and `agent_stop` (stop-quality-gate) are wired.
 
 **Code intelligence:**
-- Built-in AST parsing only covers Python. JS/TS/Go/Rust files are counted but not parsed. Install [GitNexus](https://github.com/gitnexus/gitnexus) (`npm install -g gitnexus`) for full multi-language support.
+- Built-in AST parsing covers Python only. If GitNexus is not installed, JS/TS/Go/Rust files are counted but not parsed. The wizard offers to install GitNexus during setup.
 
 **Ingestion:**
-- Video/audio ingestion (`engram-brain-ingest video`) is a work in progress. It requires `ffmpeg` and OpenAI Whisper which are not bundled. The pipeline is not fully integrated yet.
-- PDF text extraction requires `pdftotext` (poppler-utils). Without it, a basic byte-level fallback is used. Install via `brew install poppler` (macOS) or `apt install poppler-utils` (Linux).
+- Video/audio ingestion (`engram-brain-ingest video`) is a work in progress — the pipeline is not fully integrated yet.
 
 **Shared vault (connected/curator modes):**
-- Requires `obsidian-headless` (`ob`) for vault sync. This is an experimental dependency.
-- The setup wizard (`INSTALL.sh`) does not yet include mode selection — configure manually via config files.
+- Requires `obsidian-headless` (`ob`) which is an experimental dependency. The wizard offers to install it if you select connected or curator mode.
 
 **Execution lifecycle:**
-- The 12-state lifecycle (SUBMITTED through COMPLETED) is specced but not tracked at runtime. The gated-run system covers the core approval/execution flow but does not emit state transitions.
+- The 12-state lifecycle (SUBMITTED through COMPLETED) is designed but not tracked at runtime. The gated-run system covers the core approval/execution flow but does not emit state transitions.
 
 ---
 
