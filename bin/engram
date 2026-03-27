@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=$(node -p "try{require(process.env.HOME+'/engram/package.json').version}catch(e){'2.2.0'}" 2>/dev/null || echo "2.2.0")
+# Resolve version from package.json relative to this script
+_script_source="${BASH_SOURCE[0]}"
+while [ -L "$_script_source" ]; do
+    _script_dir="$(cd -P "$(dirname "$_script_source")" && pwd)"
+    _script_source="$(readlink "$_script_source")"
+    [[ "$_script_source" != /* ]] && _script_source="$_script_dir/$_script_source"
+done
+_pkg_json="$(cd -P "$(dirname "$_script_source")/.." && pwd)/package.json"
+VERSION=$(node -p "try{require('${_pkg_json}').version}catch(e){'3.0.0'}" 2>/dev/null || echo "3.0.0")
 
 # Resolve the real location of this script (follow npm link symlinks)
 _resolve_script_dir() {
