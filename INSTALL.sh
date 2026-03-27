@@ -57,7 +57,7 @@ log_warning() { echo -e "${YELLOW}!${NC}  $1"; }
 log_error()   { echo -e "${RED}✗${NC}  $1"; }
 log_step()    { echo -e "\n${BOLD}[$1/$TOTAL_STEPS] $2${NC}"; }
 
-TOTAL_STEPS=8
+TOTAL_STEPS=10
 
 # ─── Detect environment ──────────────────────────────────────────────────────
 
@@ -1271,10 +1271,175 @@ init_obsidian_vault() {
     fi
 }
 
-# ─── Step 7: Run validation ─────────────────────────────────────────────────
+# ─── Step 7: Initialize stack and integrations ────────────────────────────
+
+init_stack_and_integrations() {
+    log_step 7 "Initializing memory stack and integrations"
+
+    local bin_dir="$PLUGIN_PATH/bin"
+
+    # Initialize knowledge graph on the vault
+    if [ -d "$DETECTED_VAULT" ] && [ -x "$bin_dir/engram-brain-graph" ]; then
+        log_info "Initializing knowledge graph..."
+        bash "$bin_dir/engram-brain-graph" init "$(pwd)" --vault "$DETECTED_VAULT" 2>/dev/null || true
+        log_success "Knowledge graph initialized"
+    fi
+
+    # Register agent identity
+    if [ -x "$bin_dir/engram-agent-id" ]; then
+        log_info "Registering agent identity..."
+        bash "$bin_dir/engram-agent-id" register "$(pwd)" 2>/dev/null || true
+        log_success "Agent identity registered"
+    fi
+
+    # Initialize provenance chain
+    if [ "$WIZARD_PROVENANCE" = "true" ] && [ -x "$bin_dir/engram-provenance" ]; then
+        log_info "Initializing provenance chain..."
+        bash "$bin_dir/engram-provenance" start --project "$(pwd)" 2>/dev/null || true
+        bash "$bin_dir/engram-provenance" end --project "$(pwd)" --exit-code 0 2>/dev/null || true
+        log_success "Provenance chain initialized (genesis receipt created)"
+    fi
+
+    # Wire lossless-claw if detected
+    if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ] && [ "$HAS_JQ" = "true" ]; then
+        log_info "Wiring lossless-claw context engine..."
+        local tmp
+        tmp=$(mktemp)
+        jq '.plugins.entries["engram"].config.contextEngine = "lossless-claw"' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
+        log_success "Context engine set to lossless-claw in gateway config"
+    fi
+
+    # Wire GitNexus if detected
+    if [ "$WIZARD_CODE_GRAPH" = "true" ]; then
+        if command -v gitnexus &>/dev/null; then
+            log_info "Enabling code graph with GitNexus..."
+            if [ "$HAS_JQ" = "true" ]; then
+                local tmp
+                tmp=$(mktemp)
+                jq '.plugins.entries["engram"].config.codeGraphEnabled = true' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
+            fi
+
+            # Run initial analysis if in a git repo
+            if [ -d ".git" ] && [ -x "$bin_dir/engram-brain-code" ]; then
+                log_info "Running initial code analysis..."
+                python3 "$bin_dir/engram-brain-code" analyze "$(pwd)" --output "$PLUGIN_PATH/config/initial-analysis.json" 2>/dev/null || true
+                log_success "Initial code analysis complete"
+            fi
+
+            # Generate MCP config for GitNexus
+            if [ -x "$bin_dir/engram-brain-graph" ]; then
+                log_info "Generating MCP server configs..."
+                bash "$bin_dir/engram-brain-graph" mcp-config "$DETECTED_VAULT" --output "$PLUGIN_PATH/config/mcp-servers.json" 2>/dev/null || true
+                log_success "MCP server configs generated"
+            fi
+        else
+            log_warning "Code graph enabled but GitNexus not installed — built-in Python-only AST will be used"
+            log_info "  Install for full multi-language support: npm install -g gitnexus"
+        fi
+    fi
+
+    # Run QMD initial indexing if available
+    export PATH="$HOME/.bun/bin:$PATH"
+    if command -v qmd &>/dev/null && [ -d "$DETECTED_VAULT" ]; then
+        log_info "Running initial QMD indexing on vault..."
+        (cd "$DETECTED_VAULT" && qmd update 2>/dev/null && qmd embed 2>/dev/null) || true
+        log_success "QMD indexing complete"
+    fi
+}
+
+# ─── Step 8: Write TOOLS.md to agent workspaces ───────────────────────────
+
+write_tools_md() {
+    log_step 8 "Configuring agent workspaces"
+
+    local template_file="$PLUGIN_PATH/templates/tools-engram.md"
+
+    if [ ! -f "$template_file" ]; then
+        log_warning "Engram TOOLS.md template not found — skipping workspace setup"
+        return
+    fi
+
+    # Read selected agents from wizard config
+    local config_file="/tmp/engram-wizard-config.json"
+    local agent_count=0
+
+    if [ -f "$config_file" ] && command -v node &>/dev/null; then
+        agent_count=$(node -p "
+            var c = JSON.parse(require('fs').readFileSync('$config_file','utf8'));
+            (c.agents && c.agents.selected) ? c.agents.selected.length : 0
+        " 2>/dev/null || echo "0")
+    fi
+
+    if [ "$agent_count" = "0" ]; then
+        log_info "No agents selected — skipping TOOLS.md generation"
+        return
+    fi
+
+    # Get agent workspaces as JSON
+    local workspaces_json
+    workspaces_json=$(node -p "
+        var c = JSON.parse(require('fs').readFileSync('$config_file','utf8'));
+        JSON.stringify(c.agents.workspaces || {})
+    " 2>/dev/null || echo "{}")
+
+    # Iterate over selected agents
+    local agents_json
+    agents_json=$(node -p "
+        var c = JSON.parse(require('fs').readFileSync('$config_file','utf8'));
+        JSON.stringify(c.agents.selected || [])
+    " 2>/dev/null || echo "[]")
+
+    # Parse agents array
+    local agent_ids
+    agent_ids=$(echo "$agents_json" | python3 -c "import json,sys; [print(a) for a in json.load(sys.stdin)]" 2>/dev/null || true)
+
+    local updated=0
+    local created=0
+
+    while IFS= read -r agent_id; do
+        [ -z "$agent_id" ] && continue
+
+        # Get workspace path for this agent
+        local workspace
+        workspace=$(echo "$workspaces_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('$agent_id',''))" 2>/dev/null || echo "")
+
+        if [ -z "$workspace" ] || [ ! -d "$workspace" ]; then
+            log_warning "Agent '$agent_id': no workspace directory found — skipping"
+            continue
+        fi
+
+        local tools_file="$workspace/TOOLS.md"
+
+        if [ -f "$tools_file" ]; then
+            # Check if engram section already exists
+            if grep -q "## Engram" "$tools_file" 2>/dev/null; then
+                log_info "Agent '$agent_id': TOOLS.md already has Engram section — skipping"
+                continue
+            fi
+            # Append
+            echo "" >> "$tools_file"
+            cat "$template_file" >> "$tools_file"
+            log_success "Agent '$agent_id': appended Engram docs to TOOLS.md"
+            (( updated++ )) || true
+        else
+            # Create new
+            echo "# Tools" > "$tools_file"
+            echo "" >> "$tools_file"
+            cat "$template_file" >> "$tools_file"
+            log_success "Agent '$agent_id': created TOOLS.md with Engram docs"
+            (( created++ )) || true
+        fi
+    done <<< "$agent_ids"
+
+    if [ $((updated + created)) -gt 0 ]; then
+        log_success "Updated $updated / created $created TOOLS.md file(s)"
+    fi
+}
+
+# ─── Step 9: Run validation ─────────────────────────────────────────────────
 
 run_validation() {
-    log_step 7 "Validating installation"
+    log_step 9 "Validating installation"
 
     local pass=0
     local fail=0
@@ -1408,7 +1573,7 @@ run_validation() {
 # ─── Step 8: Summary ────────────────────────────────────────────────────────
 
 print_summary() {
-    log_step 8 "Installation complete"
+    log_step 10 "Installation complete"
 
     echo ""
     echo -e "${GREEN}✓ Engram v${PLUGIN_VERSION} installed${NC}"
@@ -1582,6 +1747,8 @@ main() {
     generate_env_config
     update_gateway_config
     init_obsidian_vault
+    init_stack_and_integrations
+    write_tools_md
     run_validation
     print_summary
 

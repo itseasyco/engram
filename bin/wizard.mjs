@@ -642,7 +642,82 @@ async function main() {
     }
   }
 
-  // ── Step 7: Summary ─────────────────────────────────────────────────────
+  // ── Step 7: Agent Selection ─────────────────────────────────────────────
+
+  let selectedAgents = [];
+  let agentWorkspaces = {};
+
+  // Scan openclaw.json for configured agents
+  const gatewayPath = join(OPENCLAW_HOME, 'openclaw.json');
+  let allAgents = [];
+
+  if (existsSync(gatewayPath)) {
+    try {
+      const gatewayData = JSON.parse(readFileSync(gatewayPath, 'utf-8'));
+      const agentList = gatewayData?.agents?.list || [];
+      for (const agent of agentList) {
+        if (agent.id && agent.name) {
+          allAgents.push({
+            id: agent.id,
+            name: agent.name,
+            workspace: agent.workspace || null,
+            emoji: agent.identity?.emoji || '',
+          });
+        }
+      }
+    } catch { /* gateway parse failed */ }
+  }
+
+  if (allAgents.length > 0) {
+    log.info(`Found ${bold(String(allAgents.length))} agent${allAgents.length === 1 ? '' : 's'} in OpenClaw config`);
+
+    const agentChoices = allAgents.map((a) => ({
+      value: a.id,
+      label: `${a.emoji} ${a.name} (${a.id})`,
+      hint: a.workspace ? dim(a.workspace) : dim('no workspace'),
+    }));
+
+    selectedAgents = handleCancel(await multiselect({
+      message: 'Which agents should use Engram memory tools?',
+      options: agentChoices,
+      required: false,
+    })) || [];
+
+    if (selectedAgents.length > 0) {
+      // Build workspace map for selected agents
+      for (const agentId of selectedAgents) {
+        const agent = allAgents.find(a => a.id === agentId);
+        if (agent?.workspace) {
+          agentWorkspaces[agentId] = agent.workspace;
+        }
+      }
+
+      log.success(`${selectedAgents.length} agent${selectedAgents.length === 1 ? '' : 's'} selected: ${selectedAgents.join(', ')}`);
+
+      // Check which workspaces have TOOLS.md
+      const toolsMdAgents = selectedAgents.filter(id => {
+        const ws = agentWorkspaces[id];
+        return ws && existsSync(join(ws, 'TOOLS.md'));
+      });
+      const noToolsMdAgents = selectedAgents.filter(id => {
+        const ws = agentWorkspaces[id];
+        return ws && !existsSync(join(ws, 'TOOLS.md'));
+      });
+
+      if (toolsMdAgents.length > 0) {
+        log.info(`Will append Engram docs to TOOLS.md: ${toolsMdAgents.join(', ')}`);
+      }
+      if (noToolsMdAgents.length > 0) {
+        log.info(`Will create TOOLS.md for: ${noToolsMdAgents.join(', ')}`);
+      }
+    } else {
+      log.info('No agents selected — TOOLS.md will not be modified');
+    }
+  } else {
+    log.info('No agents found in OpenClaw config — skipping agent selection');
+  }
+
+  // ── Step 8: Summary ─────────────────────────────────────────────────────
 
   const summaryLines = [
     `Obsidian vault:    ${green(vaultPath)}`,
@@ -658,6 +733,10 @@ async function main() {
 
   if (operatingMode === 'connected' && curatorUrl) {
     summaryLines.push(`Curator URL:       ${green(curatorUrl)}`);
+  }
+
+  if (selectedAgents.length > 0) {
+    summaryLines.push(`Agents:            ${green(selectedAgents.join(', '))}`);
   }
 
   if (disabledRules.length > 0) {
@@ -708,6 +787,10 @@ async function main() {
       obsidianHeadless: deps.obsidianHeadless,
       losslessClaw: deps.losslessClaw,
       gitnexus: deps.gitnexus,
+    },
+    agents: {
+      selected: selectedAgents,
+      workspaces: agentWorkspaces,
     },
   };
 
