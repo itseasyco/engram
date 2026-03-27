@@ -66,14 +66,17 @@ def write_review_queue(vault_path=None, max_items=20, r_threshold=0.5):
     """
     Generate and write the review queue to the vault's inbox.
 
-    Writes to 05_Inbox/review-queue.md in the vault.
+    Writes to inbox/review-queue.md in the vault.
     """
     if vault_path is None:
         vault_path = os.environ.get('LACP_OBSIDIAN_VAULT', os.path.expanduser('~/obsidian/vault'))
 
     queue = generate_review_queue(vault_path, max_items, r_threshold)
-    vault = Path(vault_path)
-    inbox = vault / '05_Inbox'
+    try:
+        from .vault_paths import resolve
+        inbox = resolve('inbox')
+    except (ImportError, KeyError):
+        inbox = Path(vault_path) / 'inbox'
     inbox.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')

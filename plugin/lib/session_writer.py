@@ -39,8 +39,8 @@ def _memory_root() -> Path:
     """Return the memory directory based on operating mode.
 
     Uses vault_paths resolver — curator can change locations via vault-schema.json.
-    Standalone/curator: vault_paths.memory (default: 01_memory/)
-    Connected: vault_paths.inbox_session (default: 05_Inbox/queue-session/)
+    Standalone/curator: vault_paths.memory (default: memory/)
+    Connected: vault_paths.inbox_session (default: inbox/queue-session/)
     """
     try:
         from .vault_paths import resolve
@@ -59,7 +59,7 @@ def _memory_root() -> Path:
             vault = os.path.join(openclaw_home, "data", "knowledge")
         mode = _get_mode()
         if mode == "connected":
-            return Path(vault) / "05_Inbox" / "queue-session"
+            return Path(vault) / "inbox" / "queue-session"
         return Path(vault) / "memory"
 
 
@@ -107,7 +107,7 @@ def write_session_memory(
     agent_slug = _sanitize_agent_name(agent_name)
 
     # Create daily folder: memory/YYYY-MM/YYYY-MM-DD/ (standalone)
-    # or 05_Inbox/queue-session/ (connected, flat)
+    # or inbox/queue-session/ (connected, flat)
     month = dt.strftime("%Y-%m")
     mode = _get_mode()
     if mode == "connected":

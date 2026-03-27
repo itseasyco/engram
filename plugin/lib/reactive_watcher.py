@@ -111,7 +111,11 @@ def _poll_for_changes(vault_path: Path, handler: CuratorEventHandler, interval: 
     known_files = set()
 
     # Initial scan
-    inbox = vault_path / "05_Inbox"
+    try:
+        from .vault_paths import resolve
+        inbox = resolve("inbox")
+    except (ImportError, KeyError):
+        inbox = vault_path / "inbox"
     if inbox.exists():
         for queue_dir in inbox.iterdir():
             if queue_dir.is_dir() and queue_dir.name.startswith("queue-"):
@@ -152,11 +156,20 @@ def _default_inbox_handler(file_path: Path):
     from .inbox_processor import classify_note
 
     vault_path = file_path
-    # Walk up to find vault root (contains 05_Inbox)
+    # Walk up to find vault root (contains .obsidian or inbox dir)
     for parent in file_path.parents:
-        if (parent / "05_Inbox").exists():
+        if (parent / ".obsidian").exists():
             vault_path = parent
             break
+        try:
+            from .vault_paths import resolve
+            if parent == resolve("inbox").parent:
+                vault_path = parent
+                break
+        except (ImportError, KeyError):
+            if (parent / "inbox").exists():
+                vault_path = parent
+                break
 
     classification = classify_note(file_path, vault_path)
     logger.info(
@@ -180,9 +193,18 @@ def _default_conflict_handler(file_path: Path):
 
     vault_path = file_path
     for parent in file_path.parents:
-        if (parent / ".obsidian").exists() or (parent / "05_Inbox").exists():
+        if (parent / ".obsidian").exists():
             vault_path = parent
             break
+        try:
+            from .vault_paths import resolve
+            if parent == resolve("inbox").parent:
+                vault_path = parent
+                break
+        except (ImportError, KeyError):
+            if (parent / "inbox").exists():
+                vault_path = parent
+                break
 
     result = resolve_conflicts(str(vault_path), dry_run=False)
     logger.info(

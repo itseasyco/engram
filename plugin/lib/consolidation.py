@@ -243,7 +243,11 @@ def run_consolidation(vault_path=None, apply=False, dry_run=True, config=None):
     # Step 6: Prune (archive)
     pruned = set()
     if apply and not dry_run:
-        archive_dir = Path(vault_path) / '99_Archive'
+        try:
+            from .vault_paths import resolve
+            archive_dir = resolve('archive')
+        except (ImportError, KeyError):
+            archive_dir = Path(vault_path) / 'archive'
         archive_dir.mkdir(parents=True, exist_ok=True)
         for node_id in prune_candidates:
             src = Path(items[node_id].get('path', ''))

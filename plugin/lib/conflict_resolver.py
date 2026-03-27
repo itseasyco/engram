@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from .consolidation import _parse_frontmatter
+from .vault_paths import resolve
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +213,7 @@ def resolve_conflicts(
     orphaned = 0
     details = []
 
-    review_dir = vault / "05_Inbox" / "review-conflicts"
+    review_dir = resolve("inbox") / "review-conflicts"
 
     for conflict in conflicts:
         conflict_path = conflict["conflict_path"]

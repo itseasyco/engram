@@ -10,12 +10,12 @@ Usage:
     from vault_paths import vault, resolve
 
     # Get a specific path
-    memory_dir = vault.memory          # -> Path("/Volumes/Cortex/01_memory")
-    inbox = vault.inbox_agent          # -> Path("/Volumes/Cortex/05_Inbox/queue-agent")
+    memory_dir = vault.memory          # -> Path("/Volumes/Cortex/memory")
+    inbox = vault.inbox_agent          # -> Path("/Volumes/Cortex/inbox/queue-agent")
 
     # Or resolve by key
-    path = resolve("memory")           # -> Path("/Volumes/Cortex/01_memory")
-    path = resolve("inbox_session")    # -> Path("/Volumes/Cortex/05_Inbox/queue-session")
+    path = resolve("memory")           # -> Path("/Volumes/Cortex/memory")
+    path = resolve("inbox_session")    # -> Path("/Volumes/Cortex/inbox/queue-session")
 """
 from __future__ import annotations
 
@@ -27,30 +27,40 @@ from typing import Optional
 
 # Default paths (used when vault-schema.json doesn't exist or is missing a key)
 _DEFAULTS = {
-    "index": "00_Index.md",
-    "projects": "01_Projects",
-    "concepts": "02_Concepts",
-    "people": "03_People",
-    "systems": "04_Systems",
-    "inbox": "05_Inbox",
-    "inbox_agent": "05_Inbox/queue-agent",
-    "inbox_cicd": "05_Inbox/queue-cicd",
-    "inbox_human": "05_Inbox/queue-human",
-    "inbox_external": "05_Inbox/queue-external",
-    "inbox_session": "05_Inbox/queue-session",
-    "inbox_stale": "05_Inbox/review-stale",
-    "planning": "06_Planning",
-    "research": "07_Research",
-    "strategy": "08_Strategy",
-    "changelog": "09_Changelog",
-    "changelog_branches": "09_Changelog/branches",
-    "changelog_merged": "09_Changelog/merged",
-    "changelog_releases": "09_Changelog/releases",
-    "changelog_deploys": "09_Changelog/deploys",
-    "changelog_environments": "09_Changelog/environments",
-    "templates": "10_Templates",
-    "memory": "01_memory",
-    "archive": "99_Archive",
+    "index": "index.md",
+    "home": "home",
+    "memory": "memory",
+    "projects": "projects",
+    "concepts": "concepts",
+    "people": "people",
+    "people_team": "people/team",
+    "people_personal": "people/personal",
+    "people_investors": "people/investors",
+    "people_clients": "people/clients",
+    "systems": "systems",
+    "engineering": "engineering",
+    "knowledge": "knowledge",
+    "inbox": "inbox",
+    "inbox_agent": "inbox/queue-agent",
+    "inbox_cicd": "inbox/queue-cicd",
+    "inbox_human": "inbox/queue-human",
+    "inbox_external": "inbox/queue-external",
+    "inbox_session": "inbox/queue-session",
+    "inbox_stale": "inbox/review-stale",
+    "planning": "planning",
+    "research": "research",
+    "strategy": "strategy",
+    "sessions": "sessions",
+    "reference": "reference",
+    "health": "health",
+    "changelog": "changelog",
+    "changelog_branches": "changelog/branches",
+    "changelog_merged": "changelog/merged",
+    "changelog_releases": "changelog/releases",
+    "changelog_deploys": "changelog/deploys",
+    "changelog_environments": "changelog/environments",
+    "templates": "templates",
+    "archive": "archive",
 }
 
 # Cache
@@ -136,8 +146,8 @@ class _VaultAccessor:
     """Attribute-style access to vault paths.
 
     Usage:
-        vault.memory          -> Path("/Volumes/Cortex/01_memory")
-        vault.inbox_agent     -> Path("/Volumes/Cortex/05_Inbox/queue-agent")
+        vault.memory          -> Path("/Volumes/Cortex/memory")
+        vault.inbox_agent     -> Path("/Volumes/Cortex/inbox/queue-agent")
         vault.root            -> Path("/Volumes/Cortex")
     """
 

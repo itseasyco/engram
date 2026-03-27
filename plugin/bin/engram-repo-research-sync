@@ -273,7 +273,9 @@ main() {
     exit 1
   fi
 
-  local vault_dir="$vault/01_Projects/$slug"
+  local vault_dir
+  vault_dir=$(python3 -c "import sys; sys.path.insert(0,'$(dirname "$0")/../lib'); from vault_paths import resolve; print(resolve('projects'))" 2>/dev/null || echo "$vault/projects")
+  vault_dir="$vault_dir/$slug"
   mkdir -p "$vault_dir"
 
   if [ "$dry_run" = "1" ]; then

@@ -250,4 +250,8 @@ def get_inbox_queue_path(agent_id: str = "") -> str:
     """
     config = get_config()
     queue_name = f"queue-{agent_id}" if agent_id else "queue-agent"
-    return os.path.join(config.vault_path, "05_Inbox", queue_name)
+    try:
+        from .vault_paths import resolve
+        return str(resolve("inbox") / queue_name)
+    except (ImportError, KeyError):
+        return os.path.join(config.vault_path, "inbox", queue_name)

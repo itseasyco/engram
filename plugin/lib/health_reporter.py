@@ -3,7 +3,7 @@ Health reporter for the curator engine.
 
 Computes graph health metrics (note count, orphan rate, staleness distribution,
 link density, inbox size) and generates a health report written to
-05_Inbox/curator-health-report.md.
+the inbox folder as curator-health-report.md.
 """
 
 import os
@@ -14,6 +14,7 @@ from typing import Optional
 
 from .consolidation import _load_vault_notes, _parse_frontmatter, _extract_links
 from .staleness import compute_staleness_score, classify_staleness
+from .vault_paths import resolve
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +37,7 @@ def compute_graph_metrics(vault_path: Path) -> dict:
 
     for md_file in vault_path.rglob("*.md"):
         rel = md_file.relative_to(vault_path).as_posix()
-        if rel.startswith(".obsidian/") or md_file.name == "index.md" or md_file.stem == "00_Index":
+        if rel.startswith(".obsidian/") or md_file.name == "index.md" or md_file == resolve("index"):
             continue
 
         try:
@@ -77,11 +78,13 @@ def compute_graph_metrics(vault_path: Path) -> dict:
         for link in data["links"]:
             incoming[link] += 1
 
+    _inbox_prefix = resolve("inbox").relative_to(vault_path).as_posix() + "/"
+    _archive_prefix = resolve("archive").relative_to(vault_path).as_posix() + "/"
     orphan_count = sum(
         1 for stem in notes
         if incoming.get(stem, 0) == 0
-        and not notes[stem]["rel_path"].startswith("05_Inbox/")
-        and not notes[stem]["rel_path"].startswith("99_Archive/")
+        and not notes[stem]["rel_path"].startswith(_inbox_prefix)
+        and not notes[stem]["rel_path"].startswith(_archive_prefix)
     )
     orphan_rate = orphan_count / note_count if note_count > 0 else 0.0
 
@@ -90,7 +93,7 @@ def compute_graph_metrics(vault_path: Path) -> dict:
     staleness_dist = defaultdict(int)
     for stem, data in notes.items():
         fm = data["fm"]
-        if data["rel_path"].startswith("05_Inbox/") or data["rel_path"].startswith("99_Archive/"):
+        if data["rel_path"].startswith(_inbox_prefix) or data["rel_path"].startswith(_archive_prefix):
             continue
         last_traversed = fm.get("last_traversed", fm.get("updated", ""))
         traversal_count = fm.get("traversal_count", fm.get("count", 0))
@@ -105,7 +108,7 @@ def compute_graph_metrics(vault_path: Path) -> dict:
 
     # Inbox pending
     inbox_pending = 0
-    inbox_dir = vault_path / "05_Inbox"
+    inbox_dir = resolve("inbox")
     if inbox_dir.exists():
         for queue_dir in inbox_dir.iterdir():
             if queue_dir.is_dir() and queue_dir.name.startswith("queue-"):
@@ -248,7 +251,7 @@ def generate_health_report(
     lines.append("")
 
     report_content = "\n".join(lines)
-    report_path = vault / "05_Inbox" / "curator-health-report.md"
+    report_path = resolve("inbox") / "curator-health-report.md"
 
     if not dry_run:
         report_path.parent.mkdir(parents=True, exist_ok=True)

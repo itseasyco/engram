@@ -128,12 +128,12 @@ init_graph() {
       [ -n "$folder" ] && mkdir -p "$vault_path/$folder"
     done <<< "$folders"
   else
-    # Fallback to numbered defaults matching vault_paths.py _DEFAULTS
-    mkdir -p "$vault_path"/{00_Index,01_Projects,02_Concepts,03_People,04_Systems}
-    mkdir -p "$vault_path"/05_Inbox/{queue-agent,queue-cicd,queue-human,queue-external,queue-session,review-stale}
-    mkdir -p "$vault_path"/{06_Planning,07_Research,08_Strategy}
-    mkdir -p "$vault_path"/09_Changelog/{branches,merged,releases,deploys,environments}
-    mkdir -p "$vault_path"/{10_Templates,99_Archive}
+    # Fallback to un-numbered defaults matching vault_paths.py _DEFAULTS
+    mkdir -p "$vault_path"/{projects,concepts,people,systems}
+    mkdir -p "$vault_path"/inbox/{queue-agent,queue-cicd,queue-human,queue-external,queue-session,review-stale}
+    mkdir -p "$vault_path"/{planning,research,strategy}
+    mkdir -p "$vault_path"/changelog/{branches,merged,releases,deploys,environments}
+    mkdir -p "$vault_path"/{templates,archive}
   fi
   
   # Create vault config (obsidian.json)

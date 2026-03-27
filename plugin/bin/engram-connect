@@ -290,7 +290,11 @@ def cmd_health(args: argparse.Namespace) -> int:
     inbox_count = 0
     conflict_count = 0
     if vault.exists():
-        inbox_dir = vault / "05_Inbox"
+        try:
+            from vault_paths import resolve
+            inbox_dir = resolve("inbox")
+        except (ImportError, KeyError):
+            inbox_dir = vault / "inbox"
         if inbox_dir.exists():
             inbox_count = sum(1 for _ in inbox_dir.rglob("*.md"))
         conflict_count = sum(1 for _ in vault.rglob("* (conflict *).md"))

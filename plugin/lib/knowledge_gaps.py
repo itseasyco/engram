@@ -118,8 +118,11 @@ def write_gap_report(vault_path=None, min_category_size=3):
         vault_path = os.environ.get('LACP_OBSIDIAN_VAULT', os.path.expanduser('~/obsidian/vault'))
 
     gaps = detect_knowledge_gaps(vault_path, min_category_size)
-    vault = Path(vault_path)
-    inbox = vault / '05_Inbox'
+    try:
+        from .vault_paths import resolve
+        inbox = resolve('inbox')
+    except (ImportError, KeyError):
+        inbox = Path(vault_path) / 'inbox'
     inbox.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')

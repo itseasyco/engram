@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from .consolidation import _parse_frontmatter, _extract_links
+from .vault_paths import resolve
 
 
 # ---------------------------------------------------------------------------
@@ -129,10 +130,11 @@ def _load_notes_for_weaving(vault_path: Path) -> dict:
         {note_stem: {title, tags, body, links, path, content}}
     """
     notes = {}
+    _archive_prefix = resolve("archive").relative_to(vault_path).as_posix() + "/"
     for md_file in vault_path.rglob("*.md"):
         # Skip .obsidian and archive
         rel = md_file.relative_to(vault_path).as_posix()
-        if rel.startswith(".obsidian/") or rel.startswith("99_Archive/"):
+        if rel.startswith(".obsidian/") or rel.startswith(_archive_prefix):
             continue
 
         try:

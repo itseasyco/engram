@@ -34,18 +34,44 @@ REQUIRED_FIELDS = {
 
 VALID_STATUSES = {"active", "review", "stale", "unverified", "archived"}
 
-FOLDER_TO_CATEGORY = {
-    "01_Projects": "projects",
-    "02_Concepts": "concepts",
-    "03_People": "people",
-    "04_Systems": "systems",
-    "05_Inbox": "inbox",
-    "06_Planning": "planning",
-    "07_Research": "research",
-    "08_Strategy": "strategy",
-    "09_Changelog": "changelog",
-    "10_Templates": "templates",
-}
+def _build_folder_to_category() -> dict[str, str]:
+    """Build folder-to-category mapping using vault_paths resolver."""
+    try:
+        from .vault_paths import resolve
+        _key_to_category = {
+            "projects": "projects",
+            "concepts": "concepts",
+            "people": "people",
+            "systems": "systems",
+            "inbox": "inbox",
+            "planning": "planning",
+            "research": "research",
+            "strategy": "strategy",
+            "changelog": "changelog",
+            "templates": "templates",
+        }
+        mapping = {}
+        for key, category in _key_to_category.items():
+            folder_name = resolve(key).name
+            mapping[folder_name] = category
+        return mapping
+    except (ImportError, KeyError):
+        # Fallback to schema-free defaults
+        return {
+            "projects": "projects",
+            "concepts": "concepts",
+            "people": "people",
+            "systems": "systems",
+            "inbox": "inbox",
+            "planning": "planning",
+            "research": "research",
+            "strategy": "strategy",
+            "changelog": "changelog",
+            "templates": "templates",
+        }
+
+
+FOLDER_TO_CATEGORY = _build_folder_to_category()
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +214,7 @@ def enforce_schema(
         # Skip .obsidian, templates, index files
         if rel.startswith(".obsidian/"):
             continue
-        if md_file.name == "index.md" or md_file.stem == "00_Index":
+        if md_file.name == "index.md" or md_file.stem == "index":
             continue
 
         try:

@@ -31,7 +31,7 @@ def resolve_vault(raw: str) -> Path:
 def default_graph_profile() -> dict:
     return {
         "collapse-filter": False,
-        "search": "-path:inbox/queue-generated -path:99-archive -path:99_Archive -path:.trash",
+        "search": "-path:inbox/queue-generated -path:archive -path:.trash",
         "showTags": True,
         "showAttachments": False,
         "hideUnresolved": True,

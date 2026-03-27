@@ -1,7 +1,7 @@
 """
 Index generator for the curator engine.
 
-Regenerates 00_Index.md (master index) and per-folder index.md files
+Regenerates the master index and per-folder index.md files
 with current note counts, recent changes, and note listings.
 """
 
@@ -11,38 +11,49 @@ from pathlib import Path
 from typing import Optional
 
 from .consolidation import _parse_frontmatter
+from .vault_paths import resolve, root as vault_root
 
 
 # ---------------------------------------------------------------------------
-# Folder metadata
+# Folder metadata (keyed by vault_paths key, not hardcoded folder names)
 # ---------------------------------------------------------------------------
 
-FOLDER_DESCRIPTIONS = {
-    "01_Projects": "Per-repo and per-project knowledge",
-    "02_Concepts": "Cross-project concepts and patterns",
-    "03_People": "Team context and roles",
-    "04_Systems": "Infrastructure and architecture",
-    "05_Inbox": "Incoming notes awaiting classification",
-    "06_Planning": "Product planning and roadmaps",
-    "07_Research": "Research findings and evaluations",
-    "08_Strategy": "Executive-level strategy documents",
-    "09_Changelog": "Auto-generated release and deploy logs",
-    "10_Templates": "Note templates",
-    "99_Archive": "Archived notes",
-}
-
-MAIN_FOLDERS = [
-    "01_Projects",
-    "02_Concepts",
-    "03_People",
-    "04_Systems",
-    "05_Inbox",
-    "06_Planning",
-    "07_Research",
-    "08_Strategy",
-    "09_Changelog",
-    "10_Templates",
+_FOLDER_META = [
+    ("projects",  "Per-repo and per-project knowledge"),
+    ("concepts",  "Cross-project concepts and patterns"),
+    ("people",    "Team context and roles"),
+    ("systems",   "Infrastructure and architecture"),
+    ("inbox",     "Incoming notes awaiting classification"),
+    ("planning",  "Product planning and roadmaps"),
+    ("research",  "Research findings and evaluations"),
+    ("strategy",  "Executive-level strategy documents"),
+    ("changelog", "Auto-generated release and deploy logs"),
+    ("templates", "Note templates"),
 ]
+
+_ARCHIVE_DESC = "Archived notes"
+
+
+def _folder_descriptions(vault: Path) -> dict:
+    """Return {folder_name: description} resolved from vault_paths."""
+    desc = {}
+    for key, description in _FOLDER_META:
+        folder_name = resolve(key).relative_to(vault).as_posix().split("/")[0]
+        desc[folder_name] = description
+    archive_name = resolve("archive").relative_to(vault).as_posix().split("/")[0]
+    desc[archive_name] = _ARCHIVE_DESC
+    return desc
+
+
+def _main_folders(vault: Path) -> list:
+    """Return ordered list of main folder names resolved from vault_paths."""
+    folders = []
+    for key, _ in _FOLDER_META:
+        folder_path = resolve(key)
+        folder_name = folder_path.relative_to(vault).as_posix().split("/")[0]
+        if folder_name not in folders:
+            folders.append(folder_name)
+    return folders
 
 
 # ---------------------------------------------------------------------------
@@ -96,14 +107,18 @@ def _note_title(file_path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 def generate_master_index(vault_path: Path) -> str:
-    """Generate the content for 00_Index.md."""
+    """Generate the content for the master index."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    index_path = resolve("index")
     total_notes = sum(
         1 for f in vault_path.rglob("*.md")
         if not f.relative_to(vault_path).as_posix().startswith(".obsidian/")
         and f.name != "index.md"
-        and f.stem != "00_Index"
+        and f != index_path
     )
+
+    main_folders = _main_folders(vault_path)
+    folder_descs = _folder_descriptions(vault_path)
 
     lines = [
         "---",
@@ -121,17 +136,18 @@ def generate_master_index(vault_path: Path) -> str:
         "|--------|-------|-------------|",
     ]
 
-    for folder_name in MAIN_FOLDERS:
+    for folder_name in main_folders:
         folder = vault_path / folder_name
         count = _count_notes(folder)
-        desc = FOLDER_DESCRIPTIONS.get(folder_name, "")
+        desc = folder_descs.get(folder_name, "")
         lines.append(f"| [[{folder_name}]] | {count} | {desc} |")
 
     # Archive
-    archive = vault_path / "99_Archive"
+    archive = resolve("archive")
     if archive.exists():
+        archive_name = archive.relative_to(vault_path).as_posix().split("/")[0]
         count = _count_notes(archive)
-        lines.append(f"| [[99_Archive]] | {count} | {FOLDER_DESCRIPTIONS.get('99_Archive', '')} |")
+        lines.append(f"| [[{archive_name}]] | {count} | {folder_descs.get(archive_name, '')} |")
 
     lines.append("")
     lines.append("## Recent Changes")
@@ -139,7 +155,7 @@ def generate_master_index(vault_path: Path) -> str:
 
     # Gather recent notes across all folders
     all_recent = []
-    for folder_name in MAIN_FOLDERS:
+    for folder_name in main_folders:
         folder = vault_path / folder_name
         for note_path in _recent_notes(folder, limit=3):
             try:
@@ -170,7 +186,7 @@ def generate_folder_index(folder_path: Path, vault_path: Path) -> str:
     """Generate index.md content for a specific folder."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     folder_name = folder_path.name
-    desc = FOLDER_DESCRIPTIONS.get(folder_name, "")
+    desc = _folder_descriptions(vault_path).get(folder_name, "")
 
     notes = []
     for f in sorted(folder_path.rglob("*.md")):
@@ -233,7 +249,7 @@ def regenerate_indexes(
     dry_run: bool = True,
 ) -> dict:
     """
-    Regenerate 00_Index.md and all per-folder index.md files.
+    Regenerate the master index and all per-folder index.md files.
 
     Args:
         vault_path: root of the Obsidian vault.
@@ -256,12 +272,14 @@ def regenerate_indexes(
 
     # Master index
     master_content = generate_master_index(vault)
-    master_path = vault / "00_Index.md"
+    master_path = resolve("index")
     if not dry_run:
+        master_path.parent.mkdir(parents=True, exist_ok=True)
         master_path.write_text(master_content, encoding="utf-8")
 
     # Per-folder indexes
-    for folder_name in MAIN_FOLDERS:
+    main_folders = _main_folders(vault)
+    for folder_name in main_folders:
         folder = vault / folder_name
         if not folder.exists():
             continue
@@ -281,11 +299,12 @@ def regenerate_indexes(
                     sub_index_path.write_text(sub_index_content, encoding="utf-8")
                 updated_folders.append(f"{folder_name}/{subfolder.name}")
 
+    index_path = resolve("index")
     total_notes = sum(
         1 for f in vault.rglob("*.md")
         if not f.relative_to(vault).as_posix().startswith(".obsidian/")
         and f.name != "index.md"
-        and f.stem != "00_Index"
+        and f != index_path
     )
 
     return {

@@ -110,22 +110,33 @@ check_layer2() {
   if [ -d "$LACP_OBSIDIAN_VAULT" ]; then
     log_ok "Obsidian vault exists at $LACP_OBSIDIAN_VAULT"
 
-    # Check vault structure
-    local expected_dirs=("01_Projects" "02_Concepts" "03_People" "04_Systems" "05_Inbox")
-    for dir in "${expected_dirs[@]}"; do
-      if [ -d "$LACP_OBSIDIAN_VAULT/$dir" ]; then
-        log_ok "$dir/"
+    # Resolve vault folder names dynamically from vault_paths
+    local bin_dir
+    bin_dir="$(cd "$(dirname "$0")" && pwd)"
+    local lib_dir="$bin_dir/../lib"
+    local resolve_cmd="import sys; sys.path.insert(0, '$lib_dir'); from vault_paths import resolve, root; import os; os.environ.setdefault('LACP_OBSIDIAN_VAULT', '$LACP_OBSIDIAN_VAULT')"
+
+    local expected_keys=("projects" "concepts" "people" "systems" "inbox")
+    for key in "${expected_keys[@]}"; do
+      local dir_path
+      dir_path=$(python3 -c "$resolve_cmd; print(resolve('$key'))" 2>/dev/null || echo "")
+      if [ -n "$dir_path" ] && [ -d "$dir_path" ]; then
+        log_ok "$(basename "$dir_path")/"
       else
-        log_warn "$dir/ (missing)"
+        local dir_name
+        dir_name=$(basename "$dir_path" 2>/dev/null || echo "$key")
+        log_warn "$dir_name/ (missing)"
         ((warnings++))
       fi
     done
 
     # Check index
-    if [ -f "$LACP_OBSIDIAN_VAULT/00_Index.md" ]; then
-      log_ok "00_Index.md"
+    local index_path
+    index_path=$(python3 -c "$resolve_cmd; print(resolve('index'))" 2>/dev/null || echo "$LACP_OBSIDIAN_VAULT/index.md")
+    if [ -f "$index_path" ]; then
+      log_ok "$(basename "$index_path")"
     else
-      log_warn "00_Index.md (missing)"
+      log_warn "$(basename "$index_path") (missing)"
       ((warnings++))
     fi
   else

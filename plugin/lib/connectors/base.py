@@ -71,7 +71,7 @@ class VaultNote:
     source_type: str            # connector type (github, slack, etc.)
     source_id: str              # unique id from the source (PR number, message ts, etc.)
     trust_level: str = "medium"
-    landing_zone: str = "queue-human"  # subfolder under 05_Inbox/
+    landing_zone: str = "queue-human"  # subfolder under inbox/
 
     # Frontmatter fields
     category: str = ""
@@ -146,8 +146,12 @@ class VaultNote:
 
     def write_to_vault(self, vault_path: str | Path) -> Path:
         """Write this note to the appropriate inbox queue folder."""
-        vault = Path(vault_path)
-        queue_dir = vault / "05_Inbox" / self.landing_zone
+        try:
+            from .vault_paths import resolve
+            queue_dir = resolve("inbox") / self.landing_zone
+        except (ImportError, KeyError):
+            vault = Path(vault_path)
+            queue_dir = vault / "inbox" / self.landing_zone
         queue_dir.mkdir(parents=True, exist_ok=True)
         out = queue_dir / f"{self.slug}.md"
         # Handle collision

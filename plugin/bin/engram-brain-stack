@@ -254,32 +254,41 @@ init_knowledge_graph() {
     log_success "Created Obsidian vault at $vault"
   fi
   
-  # Create vault structure
-  mkdir -p "$vault/01_Projects"
-  mkdir -p "$vault/02_Concepts"
-  mkdir -p "$vault/03_People"
-  mkdir -p "$vault/04_Systems"
-  mkdir -p "$vault/05_Inbox/queue-generated"
-  
+  # Create vault structure using vault_paths resolver
+  local _lib_dir
+  _lib_dir="$(dirname "$0")/../lib"
+  local _resolve="python3 -c \"import sys; sys.path.insert(0,'$_lib_dir'); from vault_paths import resolve; import sys as s; print(resolve(s.argv[1]))\" 2>/dev/null"
+
+  for _key in projects concepts people systems; do
+    local _dir
+    _dir=$(eval "$_resolve $_key" || echo "$vault/$_key")
+    mkdir -p "$_dir"
+  done
+  local _inbox_dir
+  _inbox_dir=$(eval "$_resolve inbox" || echo "$vault/inbox")
+  mkdir -p "$_inbox_dir/queue-generated"
+
   # Create index if missing
-  if [ ! -f "$vault/00_Index.md" ]; then
-    cat > "$vault/00_Index.md" <<'EOF'
+  local _index_path
+  _index_path=$(eval "$_resolve index" || echo "$vault/index.md")
+  if [ ! -f "$_index_path" ]; then
+    cat > "$_index_path" <<'EOF'
 # Knowledge Graph Index
 
 ## Projects
-- [[01_Projects]]
+- [[projects]]
 
 ## Concepts
-- [[02_Concepts]]
+- [[concepts]]
 
 ## People
-- [[03_People]]
+- [[people]]
 
 ## Systems
-- [[04_Systems]]
+- [[systems]]
 
 ## Inbox
-- [[05_Inbox]]
+- [[inbox]]
 EOF
     log_success "Created vault index"
   fi

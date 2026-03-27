@@ -120,7 +120,7 @@ vault_audit() {
     # Check if any other file links to this note
     local linked
     linked=$(grep -rl "\[\[$basename\]\]" "$vault" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$linked" -eq 0 ] && [ "$basename" != "00_Index" ] && [ "$basename" != "index" ]; then
+    if [ "$linked" -eq 0 ] && [ "$basename" != "index" ]; then
       ((orphan_count++))
     fi
   done < <(find "$vault" -name "*.md" -not -path "*/.obsidian/*" -not -path "*/inbox/**" 2>/dev/null)

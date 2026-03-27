@@ -32,6 +32,7 @@ if _lib_dir not in sys.path:
 
 from heartbeat import check_heartbeat, HEARTBEAT_FILENAME
 from invites import validate_token, redeem_token
+from vault_paths import resolve
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class CuratorHandler(BaseHTTPRequestHandler):
         inbox_pending = 0
         if vault and vault.exists():
             note_count = sum(1 for _ in vault.rglob("*.md") if "/.obsidian/" not in _.as_posix())
-            inbox_dir = vault / "05_Inbox"
+            inbox_dir = resolve("inbox")
             if inbox_dir.exists():
                 inbox_pending = sum(1 for _ in inbox_dir.rglob("*.md"))
 

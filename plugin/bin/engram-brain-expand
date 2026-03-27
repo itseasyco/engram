@@ -194,7 +194,9 @@ expand_layer2() {
     return 0
   fi
 
-  local inbox="$vault/05_Inbox/queue-generated"
+  local inbox
+  inbox=$(python3 -c "import sys; sys.path.insert(0,'$(dirname "$0")/../lib'); from vault_paths import resolve; print(resolve('inbox'))" 2>/dev/null || echo "$vault/inbox")
+  inbox="$inbox/queue-generated"
   if [ -d "$inbox" ]; then
     local count
     count=$(find "$inbox" -name "*.md" -not -name "index.md" 2>/dev/null | wc -l | tr -d ' ')

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from .consolidation import _parse_frontmatter
+from .vault_paths import resolve
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +132,7 @@ def scan_staleness(
 
     Actions:
     - stale (30-90): set status to 'stale' in frontmatter.
-    - review_needed (>90): move to 05_Inbox/review-stale/.
+    - review_needed (>90): move to inbox/review-stale/.
 
     Args:
         vault_path: root of the Obsidian vault.
@@ -161,15 +162,19 @@ def scan_staleness(
     moved = []
     total = 0
 
-    review_dir = vault / "05_Inbox" / "review-stale"
+    review_dir = resolve("inbox_stale")
 
     for md_file in vault.rglob("*.md"):
         rel = md_file.relative_to(vault).as_posix()
         # Skip system dirs, inbox, archive, and .obsidian
-        if any(rel.startswith(p) for p in (
-            ".obsidian/", "99_Archive/", "05_Inbox/", "10_Templates/",
-            "00_Index",
-        )):
+        _skip = (
+            ".obsidian/",
+            resolve("archive").relative_to(vault).as_posix() + "/",
+            resolve("inbox").relative_to(vault).as_posix() + "/",
+            resolve("templates").relative_to(vault).as_posix() + "/",
+            resolve("index").relative_to(vault).name,
+        )
+        if any(rel.startswith(p) for p in _skip):
             continue
 
         try:

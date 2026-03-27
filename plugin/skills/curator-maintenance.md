@@ -17,8 +17,8 @@ Execute these steps in order. Each step is idempotent. If a step fails, log the
 error and continue to the next step.
 
 1. **Process inbox** -- Classify and route notes from all `queue-*` folders in
-   `05_Inbox/`. Determine category, tags, target folder, and trust level for each
-   note. Move promoted notes to their target folder. Hold low-trust notes for
+   the inbox folder. Determine category, tags, target folder, and trust level for
+   each note. Move promoted notes to their target folder. Hold low-trust notes for
    review.
 
 2. **Run mycelium consolidation** -- Execute `run_consolidation()` to compute
@@ -31,7 +31,7 @@ error and continue to the next step.
 
 4. **Staleness scan** -- Compute staleness scores for all notes using the formula:
    `staleness_score = days_since_traversed / (traversal_count + 1)`. Flag notes
-   exceeding thresholds. Move review-needed notes to `05_Inbox/review-stale/`.
+   exceeding thresholds. Move review-needed notes to the inbox review-stale folder.
 
 5. **Conflict resolution** -- Detect Obsidian Sync conflict files (pattern:
    `note (conflict YYYY-MM-DD).md`). Attempt auto-merge for non-overlapping
@@ -41,16 +41,16 @@ error and continue to the next step.
    fields: title, category, tags, created, updated, author, source, status. Add
    missing fields with sensible defaults. Flag malformed notes.
 
-7. **Index update** -- Regenerate `00_Index.md` with current folder counts and
+7. **Index update** -- Regenerate the master index with current folder counts and
    recent changes. Update per-folder `index.md` files.
 
 8. **Health report** -- Compute graph health metrics (note count, orphan rate,
    staleness distribution, link density, connector status). Write report to
-   `05_Inbox/curator-health-report.md`.
+   the inbox folder as `curator-health-report.md`.
 
 ## Constraints
 
-- Never delete notes. Archive to `99_Archive/` instead.
+- Never delete notes. Archive to the archive folder instead.
 - Never modify note body content. Only modify frontmatter and add wikilinks.
 - Respect trust levels. Do not promote `low` trust notes without human confirmation.
 - Log every mutation with timestamp and reason.

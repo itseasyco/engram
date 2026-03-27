@@ -1,7 +1,7 @@
 """
 Inbox processor for the curator engine.
 
-Classifies notes from queue-* folders in 05_Inbox/, determines target folder
+Classifies notes from queue-* folders in the inbox, determines target folder
 based on content analysis (category, tags, trust level), and moves notes to
 their destination in the organized graph.
 """
@@ -20,17 +20,35 @@ from .consolidation import _parse_frontmatter
 # Category -> folder mapping
 # ---------------------------------------------------------------------------
 
-CATEGORY_FOLDER_MAP = {
-    "projects": "01_Projects",
-    "concepts": "02_Concepts",
-    "people": "03_People",
-    "systems": "04_Systems",
-    "planning": "06_Planning",
-    "research": "07_Research",
-    "strategy": "08_Strategy",
-    "changelog": "09_Changelog",
-    "templates": "10_Templates",
-}
+def _build_category_folder_map() -> dict[str, str]:
+    """Build category-to-folder mapping using vault_paths resolver."""
+    try:
+        from .vault_paths import resolve, root
+        vault_root = root()
+        _keys = [
+            "projects", "concepts", "people", "systems",
+            "planning", "research", "strategy", "changelog", "templates",
+        ]
+        mapping = {}
+        for key in _keys:
+            resolved = resolve(key)
+            mapping[key] = str(resolved.relative_to(vault_root))
+        return mapping
+    except (ImportError, KeyError):
+        return {
+            "projects": "projects",
+            "concepts": "concepts",
+            "people": "people",
+            "systems": "systems",
+            "planning": "planning",
+            "research": "research",
+            "strategy": "strategy",
+            "changelog": "changelog",
+            "templates": "templates",
+        }
+
+
+CATEGORY_FOLDER_MAP = _build_category_folder_map()
 
 # Trust level -> auto-promote threshold
 TRUST_AUTO_PROMOTE = {
@@ -96,7 +114,7 @@ def classify_note(file_path: Path, vault_path: Path) -> dict:
     except (IOError, UnicodeDecodeError):
         return {
             "category": "inbox",
-            "target_folder": "05_Inbox",
+            "target_folder": "inbox",
             "trust_level": "low",
             "tags": [],
             "title": file_path.stem,
@@ -129,9 +147,9 @@ def classify_note(file_path: Path, vault_path: Path) -> dict:
         category = _infer_category(title, body, tags)
 
     # Determine target folder
-    target_folder = CATEGORY_FOLDER_MAP.get(category, "02_Concepts")
+    target_folder = CATEGORY_FOLDER_MAP.get(category, CATEGORY_FOLDER_MAP.get("concepts", "concepts"))
     if category == "projects" and project:
-        target_folder = f"01_Projects/{project}"
+        target_folder = f"{CATEGORY_FOLDER_MAP.get('projects', 'projects')}/{project}"
 
     # Auto-promote decision
     auto_promote = TRUST_AUTO_PROMOTE.get(trust_level, False)
@@ -189,7 +207,7 @@ def _infer_category(title: str, body: str, tags: list) -> str:
 
 def process_inbox(vault_path: Optional[str] = None, dry_run: bool = True) -> dict:
     """
-    Process all notes in queue-* folders under 05_Inbox/.
+    Process all notes in queue-* folders under the inbox.
 
     Args:
         vault_path: root of the Obsidian vault.
@@ -205,7 +223,11 @@ def process_inbox(vault_path: Optional[str] = None, dry_run: bool = True) -> dic
         )
 
     vault = Path(vault_path)
-    inbox = vault / "05_Inbox"
+    try:
+        from .vault_paths import resolve
+        inbox = resolve("inbox")
+    except (ImportError, KeyError):
+        inbox = vault / "inbox"
 
     if not inbox.exists():
         return {
