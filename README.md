@@ -2,7 +2,7 @@
 
 **By [Easy Labs](https://itseasy.co)**
 
-**v3.0.0-alpha.1** -- Persistent agent memory, mycelium-powered knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
+**v3.0.0** -- Persistent agent memory, mycelium-powered knowledge graph, safety hooks, code intelligence, provenance tracking, and video/audio ingestion. 10 MCP tools for Claude Code and compatible agents.
 
 Inspired by [LACP](https://github.com/0xNyk/lacp) by [@0xNyk](https://github.com/0xNyk) — the original local agent context protocol that showed agents could have persistent memory.
 
