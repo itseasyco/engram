@@ -972,11 +972,9 @@ cd plugin && python -m pytest hooks/tests/test_pretool_guard.py -v
 
 ---
 
-## Using Hooks with Claude Code (without OpenClaw)
+## Alternative: Using Hooks with Claude Code
 
-Engram's hooks can be integrated directly into Claude Code via its native hooks system in `~/.claude/settings.json`. This works today — no OpenClaw gateway required.
-
-Add to your `~/.claude/settings.json`:
+While Engram is designed for the OpenClaw gateway, two of the four hooks can also be wired directly into Claude Code via its native hooks system in `~/.claude/settings.json`:
 
 ```json
 {
@@ -997,15 +995,13 @@ Add to your `~/.claude/settings.json`:
 }
 ```
 
-**What works today with Claude Code hooks:**
-- `session-start` (session_initialization) — injects git context and LACP memory into every session
-- `stop-quality-gate` (agent_stop) — catches premature stops, rationalization patterns, incomplete work
+**Works with Claude Code today:**
+- `session-start` (session_initialization) — injects git context and LACP memory
+- `stop-quality-gate` (agent_stop) — catches premature stops and rationalization patterns
 
-**What requires OpenClaw lifecycle events (not yet available):**
-- `pretool-guard` (pre_tool_use) — needs a trigger point before each tool call, which Claude Code does not expose yet
-- `write-validate` (file_write) — needs a trigger point before file writes, which Claude Code does not expose yet
-
-These hooks are fully implemented and tested. They will activate once the host platform exposes the corresponding lifecycle events.
+**Requires OpenClaw (not available in Claude Code):**
+- `pretool-guard` (pre_tool_use) — intercepts tool calls before execution
+- `write-validate` (file_write) — validates file writes before they happen
 
 ---
 
@@ -1019,7 +1015,7 @@ These hooks are fully implemented and tested. They will activate once the host p
 - Built-in AST parsing only covers Python. JS/TS/Go/Rust files are counted but not parsed. Install [GitNexus](https://github.com/gitnexus/gitnexus) (`npm install -g gitnexus`) for full multi-language support.
 
 **Ingestion:**
-- Video/audio ingestion (`engram-brain-ingest video`) requires `ffmpeg` and OpenAI Whisper. These are not bundled — install separately.
+- Video/audio ingestion (`engram-brain-ingest video`) is a work in progress. It requires `ffmpeg` and OpenAI Whisper which are not bundled. The pipeline is not fully integrated yet.
 - PDF text extraction requires `pdftotext` (poppler-utils). Without it, a basic byte-level fallback is used. Install via `brew install poppler` (macOS) or `apt install poppler-utils` (Linux).
 
 **Shared vault (connected/curator modes):**

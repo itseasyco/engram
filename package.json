@@ -21,21 +21,11 @@
     "ai-agents"
   ],
   "files": [
-    "index.ts",
     "bin/",
-    "config/",
-    "hooks/handlers/",
-    "hooks/profiles/",
-    "hooks/rules/",
-    "hooks/plugin.json",
-    "lib/",
-    "policy/risk-policy.json",
-    "skills/",
-    "v2-lcm/*.py",
-    "v2-lcm/backends/",
+    "plugin/",
+    "INSTALL.sh",
     "openclaw.plugin.json",
-    "plugin.json",
-    "__init__.py"
+    "plugin.json"
   ],
   "openclaw": {
     "extensions": [

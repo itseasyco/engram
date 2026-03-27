@@ -36,17 +36,35 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Determine npm tag
+        if: steps.version.outputs.changed == 'true'
+        id: tag
+        run: |
+          VERSION=$(jq -r .version package.json)
+          if echo "$VERSION" | grep -qE "(alpha|beta|rc)"; then
+            echo "tag=--tag alpha" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true'
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance ${{ steps.tag.outputs.tag }}
 
       - name: Create GitHub release
         if: steps.version.outputs.changed == 'true'
         run: |
           VERSION="v${{ steps.version.outputs.package }}"
+          PRERELEASE=""
+          if [ "${{ steps.tag.outputs.prerelease }}" = "true" ]; then
+            PRERELEASE="--prerelease"
+          fi
           gh release create "$VERSION" \
             --title "$VERSION" \
-            --generate-notes
+            --generate-notes \
+            $PRERELEASE
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
