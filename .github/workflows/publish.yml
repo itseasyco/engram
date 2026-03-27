@@ -23,6 +23,10 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      # Clear the auth token so npm uses OIDC trusted publishing instead
+      - name: Configure npm for OIDC publishing
+        run: npm config set //registry.npmjs.org/:_authToken ""
+
       - name: Check if version changed
         id: version
         run: |
