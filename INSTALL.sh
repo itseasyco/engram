@@ -35,11 +35,11 @@ _install_cleanup() {
 trap _install_cleanup EXIT
 
 PLUGIN_NAME="engram"
-PLUGIN_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "2.2.0")
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_VERSION=$(node -p "require('${SCRIPT_DIR}/package.json').version" 2>/dev/null || echo "3.0.0")
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
 GATEWAY_CONFIG="$OPENCLAW_HOME/openclaw.json"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors
 RED='\033[0;31m'
