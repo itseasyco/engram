@@ -1346,34 +1346,52 @@ init_stack_and_integrations() {
     [ "$WIZARD_CODE_GRAPH" = "true" ] && (( total++ )) || true
     command -v qmd &>/dev/null && [ -d "$DETECTED_VAULT" ] && (( total++ )) || true
 
-    # Knowledge graph
+    # Knowledge graph (skip if vault already has structure)
     if [ -d "$DETECTED_VAULT" ] && [ -x "$bin_dir/engram-brain-graph" ]; then
-        _run_init_task "Knowledge graph" "bash '$bin_dir/engram-brain-graph' init '$(pwd)' --vault '$DETECTED_VAULT'" 30
+        if [ -d "$DETECTED_VAULT/.obsidian" ] || [ -f "$DETECTED_VAULT/index.md" ]; then
+            printf "  %-30s ${GREEN}✓${NC} ${DIM}(already initialized)${NC}\n" "Knowledge graph"
+        else
+            _run_init_task "Knowledge graph" "bash '$bin_dir/engram-brain-graph' init '$(pwd)' --vault '$DETECTED_VAULT'" 30 || true
+        fi
     fi
 
-    # Agent identity
+    # Agent identity (skip if already registered)
     if [ -x "$bin_dir/engram-agent-id" ]; then
-        _run_init_task "Agent identity" "ENGRAM_SKIP_KEYCHAIN=1 bash '$bin_dir/engram-agent-id' register '$(pwd)'" 10
+        local hostname_slug
+        hostname_slug=$(hostname | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+        local proj_slug
+        proj_slug=$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+        if ls "$OPENCLAW_HOME/agent-ids/${hostname_slug}-${proj_slug}"*.json &>/dev/null 2>&1; then
+            printf "  %-30s ${GREEN}✓${NC} ${DIM}(already registered)${NC}\n" "Agent identity"
+        else
+            _run_init_task "Agent identity" "ENGRAM_SKIP_KEYCHAIN=1 bash '$bin_dir/engram-agent-id' register '$(pwd)'" 10 || true
+        fi
     fi
 
-    # Provenance chain
+    # Provenance chain (skip if already initialized)
     if [ "$WIZARD_PROVENANCE" = "true" ] && [ -x "$bin_dir/engram-provenance" ]; then
-        _run_init_task "Provenance chain" "bash '$bin_dir/engram-provenance' start --project '$(pwd)' && bash '$bin_dir/engram-provenance' end --project '$(pwd)' --exit-code 0" 15
+        local prov_slug
+        prov_slug=$(echo "$(pwd)" | sed 's|/|-|g; s|^-||')
+        if [ -f "$OPENCLAW_HOME/provenance/$prov_slug/chain.jsonl" ]; then
+            printf "  %-30s ${GREEN}✓${NC} ${DIM}(already initialized)${NC}\n" "Provenance chain"
+        else
+            _run_init_task "Provenance chain" "bash '$bin_dir/engram-provenance' start --project '$(pwd)'; bash '$bin_dir/engram-provenance' end --project '$(pwd)' --exit-code 0" 15 || true
+        fi
     fi
 
     # Lossless-claw config
     if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ] && [ "$HAS_JQ" = "true" ]; then
-        _run_init_task "Lossless-claw config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.contextEngine = \"lossless-claw\"' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5
+        _run_init_task "Lossless-claw config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.contextEngine = \"lossless-claw\"' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5 || true
     fi
 
     # GitNexus / code graph
     if [ "$WIZARD_CODE_GRAPH" = "true" ]; then
         if command -v gitnexus &>/dev/null; then
             if [ "$HAS_JQ" = "true" ]; then
-                _run_init_task "Code graph config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.codeGraphEnabled = true' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5
+                _run_init_task "Code graph config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.codeGraphEnabled = true' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5 || true
             fi
             if [ -x "$bin_dir/engram-brain-graph" ]; then
-                _run_init_task "MCP server configs" "bash '$bin_dir/engram-brain-graph' mcp-config '$DETECTED_VAULT' --output '$PLUGIN_PATH/config/mcp-servers.json'" 15
+                _run_init_task "MCP server configs" "bash '$bin_dir/engram-brain-graph' mcp-config '$DETECTED_VAULT' --output '$PLUGIN_PATH/config/mcp-servers.json'" 15 || true
             fi
             log_info "  Run 'engram brain analyze' to index your codebase"
         else
@@ -1384,7 +1402,7 @@ init_stack_and_integrations() {
     # QMD indexing
     export PATH="$HOME/.bun/bin:$PATH"
     if command -v qmd &>/dev/null && [ -d "$DETECTED_VAULT" ]; then
-        _run_init_task "QMD vault indexing" "cd '$DETECTED_VAULT' && qmd update && qmd embed" 120
+        _run_init_task "QMD vault indexing" "cd '$DETECTED_VAULT' && qmd update && qmd embed" 120 || true
     fi
 
     echo ""

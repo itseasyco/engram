@@ -262,8 +262,7 @@ async function main() {
   for (const v of detectedVaults) {
     vaultOptions.push({ value: v, label: v, hint: 'detected' });
   }
-  vaultOptions.push({ value: '__browse__', label: 'Browse for a different folder' });
-  vaultOptions.push({ value: '__custom__', label: 'Type a custom path' });
+  vaultOptions.push({ value: '__custom__', label: 'Enter a custom path' });
   vaultOptions.push({ value: '__skip__', label: 'Skip -- I don\'t use Obsidian', hint: 'uses default directory' });
 
   let vaultChoice = handleCancel(await select({
@@ -272,18 +271,7 @@ async function main() {
   }));
 
   let vaultPath;
-  if (vaultChoice === '__browse__') {
-    const browsed = handleCancel(await text({
-      message: 'Enter the path to your vault directory',
-      placeholder: join(HOME, 'my-vault'),
-      validate: (val) => {
-        if (!val) return 'Path is required';
-        const resolved = resolve(val.replace(/^~/, HOME));
-        if (!existsSync(resolved)) return `Directory not found: ${resolved}`;
-      },
-    }));
-    vaultPath = resolve(browsed.replace(/^~/, HOME));
-  } else if (vaultChoice === '__custom__') {
+  if (vaultChoice === '__custom__') {
     const custom = handleCancel(await text({
       message: 'Vault path',
       placeholder: join(HOME, 'my-vault'),
@@ -300,6 +288,59 @@ async function main() {
   }
 
   log.success(`Vault: ${green(vaultPath)}`);
+
+  // ── Vault migration check ─────────────────────────────────────────────
+
+  const hasObsidian = existsSync(join(vaultPath, '.obsidian'));
+  const hasEngramSchema = existsSync(join(vaultPath, 'vault-schema.json')) ||
+    existsSync(join(vaultPath, 'inbox', 'queue-agent'));
+
+  if (hasObsidian && !hasEngramSchema) {
+    log.warn('This vault exists but is not set up for Engram.');
+    log.info(dim('Migration will back up your vault, create the Engram folder structure,'));
+    log.info(dim('classify your existing notes by content, and move them into the right folders.'));
+
+    const wantMigrate = handleCancel(await select({
+      message: 'Migrate this vault to Engram?',
+      options: [
+        { value: 'dry-run', label: 'Preview migration (dry run)', hint: 'see what would change, no modifications' },
+        { value: 'migrate', label: 'Migrate now (with backup)', hint: 'backs up vault first, then restructures' },
+        { value: 'skip', label: 'Skip migration', hint: 'use the vault as-is, configure manually later' },
+      ],
+    }));
+
+    if (wantMigrate === 'dry-run' || wantMigrate === 'migrate') {
+      const migrateScript = join(OPENCLAW_HOME, 'extensions', 'engram', 'bin', 'engram-vault-migrate');
+      const flags = wantMigrate === 'dry-run' ? '--dry-run' : '';
+
+      log.info(`Running vault migration${wantMigrate === 'dry-run' ? ' (preview)' : ''}...`);
+      try {
+        const output = await runCommandLive(`python3 "${migrateScript}" "${vaultPath}" ${flags}`);
+        if (wantMigrate === 'dry-run') {
+          const proceed = handleCancel(await confirm({
+            message: 'Apply these changes?',
+            initialValue: true,
+          }));
+          if (proceed) {
+            log.info('Applying migration...');
+            await runCommandLive(`python3 "${migrateScript}" "${vaultPath}"`);
+            log.success('Vault migrated');
+          } else {
+            log.info('Migration skipped — you can run it later: engram vault migrate');
+          }
+        } else {
+          log.success('Vault migrated');
+        }
+      } catch (err) {
+        log.warn(`Migration had issues: ${err.message}`);
+        log.info('You can retry later: engram vault migrate');
+      }
+    } else {
+      log.info('Skipped — run "engram vault migrate" later to restructure');
+    }
+  } else if (hasEngramSchema) {
+    log.success('Vault already configured for Engram');
+  }
 
   // ── Step 2: Context Engine ──────────────────────────────────────────────
 

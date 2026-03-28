@@ -1,0 +1,512 @@
+#!/usr/bin/env python3
+"""
+engram-vault-migrate — Migrate an existing Obsidian vault to Engram structure.
+
+Backs up the vault, creates the Engram folder structure, classifies existing
+notes by content, moves them into the correct folders, fixes frontmatter,
+heals wikilinks, and regenerates indexes.
+
+Usage:
+  engram-vault-migrate <vault-path> [--dry-run] [--no-backup] [--json]
+  engram-vault-migrate <vault-path> --schema-only
+  engram-vault-migrate <vault-path> --wikilinks-only
+  engram-vault-migrate <vault-path> --indexes-only
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Add lib to path
+SCRIPT_DIR = Path(__file__).resolve().parent
+LIB_DIR = SCRIPT_DIR.parent / "lib"
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+
+from lib.vault_paths import resolve, _load_schema, _vault_root, all_paths
+from lib.consolidation import _parse_frontmatter, _extract_links
+
+# ── Colors ────────────────────────────────────────────────────────────────
+
+GREEN = "\033[0;32m"
+YELLOW = "\033[1;33m"
+RED = "\033[0;31m"
+DIM = "\033[2m"
+BOLD = "\033[1m"
+NC = "\033[0m"
+
+
+def log_ok(msg):
+    print(f"  {GREEN}✓{NC} {msg}")
+
+
+def log_warn(msg):
+    print(f"  {YELLOW}!{NC} {msg}")
+
+
+def log_err(msg):
+    print(f"  {RED}✗{NC} {msg}")
+
+
+def log_info(msg):
+    print(f"  {DIM}{msg}{NC}")
+
+
+def log_step(num, total, msg):
+    print(f"\n{BOLD}[{num}/{total}] {msg}{NC}")
+
+
+# ── Category keywords (mirrors inbox_processor.py) ────────────────────────
+
+CATEGORY_KEYWORDS = {
+    "projects": ["repo", "repository", "codebase", "pr ", "pull request", "branch",
+                 "deploy", "feature", "sprint", "backlog", "api", "endpoint", "sdk"],
+    "concepts": ["pattern", "architecture", "design", "principle", "convention",
+                 "best practice", "standard", "approach", "algorithm", "abstraction"],
+    "people": ["team", "member", "role", "responsibility", "contact", "onboard",
+               "hiring", "interview", "candidate"],
+    "systems": ["infrastructure", "server", "database", "deployment", "monitoring",
+                "ci/cd", "pipeline", "docker", "kubernetes", "aws", "terraform"],
+    "planning": ["roadmap", "milestone", "timeline", "priority", "objective",
+                 "quarter", "okr", "goal", "prd", "spec", "requirement"],
+    "research": ["evaluation", "comparison", "benchmark", "competitor", "market",
+                 "analysis", "finding", "study", "experiment"],
+    "strategy": ["vision", "direction", "fundrais", "investor", "partnership",
+                 "growth", "revenue", "business model"],
+    "changelog": ["release", "version", "changelog", "hotfix", "rollback",
+                  "migration", "upgrade"],
+}
+
+DEFAULT_CATEGORY = "knowledge"
+
+
+def classify_note(file_path, content, frontmatter):
+    """Classify a note into a category based on frontmatter and content."""
+    # 1. Explicit category in frontmatter
+    if frontmatter.get("category"):
+        cat = frontmatter["category"].lower().strip()
+        if cat in CATEGORY_KEYWORDS:
+            return cat
+
+    # 2. Infer from content keywords
+    title = frontmatter.get("title", file_path.stem).lower()
+    body = content.lower()
+    combined = title + " " + body[:2000]
+
+    scores = {}
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in combined)
+        if score > 0:
+            scores[category] = score
+
+    if scores:
+        return max(scores, key=scores.get)
+
+    # 3. Infer from folder name
+    parts = file_path.parts
+    for part in parts:
+        part_lower = part.lower()
+        for cat in CATEGORY_KEYWORDS:
+            if cat in part_lower:
+                return cat
+
+    return DEFAULT_CATEGORY
+
+
+def ensure_frontmatter(content, file_path, category):
+    """Add or fix frontmatter on a note. Returns (new_content, changes_made)."""
+    fm = _parse_frontmatter(content)
+    changes = []
+
+    defaults = {
+        "title": file_path.stem.replace("-", " ").replace("_", " ").title(),
+        "category": category,
+        "tags": [],
+        "created": datetime.fromtimestamp(file_path.stat().st_mtime).strftime("%Y-%m-%d"),
+        "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "author": "migrated",
+        "source": "vault-migration",
+        "status": "active",
+    }
+
+    if not content.startswith("---"):
+        # No frontmatter at all — create it
+        fm_lines = ["---"]
+        for key, val in defaults.items():
+            if isinstance(val, list):
+                fm_lines.append(f"{key}: [{', '.join(val)}]")
+            else:
+                fm_lines.append(f"{key}: {val}")
+        fm_lines.append("---")
+        fm_lines.append("")
+        new_content = "\n".join(fm_lines) + content
+        changes.append("added frontmatter")
+        return new_content, changes
+
+    # Has frontmatter — fix missing fields
+    end_idx = content.find("---", 3)
+    if end_idx == -1:
+        return content, changes
+
+    fm_block = content[3:end_idx].strip()
+    body = content[end_idx + 3:]
+    added_lines = []
+
+    for key, default_val in defaults.items():
+        if key not in fm:
+            if isinstance(default_val, list):
+                added_lines.append(f"{key}: [{', '.join(default_val)}]")
+            else:
+                added_lines.append(f"{key}: {default_val}")
+            changes.append(f"added {key}")
+
+    if added_lines:
+        new_fm = fm_block + "\n" + "\n".join(added_lines)
+        new_content = f"---\n{new_fm}\n---{body}"
+        return new_content, changes
+
+    return content, changes
+
+
+def update_wikilinks(content, old_stem, new_stem):
+    """Update wikilinks that reference the old note stem to use the new one."""
+    # [[old_stem]] -> [[new_stem]]
+    pattern = re.compile(r'\[\[' + re.escape(old_stem) + r'(\|[^\]]+)?\]\]')
+    new_content = pattern.sub(lambda m: f'[[{new_stem}{m.group(1) or ""}]]', content)
+    return new_content
+
+
+def scan_vault(vault_path):
+    """Scan all markdown files in the vault, excluding .obsidian and archive."""
+    notes = []
+    for md_file in vault_path.rglob("*.md"):
+        rel = md_file.relative_to(vault_path).as_posix()
+        if rel.startswith(".obsidian/") or rel.startswith(".trash/"):
+            continue
+        if md_file.name == "index.md":
+            continue
+        try:
+            content = md_file.read_text(encoding="utf-8")
+        except (IOError, UnicodeDecodeError):
+            continue
+        fm = _parse_frontmatter(content)
+        notes.append({
+            "path": md_file,
+            "rel": rel,
+            "stem": md_file.stem,
+            "content": content,
+            "frontmatter": fm,
+        })
+    return notes
+
+
+def migrate_vault(vault_path, dry_run=False, no_backup=False, json_output=False,
+                  schema_only=False, wikilinks_only=False, indexes_only=False):
+    """Run the full vault migration."""
+
+    vault = Path(vault_path).resolve()
+    if not vault.exists():
+        log_err(f"Vault not found: {vault}")
+        return 1
+
+    total_steps = 7
+    if schema_only:
+        total_steps = 2
+    elif wikilinks_only:
+        total_steps = 1
+    elif indexes_only:
+        total_steps = 1
+
+    report = {
+        "vault": str(vault),
+        "dry_run": dry_run,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "backup_path": None,
+        "notes_scanned": 0,
+        "notes_moved": 0,
+        "notes_by_category": {},
+        "frontmatter_fixed": 0,
+        "wikilinks_updated": 0,
+        "indexes_generated": 0,
+        "skipped": [],
+    }
+
+    step = 0
+
+    # ── Step 1: Backup ────────────────────────────────────────────────────
+    if not schema_only and not wikilinks_only and not indexes_only:
+        step += 1
+        log_step(step, total_steps, "Backing up vault")
+
+        if no_backup:
+            log_warn("Backup skipped (--no-backup)")
+        elif dry_run:
+            backup_name = f"{vault.name}_backup_{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+            backup_path = vault.parent / backup_name
+            log_info(f"Would backup to: {backup_path}")
+            report["backup_path"] = str(backup_path)
+        else:
+            backup_name = f"{vault.name}_backup_{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+            backup_path = vault.parent / backup_name
+            log_info(f"Copying vault to {backup_path}...")
+            shutil.copytree(vault, backup_path, dirs_exist_ok=False)
+            report["backup_path"] = str(backup_path)
+            log_ok(f"Backed up to {backup_path}")
+
+    # ── Step 2: Create folder structure ───────────────────────────────────
+    if not wikilinks_only and not indexes_only:
+        step += 1
+        log_step(step, total_steps, "Creating Engram folder structure")
+
+        schema = _load_schema()
+        folders_created = 0
+        for key, rel_path in schema.items():
+            if "." in rel_path:  # skip files like index.md
+                continue
+            full_path = vault / rel_path
+            if not full_path.exists():
+                if dry_run:
+                    log_info(f"Would create: {rel_path}/")
+                else:
+                    full_path.mkdir(parents=True, exist_ok=True)
+                folders_created += 1
+
+        if folders_created > 0:
+            log_ok(f"Created {folders_created} folders")
+        else:
+            log_ok("All folders already exist")
+
+    if schema_only:
+        log_ok("Schema-only mode — done")
+        if json_output:
+            print(json.dumps(report, indent=2))
+        return 0
+
+    if wikilinks_only:
+        log_step(1, 1, "Healing wikilinks")
+        try:
+            from lib.wikilink_weaver import weave_wikilinks
+            result = weave_wikilinks(
+                vault_path=str(vault),
+                dry_run=dry_run,
+                relatedness_threshold=0.25,
+                remove_broken=True,
+            )
+            log_ok(f"Links added: {result['links_added']}, removed: {result['links_removed']}")
+        except Exception as e:
+            log_warn(f"Wikilink weaving failed: {e}")
+        if json_output:
+            print(json.dumps(report, indent=2))
+        return 0
+
+    if indexes_only:
+        log_step(1, 1, "Regenerating indexes")
+        try:
+            from lib.index_generator import regenerate_indexes
+            result = regenerate_indexes(vault_path=str(vault))
+            log_ok(f"Indexes regenerated: {result.get('indexes_written', 0)} files")
+        except Exception as e:
+            log_warn(f"Index regeneration failed: {e}")
+        if json_output:
+            print(json.dumps(report, indent=2))
+        return 0
+
+    # ── Step 3: Scan and classify notes ───────────────────────────────────
+    step += 1
+    log_step(step, total_steps, "Scanning and classifying notes")
+
+    notes = scan_vault(vault)
+    report["notes_scanned"] = len(notes)
+    log_info(f"Found {len(notes)} notes")
+
+    classifications = []
+    for note in notes:
+        category = classify_note(note["path"], note["content"], note["frontmatter"])
+        target_folder = resolve(category) if category != DEFAULT_CATEGORY else vault / "knowledge"
+
+        # Determine target path
+        target_rel = Path(category) / note["path"].name
+        target_path = vault / target_rel
+
+        # Check if already in the right folder
+        current_category_folder = note["path"].parent.relative_to(vault).parts[0] if note["path"].parent != vault else ""
+        already_correct = current_category_folder == category
+
+        classifications.append({
+            **note,
+            "category": category,
+            "target_folder": str(target_folder),
+            "target_path": target_path,
+            "target_rel": str(target_rel),
+            "already_correct": already_correct,
+        })
+
+        report["notes_by_category"][category] = report["notes_by_category"].get(category, 0) + 1
+
+    # Print classification summary
+    for cat, count in sorted(report["notes_by_category"].items(), key=lambda x: -x[1]):
+        log_info(f"  {cat}: {count} notes")
+
+    # ── Step 4: Move notes to target folders ──────────────────────────────
+    step += 1
+    log_step(step, total_steps, "Moving notes to Engram folders")
+
+    moves = []
+    for cls in classifications:
+        if cls["already_correct"]:
+            continue
+
+        src = cls["path"]
+        dst = cls["target_path"]
+
+        # Handle collision
+        if dst.exists() and dst != src:
+            stem = dst.stem
+            suffix = dst.suffix
+            dst = dst.parent / f"{stem}-{datetime.now().strftime('%H%M%S')}{suffix}"
+
+        if dry_run:
+            log_info(f"Would move: {cls['rel']} → {cls['target_rel']}")
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+
+        moves.append({"from": str(src), "to": str(dst), "old_stem": src.stem, "new_stem": dst.stem})
+        report["notes_moved"] += 1
+
+    if report["notes_moved"] > 0:
+        log_ok(f"Moved {report['notes_moved']} notes")
+    else:
+        log_ok("All notes already in correct folders")
+
+    # ── Step 5: Fix frontmatter ───────────────────────────────────────────
+    step += 1
+    log_step(step, total_steps, "Fixing frontmatter")
+
+    for cls in classifications:
+        # Use the moved path if it was moved
+        file_path = cls["target_path"] if not cls["already_correct"] else cls["path"]
+        if not file_path.exists():
+            continue
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except (IOError, UnicodeDecodeError):
+            continue
+
+        new_content, changes = ensure_frontmatter(content, file_path, cls["category"])
+        if changes:
+            if dry_run:
+                log_info(f"Would fix: {file_path.name} ({', '.join(changes)})")
+            else:
+                file_path.write_text(new_content, encoding="utf-8")
+            report["frontmatter_fixed"] += 1
+
+    log_ok(f"Fixed frontmatter on {report['frontmatter_fixed']} notes")
+
+    # ── Step 6: Update wikilinks ──────────────────────────────────────────
+    step += 1
+    log_step(step, total_steps, "Updating wikilinks")
+
+    if moves:
+        # Build a rename map
+        rename_map = {m["old_stem"]: m["new_stem"] for m in moves if m["old_stem"] != m["new_stem"]}
+
+        if rename_map:
+            # Update references in all notes
+            all_md_files = list(vault.rglob("*.md"))
+            for md_file in all_md_files:
+                if md_file.relative_to(vault).as_posix().startswith(".obsidian/"):
+                    continue
+                try:
+                    content = md_file.read_text(encoding="utf-8")
+                except (IOError, UnicodeDecodeError):
+                    continue
+
+                new_content = content
+                for old_stem, new_stem in rename_map.items():
+                    new_content = update_wikilinks(new_content, old_stem, new_stem)
+
+                if new_content != content:
+                    if not dry_run:
+                        md_file.write_text(new_content, encoding="utf-8")
+                    report["wikilinks_updated"] += 1
+
+    # Also run the weaver for relatedness-based linking
+    try:
+        from lib.wikilink_weaver import weave_wikilinks
+        result = weave_wikilinks(
+            vault_path=str(vault),
+            dry_run=dry_run,
+            relatedness_threshold=0.25,
+            remove_broken=True,
+        )
+        report["wikilinks_updated"] += result.get("links_added", 0)
+        log_ok(f"Updated {report['wikilinks_updated']} wikilinks, removed {result.get('links_removed', 0)} broken links")
+    except Exception as e:
+        log_warn(f"Wikilink weaving failed: {e}")
+
+    # ── Step 7: Regenerate indexes ────────────────────────────────────────
+    step += 1
+    log_step(step, total_steps, "Regenerating indexes")
+
+    if dry_run:
+        log_info("Would regenerate master index and per-folder indexes")
+    else:
+        try:
+            from lib.index_generator import regenerate_indexes
+            result = regenerate_indexes(vault_path=str(vault))
+            report["indexes_generated"] = result.get("indexes_written", 0)
+            log_ok(f"Generated {report['indexes_generated']} index files")
+        except Exception as e:
+            log_warn(f"Index regeneration failed: {e}")
+
+    # ── Summary ───────────────────────────────────────────────────────────
+    print(f"\n{BOLD}Migration {'preview' if dry_run else 'complete'}{NC}")
+    print(f"  Notes scanned:      {report['notes_scanned']}")
+    print(f"  Notes moved:        {report['notes_moved']}")
+    print(f"  Frontmatter fixed:  {report['frontmatter_fixed']}")
+    print(f"  Wikilinks updated:  {report['wikilinks_updated']}")
+    print(f"  Indexes generated:  {report['indexes_generated']}")
+    if report["backup_path"]:
+        print(f"  Backup at:          {report['backup_path']}")
+    if dry_run:
+        print(f"\n  {YELLOW}Dry run — no changes made. Run without --dry-run to apply.{NC}")
+
+    if json_output:
+        print(json.dumps(report, indent=2))
+
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Migrate an existing Obsidian vault to Engram structure"
+    )
+    parser.add_argument("vault_path", help="Path to the Obsidian vault")
+    parser.add_argument("--dry-run", action="store_true", help="Preview changes without modifying files")
+    parser.add_argument("--no-backup", action="store_true", help="Skip backup (not recommended)")
+    parser.add_argument("--json", action="store_true", help="Output report as JSON")
+    parser.add_argument("--schema-only", action="store_true", help="Only create folder structure")
+    parser.add_argument("--wikilinks-only", action="store_true", help="Only heal wikilinks")
+    parser.add_argument("--indexes-only", action="store_true", help="Only regenerate indexes")
+
+    args = parser.parse_args()
+
+    return migrate_vault(
+        args.vault_path,
+        dry_run=args.dry_run,
+        no_backup=args.no_backup,
+        json_output=args.json,
+        schema_only=args.schema_only,
+        wikilinks_only=args.wikilinks_only,
+        indexes_only=args.indexes_only,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

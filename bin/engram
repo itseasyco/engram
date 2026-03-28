@@ -101,7 +101,7 @@ show_help() {
     echo -e "  ${GREEN}memory${NC}              Query/promote memory  ${DIM}(engram memory query|promote|status)${NC}"
     echo -e "  ${GREEN}ingest${NC}              Ingest files to vault ${DIM}(engram ingest <type> <source>)${NC}"
     echo -e "  ${GREEN}brain${NC}               Brain tools           ${DIM}(engram brain expand|resolve|kpi|optimize)${NC}"
-    echo -e "  ${GREEN}vault${NC}               Vault management      ${DIM}(engram vault status|audit|backup|restore)${NC}"
+    echo -e "  ${GREEN}vault${NC}               Vault management      ${DIM}(engram vault status|audit|backup|restore|migrate)${NC}"
     echo -e "  ${GREEN}connector${NC}           Manage connectors     ${DIM}(engram connector list|add|remove|test)${NC}"
     echo -e "  ${GREEN}watch${NC}               File watcher          ${DIM}(engram watch setup|run|status)${NC}"
     echo ""
@@ -423,7 +423,10 @@ case "$1" in
         ;;
     vault)
         shift
-        exec "$PLUGIN_BIN/engram-obsidian" "$@"
+        case "${1:-}" in
+            migrate) shift; exec python3 "$PLUGIN_BIN/engram-vault-migrate" "$@" ;;
+            *)       exec "$PLUGIN_BIN/engram-obsidian" "$@" ;;
+        esac
         ;;
     connector)
         shift
