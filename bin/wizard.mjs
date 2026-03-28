@@ -292,10 +292,32 @@ async function main() {
   // ── Vault migration check ─────────────────────────────────────────────
 
   const hasObsidian = existsSync(join(vaultPath, '.obsidian'));
-  const hasEngramSchema = existsSync(join(vaultPath, 'vault-schema.json')) ||
-    existsSync(join(vaultPath, 'inbox', 'queue-agent'));
+  // Check if vault-schema.json exists in the plugin config (not the vault itself)
+  const pluginSchemaPath = join(OPENCLAW_HOME, 'extensions', 'engram', 'config', 'vault-schema.json');
+  const hasEngramSchema = existsSync(pluginSchemaPath);
 
-  if (hasObsidian && !hasEngramSchema) {
+  // Even if schema exists, check if vault structure actually matches
+  let vaultNeedsMigration = false;
+  if (hasObsidian) {
+    if (!hasEngramSchema) {
+      vaultNeedsMigration = true;
+    } else {
+      // Schema exists — check if vault has the expected folders
+      try {
+        const schema = JSON.parse(readFileSync(pluginSchemaPath, 'utf-8'));
+        const paths = schema.paths || {};
+        const expectedFolders = Object.values(paths).filter(p => !p.includes('.'));
+        const topLevel = expectedFolders.filter(p => !p.includes('/'));
+        const missingCount = topLevel.filter(f => !existsSync(join(vaultPath, f))).length;
+        // If more than half the expected folders are missing, offer migration
+        if (missingCount > topLevel.length / 2) {
+          vaultNeedsMigration = true;
+        }
+      } catch { /* schema parse failed, skip */ }
+    }
+  }
+
+  if (hasObsidian && vaultNeedsMigration) {
     log.warn('This vault exists but is not set up for Engram.');
     log.info(dim('Migration will back up your vault, create the Engram folder structure,'));
     log.info(dim('classify your existing notes by content, and move them into the right folders.'));
@@ -338,7 +360,7 @@ async function main() {
     } else {
       log.info('Skipped — run "engram vault migrate" later to restructure');
     }
-  } else if (hasEngramSchema) {
+  } else if (hasObsidian && !vaultNeedsMigration) {
     log.success('Vault already configured for Engram');
   }
 
@@ -686,6 +708,9 @@ async function main() {
     }
 
     // Provenance
+    log.info(dim('Provenance creates a tamper-proof audit trail of every agent session —'));
+    log.info(dim('who ran, what changed, when, chained with SHA-256 hashes. Useful for'));
+    log.info(dim('teams running multiple agents. Can be verified later with: engram provenance verify'));
     provenance = handleCancel(await confirm({
       message: 'Enable provenance tracking?',
       initialValue: true,

@@ -1300,7 +1300,7 @@ _run_init_task() {
     while kill -0 "$pid" 2>/dev/null; do
         if [ "$elapsed" -ge "$timeout_secs" ]; then
             kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true  # ignore exit code from killed process
             echo "exit: timeout after ${timeout_secs}s ($(date -u +%Y-%m-%dT%H:%M:%SZ))" >> "$INSTALL_LOG"
             printf "\r  %-30s ${YELLOW}— timed out${NC}     \n" "$label"
             return 0
@@ -1314,9 +1314,9 @@ _run_init_task() {
         elapsed=$((elapsed + 1))  # roughly 0.3s per tick, close enough
     done
 
-    # Check result
-    wait "$pid" 2>/dev/null
-    local exit_code=$?
+    # Check result — capture exit code without triggering set -e
+    local exit_code=0
+    wait "$pid" 2>/dev/null || exit_code=$?
     echo "exit: $exit_code ($(date -u +%Y-%m-%dT%H:%M:%SZ))" >> "$INSTALL_LOG"
     echo "" >> "$INSTALL_LOG"
 
@@ -1326,7 +1326,6 @@ _run_init_task() {
         printf "\r  %-30s ${YELLOW}— failed${NC}     \n" "$label"
     fi
 
-    # Always return 0 so set -e doesn't kill the installer
     return 0
 }
 
