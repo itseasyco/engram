@@ -81,6 +81,18 @@ function runCommand(cmd) {
   });
 }
 
+function runCommandLive(cmd) {
+  return new Promise((resolve, reject) => {
+    const child = exec(cmd, { encoding: 'utf-8' });
+    child.stdout?.on('data', (data) => process.stdout.write(dim(data)));
+    child.stderr?.on('data', (data) => process.stderr.write(dim(data)));
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Command exited with code ${code}`));
+    });
+  });
+}
+
 function handleCancel(value) {
   if (isCancel(value)) {
     cancel('Installation cancelled.');
@@ -303,14 +315,13 @@ async function main() {
 
   if (required.length > 0) {
     log.info(`Installing ${required.length} required dependenc${required.length === 1 ? 'y' : 'ies'}...`);
-    const s = spinner();
     for (const dep of required) {
-      s.start(`Installing ${dep.label}...`);
+      log.info(`${bold(dep.label)}: ${dim(dep.install)}`);
       try {
-        await runCommand(dep.install);
-        s.stop(`${green('+')} ${dep.label} installed`);
+        await runCommandLive(dep.install);
+        log.success(`${dep.label} installed`);
       } catch (err) {
-        s.stop(`${red('x')} ${dep.label} failed: ${err.message}`);
+        log.error(`${dep.label} failed: ${err.message}`);
         log.warn(`Install manually: ${dep.install}`);
       }
     }
@@ -323,7 +334,7 @@ async function main() {
 
   const optional = [];
   if (!deps.ffmpeg) optional.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
-  if (!deps.insanelyFastWhisper) optional.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pip3 install insanely-fast-whisper', hint: 'audio transcription (GPU-accelerated)' });
+  if (!deps.insanelyFastWhisper) optional.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pip3 install insanely-fast-whisper', hint: 'audio transcription — large download (~2GB, includes PyTorch)' });
 
   if (optional.length > 0) {
     const toInstall = handleCancel(await multiselect({
@@ -337,15 +348,14 @@ async function main() {
     })) || [];
 
     if (toInstall.length > 0) {
-      const s = spinner();
       for (const depId of toInstall) {
         const dep = optional.find(m => m.id === depId);
-        s.start(`Installing ${dep.label}...`);
+        log.info(`${bold(dep.label)}: ${dim(dep.install)}`);
         try {
-          await runCommand(dep.install);
-          s.stop(`${green('+')} ${dep.label} installed`);
+          await runCommandLive(dep.install);
+          log.success(`${dep.label} installed`);
         } catch (err) {
-          s.stop(`${red('x')} ${dep.label} failed: ${err.message}`);
+          log.error(`${dep.label} failed: ${err.message}`);
           log.warn(`You can install manually: ${dep.install}`);
         }
       }
