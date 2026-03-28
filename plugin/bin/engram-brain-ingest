@@ -342,33 +342,52 @@ def _extract_audio(video_path, output_path):
 
 
 def _transcribe_audio(audio_path, model="base"):
-    """Transcribe audio using insanely-fast-whisper (GPU-accelerated) or openai-whisper fallback."""
+    """Transcribe audio using insanely-fast-whisper (GPU-accelerated) or openai-whisper fallback.
 
-    # Prefer insanely-fast-whisper (much faster, GPU support)
-    if shutil.which("insanely-fast-whisper"):
-        model_id = {
-            "tiny": "openai/whisper-tiny",
-            "base": "openai/whisper-base",
-            "small": "openai/whisper-small",
-            "medium": "openai/whisper-medium",
-            "large": "openai/whisper-large-v3",
-        }.get(model, f"openai/whisper-{model}")
+    Tries in order:
+      1. insanely-fast-whisper (installed via pipx)
+      2. pipx run insanely-fast-whisper (no install needed)
+      3. openai-whisper CLI (legacy fallback)
+    """
+    import platform as _platform
 
+    model_id = {
+        "tiny": "openai/whisper-tiny",
+        "base": "openai/whisper-base",
+        "small": "openai/whisper-small",
+        "medium": "openai/whisper-medium",
+        "large": "openai/whisper-large-v3",
+    }.get(model, f"openai/whisper-{model}")
+
+    # macOS needs --device-id mps and lower batch size to avoid OOM
+    is_mac = _platform.system() == "Darwin"
+    extra_args = []
+    if is_mac:
+        extra_args += ["--device-id", "mps", "--batch-size", "4"]
+
+    def _run_ifw(cmd_prefix):
+        """Run insanely-fast-whisper with given command prefix, return transcript text."""
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
             output_path = tmp.name
 
-        cmd = [
-            "insanely-fast-whisper",
+        cmd = cmd_prefix + [
             "--file-name", str(audio_path),
             "--model-name", model_id,
             "--transcript-path", output_path,
-        ]
-        print(f"Transcribing with insanely-fast-whisper ({model} model)...")
+        ] + extra_args
+
+        label = cmd_prefix[0] if cmd_prefix[0] != "pipx" else "pipx run"
+        print(f"Transcribing with {label} insanely-fast-whisper ({model} model)...")
+        if is_mac:
+            print(f"  (macOS: using MPS device, batch-size 4)")
+
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         if result.returncode != 0:
             stderr = result.stderr.strip()
             if stderr:
-                print(f"insanely-fast-whisper stderr: {stderr}", file=sys.stderr)
+                print(f"  stderr: {stderr}", file=sys.stderr)
+            Path(output_path).unlink(missing_ok=True)
+            return None
 
         try:
             import json as _json
@@ -376,13 +395,25 @@ def _transcribe_audio(audio_path, model="base"):
             text = data.get("text", "")
             if not text and "chunks" in data:
                 text = " ".join(c.get("text", "") for c in data["chunks"])
-            return text.strip()
+            return text.strip() or None
         except Exception:
-            raise RuntimeError("insanely-fast-whisper produced no usable output")
+            return None
         finally:
             Path(output_path).unlink(missing_ok=True)
 
-    # Fallback to openai-whisper CLI
+    # 1. Installed insanely-fast-whisper
+    if shutil.which("insanely-fast-whisper"):
+        result = _run_ifw(["insanely-fast-whisper"])
+        if result:
+            return result
+
+    # 2. pipx run (no install needed, temporary environment)
+    if shutil.which("pipx"):
+        result = _run_ifw(["pipx", "run", "insanely-fast-whisper"])
+        if result:
+            return result
+
+    # 3. Legacy openai-whisper CLI
     if shutil.which("whisper"):
         with tempfile.TemporaryDirectory() as tmpdir:
             cmd = [
@@ -406,7 +437,9 @@ def _transcribe_audio(audio_path, model="base"):
             return txt_files[0].read_text(encoding="utf-8").strip()
 
     raise FileNotFoundError(
-        "No transcription tool found. Install: pip3 install insanely-fast-whisper"
+        "No transcription tool found.\n"
+        "  Install: brew install pipx && pipx install insanely-fast-whisper==0.0.15\n"
+        "  Or run without installing: pipx run insanely-fast-whisper --file-name <file>"
     )
 
 

@@ -156,6 +156,7 @@ function detectDependencies() {
   // Core tools
   deps.python3 = commandExists('python3');
   deps.pip = commandExists('pip3') || commandExists('pip');
+  deps.pipx = commandExists('pipx');
   deps.brew = commandExists('brew');
   deps.apt = commandExists('apt-get');
 
@@ -332,17 +333,22 @@ async function main() {
 
   // ── Offer optional dependencies ──────────────────────────────────────
 
+  // Install pipx if needed (used for isolated Python tool installs)
+  if (!deps.pipx) {
+    log.info('Installing pipx (isolated Python package manager)...');
+    try {
+      const pipxCmd = deps.brew ? 'brew install pipx && pipx ensurepath' : 'pip3 install pipx && pipx ensurepath';
+      await runCommandLive(pipxCmd);
+      deps.pipx = true;
+      log.success('pipx installed');
+    } catch {
+      log.warn('Could not install pipx — whisper install may need manual setup');
+    }
+  }
+
   const optional = [];
   if (!deps.ffmpeg) optional.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
-
-  // Note: insanely-fast-whisper is NOT offered here — its dependency tree
-  // (pyannote-audio, torch, transformers) causes pip backtracking failures
-  // on many systems. Users who need video transcription should install it
-  // manually: pip3 install insanely-fast-whisper
-  if (!deps.insanelyFastWhisper && !deps.ffmpeg) {
-    // Just inform, don't offer to install
-    log.info(dim('Video transcription requires insanely-fast-whisper (install separately: pip3 install insanely-fast-whisper)'));
-  }
+  if (!deps.insanelyFastWhisper) optional.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pipx install insanely-fast-whisper==0.0.15 --force --pip-args="--ignore-requires-python"', hint: 'video/audio transcription (via pipx — no conflicts)' });
 
   if (optional.length > 0) {
     const toInstall = handleCancel(await multiselect({

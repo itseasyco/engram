@@ -1054,6 +1054,47 @@ The wizard detects and installs dependencies automatically. Core dependencies ar
 
 ---
 
+## Video / Audio Transcription
+
+Engram can ingest video and audio files by extracting audio with ffmpeg and transcribing with [insanely-fast-whisper](https://github.com/Vaibhavs10/insanely-fast-whisper). The wizard offers to install it during setup, or you can install it manually:
+
+```bash
+# Install pipx if you don't have it
+brew install pipx    # macOS
+# or: pip install pipx
+
+# Install insanely-fast-whisper (isolated, no dependency conflicts)
+pipx install insanely-fast-whisper==0.0.15 --force --pip-args="--ignore-requires-python"
+
+# Or run without installing
+pipx run insanely-fast-whisper --file-name recording.mp4
+```
+
+**Hardware & transcription speed:**
+
+Transcription time depends heavily on your hardware. A 1-hour recording might take 30 seconds on a high-end GPU or 20+ minutes on CPU. Here's what to expect:
+
+| Setup | ~Time for 1 hour of audio | Notes |
+|-------|--------------------------|-------|
+| NVIDIA A100 / 4090 | ~1 min | Best performance. Flash Attention 2 supported. |
+| NVIDIA T4 / 3060 | ~3-5 min | Use `--batch-size 12` if you hit OOM. |
+| Mac (Apple Silicon) | ~5-10 min | Engram auto-sets `--device-id mps --batch-size 4`. Uses ~12GB GPU memory. |
+| CPU only | ~20-40 min | Use `openai-whisper` instead (`pip install openai-whisper`). Works everywhere, just slower. |
+
+**Usage with Engram:**
+
+```bash
+# Ingest a video (extracts audio, transcribes, creates vault note)
+engram ingest video /Volumes/Vault ~/recordings/meeting.mp4 --title "Q1 Planning" --speaker "Andrew"
+
+# With a specific model (tiny/base/small/medium/large)
+engram ingest video /Volumes/Vault ~/recordings/call.mp3 --model large
+```
+
+Engram tries transcription tools in this order: installed `insanely-fast-whisper` > `pipx run insanely-fast-whisper` > `openai-whisper` CLI. If none are available, it tells you how to install.
+
+---
+
 ## Current Limitations
 
 **Hooks — waiting on OpenClaw lifecycle methods:**
@@ -1063,7 +1104,7 @@ The wizard detects and installs dependencies automatically. Core dependencies ar
 - Built-in AST parsing covers Python only. If GitNexus is not installed, JS/TS/Go/Rust files are counted but not parsed. The wizard offers to install GitNexus during setup. To add additional repos after setup, run `gitnexus analyze <repo-path>` or instruct your agent to initialize the repo with `engram-brain-code analyze <repo-path>`.
 
 **Ingestion:**
-- Video/audio ingestion (`engram-brain-ingest video`) is a work in progress — the pipeline is not fully integrated yet.
+- Video/audio ingestion is functional but requires external tools (see below).
 
 **Shared vault (connected/curator modes):**
 - Requires `obsidian-headless` (`ob`) which is an experimental dependency. The wizard offers to install it if you select connected or curator mode.
