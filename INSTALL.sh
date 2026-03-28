@@ -951,6 +951,20 @@ PKGJSON
             cp -r "$SCRIPT_DIR/plugin/v2-lcm"/* "$PLUGIN_PATH/v2-lcm/"
             log_success "V2 lifecycle manager installed"
         fi
+
+        # Templates (TOOLS.md, AGENTS.md)
+        if [ -d "$SCRIPT_DIR/plugin/templates" ]; then
+            mkdir -p "$PLUGIN_PATH/templates"
+            cp -r "$SCRIPT_DIR/plugin/templates"/* "$PLUGIN_PATH/templates/"
+            log_success "Agent workspace templates installed"
+        fi
+
+        # Skills (curator-maintenance.md)
+        if [ -d "$SCRIPT_DIR/plugin/skills" ]; then
+            mkdir -p "$PLUGIN_PATH/skills"
+            cp -r "$SCRIPT_DIR/plugin/skills"/* "$PLUGIN_PATH/skills/"
+            log_success "Skills installed"
+        fi
     fi
 
     # Copy docs
