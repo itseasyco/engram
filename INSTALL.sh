@@ -1434,6 +1434,49 @@ write_tools_md() {
     if [ $((updated + created)) -gt 0 ]; then
         log_success "Updated $updated / created $created TOOLS.md file(s)"
     fi
+
+    # Now handle AGENTS.md
+    local agents_template="$PLUGIN_PATH/templates/agents-engram.md"
+    if [ ! -f "$agents_template" ]; then
+        log_warning "Engram AGENTS.md template not found — skipping"
+        return
+    fi
+
+    local agents_updated=0
+    local agents_created=0
+
+    while IFS= read -r agent_id; do
+        [ -z "$agent_id" ] && continue
+
+        local workspace
+        workspace=$(echo "$workspaces_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('$agent_id',''))" 2>/dev/null || echo "")
+
+        if [ -z "$workspace" ] || [ ! -d "$workspace" ]; then
+            continue
+        fi
+
+        local agents_file="$workspace/AGENTS.md"
+
+        if [ -f "$agents_file" ]; then
+            if grep -q "## Engram" "$agents_file" 2>/dev/null; then
+                continue
+            fi
+            echo "" >> "$agents_file"
+            cat "$agents_template" >> "$agents_file"
+            log_success "Agent '$agent_id': appended Engram workflow to AGENTS.md"
+            (( agents_updated++ )) || true
+        else
+            echo "# Agents" > "$agents_file"
+            echo "" >> "$agents_file"
+            cat "$agents_template" >> "$agents_file"
+            log_success "Agent '$agent_id': created AGENTS.md with Engram workflow"
+            (( agents_created++ )) || true
+        fi
+    done <<< "$agent_ids"
+
+    if [ $((agents_updated + agents_created)) -gt 0 ]; then
+        log_success "Updated $agents_updated / created $agents_created AGENTS.md file(s)"
+    fi
 }
 
 # ─── Step 9: Run validation ─────────────────────────────────────────────────
