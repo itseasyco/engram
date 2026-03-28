@@ -1273,78 +1273,113 @@ init_obsidian_vault() {
 
 # ─── Step 7: Initialize stack and integrations ────────────────────────────
 
+INSTALL_LOG="${OPENCLAW_HOME:-$HOME/.openclaw}/logs/install-$(date +%Y%m%d-%H%M%S).log"
+mkdir -p "$(dirname "$INSTALL_LOG")" 2>/dev/null || true
+
+_run_init_task() {
+    # Run a task with animated dots: _run_init_task "label" "command" timeout_secs
+    local label="$1"
+    local cmd="$2"
+    local timeout_secs="${3:-30}"
+
+    printf "  ${DIM}%-30s${NC} " "$label"
+
+    # Log the command being run
+    echo "--- $label ---" >> "$INSTALL_LOG"
+    echo "cmd: $cmd" >> "$INSTALL_LOG"
+    echo "timeout: ${timeout_secs}s" >> "$INSTALL_LOG"
+    echo "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$INSTALL_LOG"
+
+    # Run command in background, capture output to log
+    timeout "$timeout_secs" bash -c "$cmd" >> "$INSTALL_LOG" 2>&1 &
+    local pid=$!
+
+    # Animate dots while waiting
+    local dots=""
+    while kill -0 "$pid" 2>/dev/null; do
+        dots="${dots}."
+        if [ ${#dots} -gt 5 ]; then
+            dots="."
+        fi
+        printf "\r  ${DIM}%-30s${NC} ${DIM}%-5s${NC}" "$label" "$dots"
+        sleep 0.3
+    done
+
+    # Check result
+    wait "$pid" 2>/dev/null
+    local exit_code=$?
+    echo "exit: $exit_code ($(date -u +%Y-%m-%dT%H:%M:%SZ))" >> "$INSTALL_LOG"
+    echo "" >> "$INSTALL_LOG"
+
+    if [ $exit_code -eq 0 ]; then
+        printf "\r  %-30s ${GREEN}✓${NC}     \n" "$label"
+    elif [ $exit_code -eq 124 ]; then
+        printf "\r  %-30s ${YELLOW}— timed out${NC}     \n" "$label"
+    else
+        printf "\r  %-30s ${YELLOW}— failed${NC}     \n" "$label"
+    fi
+}
+
 init_stack_and_integrations() {
     log_step 7 "Initializing memory stack and integrations"
+    echo ""
 
     local bin_dir="$PLUGIN_PATH/bin"
+    local total=0
+    local done=0
 
-    # Initialize knowledge graph on the vault
+    # Count tasks
+    [ -d "$DETECTED_VAULT" ] && [ -x "$bin_dir/engram-brain-graph" ] && (( total++ )) || true
+    [ -x "$bin_dir/engram-agent-id" ] && (( total++ )) || true
+    [ "$WIZARD_PROVENANCE" = "true" ] && [ -x "$bin_dir/engram-provenance" ] && (( total++ )) || true
+    [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ] && [ "$HAS_JQ" = "true" ] && (( total++ )) || true
+    [ "$WIZARD_CODE_GRAPH" = "true" ] && (( total++ )) || true
+    command -v qmd &>/dev/null && [ -d "$DETECTED_VAULT" ] && (( total++ )) || true
+
+    # Knowledge graph
     if [ -d "$DETECTED_VAULT" ] && [ -x "$bin_dir/engram-brain-graph" ]; then
-        log_info "Initializing knowledge graph..."
-        bash "$bin_dir/engram-brain-graph" init "$(pwd)" --vault "$DETECTED_VAULT" 2>/dev/null || true
-        log_success "Knowledge graph initialized"
+        _run_init_task "Knowledge graph" "bash '$bin_dir/engram-brain-graph' init '$(pwd)' --vault '$DETECTED_VAULT'" 30
     fi
 
-    # Register agent identity
+    # Agent identity
     if [ -x "$bin_dir/engram-agent-id" ]; then
-        log_info "Registering agent identity..."
-        bash "$bin_dir/engram-agent-id" register "$(pwd)" 2>/dev/null || true
-        log_success "Agent identity registered"
+        _run_init_task "Agent identity" "ENGRAM_SKIP_KEYCHAIN=1 bash '$bin_dir/engram-agent-id' register '$(pwd)'" 10
     fi
 
-    # Initialize provenance chain
+    # Provenance chain
     if [ "$WIZARD_PROVENANCE" = "true" ] && [ -x "$bin_dir/engram-provenance" ]; then
-        log_info "Initializing provenance chain..."
-        bash "$bin_dir/engram-provenance" start --project "$(pwd)" 2>/dev/null || true
-        bash "$bin_dir/engram-provenance" end --project "$(pwd)" --exit-code 0 2>/dev/null || true
-        log_success "Provenance chain initialized (genesis receipt created)"
+        _run_init_task "Provenance chain" "bash '$bin_dir/engram-provenance' start --project '$(pwd)' && bash '$bin_dir/engram-provenance' end --project '$(pwd)' --exit-code 0" 15
     fi
 
-    # Wire lossless-claw if detected
+    # Lossless-claw config
     if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ] && [ "$HAS_JQ" = "true" ]; then
-        log_info "Wiring lossless-claw context engine..."
-        local tmp
-        tmp=$(mktemp)
-        jq '.plugins.entries["engram"].config.contextEngine = "lossless-claw"' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
-        log_success "Context engine set to lossless-claw in gateway config"
+        _run_init_task "Lossless-claw config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.contextEngine = \"lossless-claw\"' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5
     fi
 
-    # Wire GitNexus if detected
+    # GitNexus / code graph
     if [ "$WIZARD_CODE_GRAPH" = "true" ]; then
         if command -v gitnexus &>/dev/null; then
-            log_info "Enabling code graph with GitNexus..."
             if [ "$HAS_JQ" = "true" ]; then
-                local tmp
-                tmp=$(mktemp)
-                jq '.plugins.entries["engram"].config.codeGraphEnabled = true' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
+                _run_init_task "Code graph config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.codeGraphEnabled = true' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5
             fi
-
-            # Run initial analysis if in a git repo
-            if [ -d ".git" ] && [ -x "$bin_dir/engram-brain-code" ]; then
-                log_info "Running initial code analysis..."
-                python3 "$bin_dir/engram-brain-code" analyze "$(pwd)" --output "$PLUGIN_PATH/config/initial-analysis.json" 2>/dev/null || true
-                log_success "Initial code analysis complete"
-            fi
-
-            # Generate MCP config for GitNexus
             if [ -x "$bin_dir/engram-brain-graph" ]; then
-                log_info "Generating MCP server configs..."
-                bash "$bin_dir/engram-brain-graph" mcp-config "$DETECTED_VAULT" --output "$PLUGIN_PATH/config/mcp-servers.json" 2>/dev/null || true
-                log_success "MCP server configs generated"
+                _run_init_task "MCP server configs" "bash '$bin_dir/engram-brain-graph' mcp-config '$DETECTED_VAULT' --output '$PLUGIN_PATH/config/mcp-servers.json'" 15
             fi
+            log_info "  Run 'engram brain analyze' to index your codebase"
         else
-            log_warning "Code graph enabled but GitNexus not installed — built-in Python-only AST will be used"
-            log_info "  Install for full multi-language support: npm install -g gitnexus"
+            printf "  ${YELLOW}[  — ]${NC} Code graph ${DIM}(GitNexus not installed — run: npm install -g gitnexus)${NC}\n"
         fi
     fi
 
-    # Run QMD initial indexing if available
+    # QMD indexing
     export PATH="$HOME/.bun/bin:$PATH"
     if command -v qmd &>/dev/null && [ -d "$DETECTED_VAULT" ]; then
-        log_info "Running initial QMD indexing on vault..."
-        (cd "$DETECTED_VAULT" && qmd update 2>/dev/null && qmd embed 2>/dev/null) || true
-        log_success "QMD indexing complete"
+        _run_init_task "QMD vault indexing" "cd '$DETECTED_VAULT' && qmd update && qmd embed" 120
     fi
+
+    echo ""
+    echo -e "  ${DIM}Log: ${INSTALL_LOG}${NC}"
+    echo ""
 }
 
 # ─── Step 8: Write TOOLS.md to agent workspaces ───────────────────────────

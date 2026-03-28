@@ -71,9 +71,8 @@ EOF
   # Restrict identity file permissions (owner read/write only)
   chmod 600 "$agent_file"
 
-  # Try to store key in keychain (macOS)
-  if command -v security >/dev/null 2>&1; then
-    # Generate a dummy key for now (actual signing key would go here)
+  # Try to store key in keychain (macOS) — skip during install to avoid prompts
+  if [ "${ENGRAM_SKIP_KEYCHAIN:-}" != "1" ] && command -v security >/dev/null 2>&1; then
     security add-generic-password \
       -a "$agent_id" \
       -s "openclaw-agent-key-$agent_id" \

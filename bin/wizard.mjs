@@ -796,13 +796,13 @@ async function main() {
       });
 
       if (toolsMdAgents.length > 0) {
-        log.info(`Will append Engram docs to TOOLS.md: ${toolsMdAgents.join(', ')}`);
+        log.info(`Will append Engram docs to TOOLS.md and AGENTS.md: ${toolsMdAgents.join(', ')}`);
       }
       if (noToolsMdAgents.length > 0) {
-        log.info(`Will create TOOLS.md for: ${noToolsMdAgents.join(', ')}`);
+        log.info(`Will create TOOLS.md and AGENTS.md for: ${noToolsMdAgents.join(', ')}`);
       }
     } else {
-      log.info('No agents selected — TOOLS.md will not be modified');
+      log.info('No agents selected — TOOLS.md and AGENTS.md will not be modified');
     }
   } else {
     log.info('No agents found in OpenClaw config — skipping agent selection');
