@@ -334,7 +334,15 @@ async function main() {
 
   const optional = [];
   if (!deps.ffmpeg) optional.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
-  if (!deps.insanelyFastWhisper) optional.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pip3 install insanely-fast-whisper', hint: 'audio transcription — large download (~2GB, includes PyTorch)' });
+
+  // Note: insanely-fast-whisper is NOT offered here — its dependency tree
+  // (pyannote-audio, torch, transformers) causes pip backtracking failures
+  // on many systems. Users who need video transcription should install it
+  // manually: pip3 install insanely-fast-whisper
+  if (!deps.insanelyFastWhisper && !deps.ffmpeg) {
+    // Just inform, don't offer to install
+    log.info(dim('Video transcription requires insanely-fast-whisper (install separately: pip3 install insanely-fast-whisper)'));
+  }
 
   if (optional.length > 0) {
     const toInstall = handleCancel(await multiselect({
@@ -851,19 +859,19 @@ async function main() {
   const config = {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
-    vault: vaultPath,
-    contextEngine: contextEngineResolved,
-    safetyProfile,
-    operatingMode,
-    curatorUrl: curatorUrl || null,
-    curatorToken: curatorToken || null,
-    policyTier,
-    codeGraph,
+    vault_path: vaultPath,
+    context_engine: contextEngineResolved,
+    profile: safetyProfile,
+    mode: operatingMode,
+    curator_url: curatorUrl || null,
+    curator_token: curatorToken || null,
+    policy_tier: policyTier,
+    code_graph: codeGraph,
     provenance,
-    localFirst,
-    guardLevel,
-    disabledRules,
-    ruleOverrides,
+    local_first: localFirst,
+    guard_level: guardLevel,
+    disabled_rules: disabledRules,
+    rule_overrides: ruleOverrides,
     dependencies: {
       qmd: deps.qmd,
       obsidianCli: deps.obsidianCli,
