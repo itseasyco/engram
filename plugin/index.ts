@@ -55,7 +55,7 @@ import { appendFileSync, mkdirSync, readFileSync as readFileSyncFs } from "node:
 function resolveVaultPath(): string {
   if (process.env.LACP_OBSIDIAN_VAULT) return process.env.LACP_OBSIDIAN_VAULT;
   try {
-    const envFile = join(pluginDir, "config", ".openclaw-lacp.env");
+    const envFile = join(pluginDir, "config", ".engram.env");
     const content = readFileSyncFs(envFile, "utf-8");
     const match = content.match(/^LACP_OBSIDIAN_VAULT=(.+)$/m);
     if (match) return match[1].trim();

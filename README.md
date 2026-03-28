@@ -302,7 +302,7 @@ Seven profiles control which hooks fire and how they behave.
 | **hardened-exec** | session-start, pretool-guard, stop-quality-gate, write-validate | All hooks block; violations require explicit approval | Production deploys, high-stakes work |
 | **full-audit** | session-start, pretool-guard, stop-quality-gate, write-validate | All hooks block; verbose logging; full provenance | Compliance, audit trails, debugging hook behavior |
 
-Set the profile during install or change it later in `~/.openclaw/extensions/engram/config/.openclaw-lacp.env`.
+Set the profile during install or change it later in `~/.openclaw/extensions/engram/config/.engram.env`.
 
 ---
 
@@ -729,7 +729,7 @@ The current SDK exposes `openclaw/plugin-sdk`. A future SDK release may move to 
 
 ### Plugin Config
 
-**Location:** `~/.openclaw/extensions/engram/config/.openclaw-lacp.env`
+**Location:** `~/.openclaw/extensions/engram/config/.engram.env`
 
 Environment-style config for the plugin. Set during install by the wizard.
 

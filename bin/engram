@@ -184,7 +184,7 @@ cmd_wizard() {
 
 _source_env_config() {
     # Source the LACP env config so env vars are available to subcommands
-    local env_file="$HOME/.openclaw/extensions/engram/config/.openclaw-lacp.env"
+    local env_file="$HOME/.openclaw/extensions/engram/config/.engram.env"
     if [[ -f "$env_file" ]]; then
         while IFS= read -r line; do
             line="${line%%#*}"  # strip comments

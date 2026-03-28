@@ -37,7 +37,7 @@ PLUGIN_DIR = Path(
 CONFIG_DIR = PLUGIN_DIR / "config"
 LOGS_DIR = PLUGIN_DIR / "logs"
 CONFIG_FILE = CONFIG_DIR / "ingest-watch.json"
-ENV_FILE = CONFIG_DIR / ".openclaw-lacp.env"
+ENV_FILE = CONFIG_DIR / ".engram.env"
 LOG_FILE = LOGS_DIR / "ingest-watch.jsonl"
 
 # ANSI colors

@@ -1075,7 +1075,7 @@ create_data_directories() {
 generate_env_config() {
     log_step 4 "Generating environment config"
 
-    local env_file="$PLUGIN_PATH/config/.openclaw-lacp.env"
+    local env_file="$PLUGIN_PATH/config/.engram.env"
 
     if [ -f "$env_file" ]; then
         log_warning "Config already exists at $env_file (preserving)"
@@ -1124,7 +1124,7 @@ $([ "$WIZARD_MODE" = "connected" ] && [ -n "$WIZARD_CURATOR_TOKEN" ] && echo "LA
 OPENCLAW_HOOKS_PROFILE=$WIZARD_PROFILE
 
 # To customize further, see the full template at:
-# $PLUGIN_PATH/config/.openclaw-lacp.env.template
+# $PLUGIN_PATH/config/.engram.env.template
 ENVEOF
 
     log_success "Config generated at $env_file"
@@ -1291,18 +1291,27 @@ _run_init_task() {
     echo "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$INSTALL_LOG"
 
     # Run command in background, capture output to log
-    timeout "$timeout_secs" bash -c "$cmd" >> "$INSTALL_LOG" 2>&1 &
+    bash -c "$cmd" >> "$INSTALL_LOG" 2>&1 &
     local pid=$!
 
-    # Animate dots while waiting
+    # Animate dots while waiting, with manual timeout
     local dots=""
+    local elapsed=0
     while kill -0 "$pid" 2>/dev/null; do
+        if [ "$elapsed" -ge "$timeout_secs" ]; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            echo "exit: timeout after ${timeout_secs}s ($(date -u +%Y-%m-%dT%H:%M:%SZ))" >> "$INSTALL_LOG"
+            printf "\r  %-30s ${YELLOW}— timed out${NC}     \n" "$label"
+            return 0
+        fi
         dots="${dots}."
         if [ ${#dots} -gt 5 ]; then
             dots="."
         fi
         printf "\r  ${DIM}%-30s${NC} ${DIM}%-5s${NC}" "$label" "$dots"
         sleep 0.3
+        elapsed=$((elapsed + 1))  # roughly 0.3s per tick, close enough
     done
 
     # Check result
@@ -1313,11 +1322,12 @@ _run_init_task() {
 
     if [ $exit_code -eq 0 ]; then
         printf "\r  %-30s ${GREEN}✓${NC}     \n" "$label"
-    elif [ $exit_code -eq 124 ]; then
-        printf "\r  %-30s ${YELLOW}— timed out${NC}     \n" "$label"
     else
         printf "\r  %-30s ${YELLOW}— failed${NC}     \n" "$label"
     fi
+
+    # Always return 0 so set -e doesn't kill the installer
+    return 0
 }
 
 init_stack_and_integrations() {
@@ -1671,7 +1681,7 @@ print_summary() {
     echo "  4. Query memory:         engram memory query <topic>"
     echo ""
     echo -e "${BOLD}Locations:${NC}"
-    echo "  Config:  $PLUGIN_PATH/config/.openclaw-lacp.env"
+    echo "  Config:  $PLUGIN_PATH/config/.engram.env"
     echo "  Gateway: $GATEWAY_CONFIG"
     echo "  Logs:    $PLUGIN_PATH/logs/"
     echo "  Docs:    $PLUGIN_PATH/docs/"

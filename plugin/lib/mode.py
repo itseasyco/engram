@@ -74,14 +74,14 @@ def _read_config_file() -> dict:
 
 
 def _read_env_config() -> dict:
-    """Read .openclaw-lacp.env file and return key-value pairs.
+    """Read .engram.env file and return key-value pairs.
 
     This picks up settings from the INSTALL.sh-generated env config,
     which may have values not in environment variables or mode.json.
     """
     openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
     candidates = [
-        Path(openclaw_home) / "extensions" / "engram" / "config" / ".openclaw-lacp.env",
+        Path(openclaw_home) / "extensions" / "engram" / "config" / ".engram.env",
     ]
     for path in candidates:
         if path.exists():
@@ -123,7 +123,7 @@ def get_mode() -> str:
 def get_config() -> ModeConfig:
     """Return a full ModeConfig snapshot from env + config file + env config file.
 
-    Priority: environment variables > mode.json > .openclaw-lacp.env > defaults
+    Priority: environment variables > mode.json > .engram.env > defaults
     """
     config = _read_config_file()
     env_config = _read_env_config()

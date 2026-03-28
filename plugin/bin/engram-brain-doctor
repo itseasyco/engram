@@ -375,7 +375,7 @@ check_config() {
   echo ""
   echo -e "${BLUE}Configuration${NC}"
 
-  local config_file="$HOME/.openclaw/plugins/engram/config/.openclaw-lacp.env"
+  local config_file="$HOME/.openclaw/plugins/engram/config/.engram.env"
   if [ -f "$config_file" ]; then
     log_ok "Config file: $config_file"
   else

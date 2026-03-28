@@ -160,10 +160,10 @@ class TestConfigFile:
     """Test configuration file."""
 
     def test_config_file_exists(self):
-        assert (PLUGIN_ROOT / "config" / ".openclaw-lacp.env").exists()
+        assert (PLUGIN_ROOT / "config" / ".engram.env").exists()
 
     def test_config_has_layer_sections(self):
-        content = (PLUGIN_ROOT / "config" / ".openclaw-lacp.env").read_text()
+        content = (PLUGIN_ROOT / "config" / ".engram.env").read_text()
         for layer_num in range(1, 6):
             assert f"Layer {layer_num}" in content
 

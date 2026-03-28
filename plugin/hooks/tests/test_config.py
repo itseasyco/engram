@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-CONFIG_FILE = Path(__file__).parent.parent.parent / "config" / ".openclaw-lacp.env"
+CONFIG_FILE = Path(__file__).parent.parent.parent / "config" / ".engram.env"
 
 
 class TestConfigFileExists:
