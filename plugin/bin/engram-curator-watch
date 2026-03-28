@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""
+engram-curator-watch — Real-time reactive loop for the curator engine.
+
+Watches the vault for new inbox items and conflict files using filesystem
+events (watchdog) with automatic fallback to polling.
+
+New high-trust inbox items get fast-classified and auto-promoted without
+waiting for the scheduled curator cycle. Conflict files trigger auto-merge.
+
+Usage:
+  engram-curator-watch [--vault <path>] [--poll] [--interval <secs>]
+  engram-curator-watch --install-watchdog
+"""
+
+import argparse
+import logging
+import os
+import signal
+import sys
+from pathlib import Path
+
+# Add lib to path
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("curator-watch")
+
+GREEN = "\033[0;32m"
+DIM = "\033[2m"
+NC = "\033[0m"
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Real-time vault watcher for the curator engine")
+    parser.add_argument("--vault", help="Path to the Obsidian vault")
+    parser.add_argument("--poll", action="store_true", help="Force polling mode (no watchdog)")
+    parser.add_argument("--interval", type=float, default=5.0, help="Poll interval in seconds (default: 5)")
+    parser.add_argument("--install-watchdog", action="store_true", help="Install the watchdog library")
+
+    args = parser.parse_args()
+
+    if args.install_watchdog:
+        import subprocess
+        logger.info("Installing watchdog...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "watchdog"],
+                                  stdout=sys.stdout, stderr=sys.stderr)
+            logger.info("watchdog installed successfully")
+        except subprocess.CalledProcessError:
+            # Try pipx
+            if os.system("which pipx > /dev/null 2>&1") == 0:
+                os.system("pipx inject engram watchdog 2>/dev/null || pip install watchdog")
+            else:
+                logger.error("Failed to install watchdog. Install manually: pip install watchdog")
+                return 1
+        return 0
+
+    vault_path = args.vault or os.environ.get(
+        "LACP_OBSIDIAN_VAULT",
+        os.path.expanduser("~/obsidian/vault"),
+    )
+
+    if not Path(vault_path).exists():
+        logger.error("Vault not found: %s", vault_path)
+        logger.error("Set LACP_OBSIDIAN_VAULT or pass --vault <path>")
+        return 1
+
+    from lib.reactive_watcher import start_reactive_watcher, WATCHDOG_AVAILABLE
+
+    if not WATCHDOG_AVAILABLE and not args.poll:
+        logger.warning("watchdog not installed — using polling fallback (5s interval)")
+        logger.info("Install for real-time events: engram-curator-watch --install-watchdog")
+
+    print(f"\n{GREEN}Engram Curator Watch{NC}")
+    print(f"{DIM}Vault: {vault_path}{NC}")
+    if WATCHDOG_AVAILABLE and not args.poll:
+        print(f"{DIM}Mode: filesystem events (watchdog){NC}")
+    else:
+        print(f"{DIM}Mode: polling (interval: {args.interval}s){NC}")
+    print(f"{DIM}Press Ctrl+C to stop{NC}\n")
+
+    # Handle graceful shutdown
+    observer = None
+
+    def shutdown(signum, frame):
+        logger.info("Shutting down...")
+        if observer is not None:
+            observer.stop()
+            observer.join()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
+
+    observer = start_reactive_watcher(
+        vault_path=vault_path,
+        use_polling=args.poll or not WATCHDOG_AVAILABLE,
+        poll_interval=args.interval,
+    )
+
+    if observer is not None:
+        # Watchdog mode — observer runs in background thread
+        try:
+            while True:
+                observer.join(timeout=1)
+                if not observer.is_alive():
+                    break
+        except KeyboardInterrupt:
+            observer.stop()
+            observer.join()
+    # Polling mode blocks in start_reactive_watcher, so we won't reach here
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

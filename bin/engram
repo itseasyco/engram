@@ -434,7 +434,10 @@ case "$1" in
         ;;
     watch)
         shift
-        exec "$PLUGIN_BIN/engram-ingest-watch" "$@"
+        case "${1:-}" in
+            curator) shift; exec python3 "$PLUGIN_BIN/engram-curator-watch" "$@" ;;
+            *)       exec "$PLUGIN_BIN/engram-ingest-watch" "$@" ;;
+        esac
         ;;
     uninstall)
         shift

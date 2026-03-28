@@ -1359,38 +1359,12 @@ init_stack_and_integrations() {
     [ "$WIZARD_CODE_GRAPH" = "true" ] && (( total++ )) || true
     command -v qmd &>/dev/null && [ -d "$DETECTED_VAULT" ] && (( total++ )) || true
 
-    # Knowledge graph (skip if vault already has structure)
-    if [ -d "$DETECTED_VAULT" ] && [ -x "$bin_dir/engram-brain-graph" ]; then
-        if [ -d "$DETECTED_VAULT/.obsidian" ] || [ -f "$DETECTED_VAULT/index.md" ]; then
-            printf "  %-30s ${GREEN}✓${NC} ${DIM}(already initialized)${NC}\n" "Knowledge graph"
-        else
-            _run_init_task "Knowledge graph" "bash '$bin_dir/engram-brain-graph' init '$(pwd)' --vault '$DETECTED_VAULT'" 30 || true
-        fi
-    fi
-
-    # Agent identity (skip if already registered)
-    if [ -x "$bin_dir/engram-agent-id" ]; then
-        local hostname_slug
-        hostname_slug=$(hostname | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
-        local proj_slug
-        proj_slug=$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
-        if ls "$OPENCLAW_HOME/agent-ids/${hostname_slug}-${proj_slug}"*.json &>/dev/null 2>&1; then
-            printf "  %-30s ${GREEN}✓${NC} ${DIM}(already registered)${NC}\n" "Agent identity"
-        else
-            _run_init_task "Agent identity" "ENGRAM_SKIP_KEYCHAIN=1 bash '$bin_dir/engram-agent-id' register '$(pwd)'" 10 || true
-        fi
-    fi
-
-    # Provenance chain (skip if already initialized)
-    if [ "$WIZARD_PROVENANCE" = "true" ] && [ -x "$bin_dir/engram-provenance" ]; then
-        local prov_slug
-        prov_slug=$(echo "$(pwd)" | sed 's|/|-|g; s|^-||')
-        if [ -f "$OPENCLAW_HOME/provenance/$prov_slug/chain.jsonl" ]; then
-            printf "  %-30s ${GREEN}✓${NC} ${DIM}(already initialized)${NC}\n" "Provenance chain"
-        else
-            _run_init_task "Provenance chain" "bash '$bin_dir/engram-provenance' start --project '$(pwd)'; bash '$bin_dir/engram-provenance' end --project '$(pwd)' --exit-code 0" 15 || true
-        fi
-    fi
+    # Note: Knowledge graph init, agent identity, and provenance chain are
+    # per-project and initialize automatically when an agent first works on
+    # a repo (via the session-start hook). They don't belong in global setup.
+    printf "  %-30s ${DIM}per-project (auto on first session)${NC}\n" "Knowledge graph"
+    printf "  %-30s ${DIM}per-project (auto on first session)${NC}\n" "Agent identity"
+    printf "  %-30s ${DIM}per-project (auto on first session)${NC}\n" "Provenance chain"
 
     # Lossless-claw config
     if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ] && [ "$HAS_JQ" = "true" ]; then

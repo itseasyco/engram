@@ -167,6 +167,9 @@ function detectDependencies() {
   deps.ffmpeg = commandExists('ffmpeg');
   deps.insanelyFastWhisper = commandExists('insanely-fast-whisper');
 
+  // Reactive watcher
+  deps.watchdog = getCommandOutput('python3 -c "import watchdog; print(1)"') === '1';
+
   // QMD
   deps.qmd = commandExists('qmd');
   if (deps.qmd) {
@@ -376,6 +379,7 @@ async function main() {
   const required = [];
   if (!deps.qmd) required.push({ id: 'qmd', label: 'QMD', install: 'npm install -g @nicepkg/qmd', hint: 'semantic search and memory backend (required)' });
   if (!deps.pdftotext) required.push({ id: 'poppler', label: 'poppler (pdftotext)', install: deps.brew ? 'brew install poppler' : 'sudo apt-get install -y poppler-utils', hint: 'PDF text extraction (required)' });
+  if (!deps.watchdog) required.push({ id: 'watchdog', label: 'watchdog', install: 'pip3 install watchdog', hint: 'real-time filesystem events for curator reactive loop (required)' });
 
   if (required.length > 0) {
     log.info(`Installing ${required.length} required dependenc${required.length === 1 ? 'y' : 'ies'}...`);

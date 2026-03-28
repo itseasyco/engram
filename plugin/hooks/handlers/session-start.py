@@ -254,6 +254,61 @@ def _format_git_context(git_ctx: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def _ensure_project_initialized():
+    """Initialize per-project engram resources on first session.
+
+    Idempotent — skips if already initialized. Runs silently so it
+    doesn't slow down session start or produce visible output.
+    """
+    plugin_dir = os.environ.get("OPENCLAW_PLUGIN_DIR", "")
+    if not plugin_dir:
+        return
+
+    bin_dir = os.path.join(plugin_dir, "bin")
+    cwd = os.getcwd()
+    home = os.path.expanduser("~")
+    openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.join(home, ".openclaw"))
+
+    # Derive project slug
+    project_name = Path(cwd).name
+    project_slug = project_name.lower().replace(" ", "-")
+
+    # Agent identity — register if not exists
+    agent_id_dir = os.path.join(openclaw_home, "agent-ids")
+    if os.path.isdir(agent_id_dir):
+        import glob
+        hostname = os.uname().nodename.lower().replace(".", "-")
+        existing = glob.glob(os.path.join(agent_id_dir, f"{hostname}-{project_slug}*.json"))
+        if not existing:
+            try:
+                subprocess.run(
+                    ["bash", os.path.join(bin_dir, "engram-agent-id"), "register", cwd],
+                    capture_output=True, timeout=10,
+                    env={**os.environ, "ENGRAM_SKIP_KEYCHAIN": "1"},
+                )
+            except Exception:
+                pass
+
+    # Provenance chain — create genesis receipt if not exists
+    prov_dir = os.path.join(openclaw_home, "provenance", project_slug)
+    chain_file = os.path.join(prov_dir, "chain.jsonl")
+    if not os.path.exists(chain_file):
+        try:
+            prov_script = os.path.join(bin_dir, "engram-provenance")
+            result = subprocess.run(
+                ["bash", prov_script, "start", "--project", cwd],
+                capture_output=True, text=True, timeout=10,
+            )
+            session_id = result.stdout.strip().split("\n")[-1] if result.returncode == 0 else ""
+            if session_id:
+                subprocess.run(
+                    ["bash", prov_script, "end", session_id, "--project", cwd, "--exit-code", "0"],
+                    capture_output=True, timeout=10,
+                )
+        except Exception:
+            pass
+
+
 def _inject_lacp_context() -> str | None:
     """Inject top LACP facts via openclaw-lacp-context auto-inject.
 
@@ -379,6 +434,9 @@ def main() -> None:
     if test_cmd:
         parts.append(f"\nTest command detected: {test_cmd}")
         _cache_test_command(test_cmd)
+
+    # Per-project initialization (runs once per project, idempotent)
+    _ensure_project_initialized()
 
     # LACP context injection (v2.0.0) — inject top-3 relevant facts
     lacp_ctx = _inject_lacp_context()
