@@ -1,6 +1,6 @@
 {
   "name": "@easylabs/engram",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Engram — persistent memory layers, knowledge graph, curator engine, policy gates, and provenance chain for AI agents.",
   "license": "MIT",
   "type": "module",
