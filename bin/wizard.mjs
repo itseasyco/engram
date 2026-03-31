@@ -256,21 +256,7 @@ ${dim('                                              w i z a r d')}
 async function installClaudeCode(vaultPath, safetyProfile, guardLevel) {
   log.step(bold('Installing for Claude Code'));
 
-  // 1. Install MCP dependencies
-  const mcpDir = join(PLUGIN_ROOT, 'mcp');
-  if (existsSync(join(mcpDir, 'package.json'))) {
-    const s = spinner();
-    s.start('Installing MCP server dependencies...');
-    try {
-      await runCommand(`cd "${mcpDir}" && npm install --production`);
-      s.stop('MCP server dependencies installed');
-    } catch (err) {
-      s.stop(red('MCP dependency install failed'));
-      log.warn(`Run manually: cd "${mcpDir}" && npm install`);
-    }
-  }
-
-  // 2. Register MCP server in ~/.claude/settings.json
+  // 1. Register MCP server in ~/.claude/settings.json
   const setupMcp = join(PLUGIN_ROOT, 'mcp', 'setup-mcp.sh');
   if (existsSync(setupMcp)) {
     try {
@@ -285,7 +271,7 @@ async function installClaudeCode(vaultPath, safetyProfile, guardLevel) {
     log.warn(`MCP setup script not found at ${setupMcp}`);
   }
 
-  // 3. Register hooks in ~/.claude/settings.json
+  // 2. Register hooks in ~/.claude/settings.json
   const setupHooks = join(PLUGIN_ROOT, 'hooks', 'adapters', 'setup-claude-code.sh');
   if (existsSync(setupHooks)) {
     try {
@@ -310,21 +296,7 @@ async function installClaudeCode(vaultPath, safetyProfile, guardLevel) {
 async function installCodex(vaultPath) {
   log.step(bold('Installing for Codex'));
 
-  // 1. Install MCP dependencies (shared with Claude Code)
-  const mcpDir = join(PLUGIN_ROOT, 'mcp');
-  if (existsSync(join(mcpDir, 'package.json')) && !existsSync(join(mcpDir, 'node_modules'))) {
-    const s = spinner();
-    s.start('Installing MCP server dependencies...');
-    try {
-      await runCommand(`cd "${mcpDir}" && npm install --production`);
-      s.stop('MCP server dependencies installed');
-    } catch (err) {
-      s.stop(red('MCP dependency install failed'));
-      log.warn(`Run manually: cd "${mcpDir}" && npm install`);
-    }
-  }
-
-  // 2. Print MCP config for Codex
+  // 1. Print MCP config for Codex
   const setupMcp = join(PLUGIN_ROOT, 'mcp', 'setup-mcp.sh');
   if (existsSync(setupMcp)) {
     const mcpJson = getCommandOutput(`LACP_OBSIDIAN_VAULT="${vaultPath}" bash "${setupMcp}" --print 2>&1`);

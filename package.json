@@ -1,6 +1,6 @@
 {
   "name": "@easylabs/engram",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "Engram — persistent memory layers, knowledge graph, curator engine, policy gates, and provenance chain for AI agents.",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,9 @@
     "engram": "bin/engram"
   },
   "dependencies": {
-    "@clack/prompts": "^0.9.1"
+    "@clack/prompts": "^0.9.1",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
   },
   "peerDependencies": {
     "@sinclair/typebox": ">=0.32.0",
