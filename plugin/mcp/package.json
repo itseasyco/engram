@@ -1,0 +1,16 @@
+{
+  "name": "@easylabs/engram-mcp",
+  "version": "3.2.0",
+  "description": "Engram MCP server — persistent memory, knowledge graph, and safety tools for AI agents",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": {
+    "engram-mcp": "./server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "license": "MIT",
+  "author": "Easy Labs <engineering@itseasy.co>"
+}

@@ -568,7 +568,24 @@ async function main() {
     }
   }
 
-  // ── Step 5: Dependencies Check ──────────────────────────────────────────
+  // ── Step 5: Platform ───────────────────────────────────────────────────
+
+  log.step(bold('Platform'));
+  log.message(dim('Choose which AI coding platforms to configure Engram for.'));
+
+  const selectedPlatforms = handleCancel(await multiselect({
+    message: 'Platforms',
+    options: [
+      { value: 'openclaw', label: 'OpenClaw', hint: 'native plugin integration (hooks + tools)' },
+      { value: 'claude-code', label: 'Claude Code', hint: 'hooks via settings.json + MCP server for tools' },
+      { value: 'codex', label: 'Codex (OpenAI)', hint: 'MCP server for tools' },
+    ],
+    required: false,
+  })) || [];
+
+  log.success(`Platforms: ${green(selectedPlatforms.join(', ') || 'none')}`);
+
+  // ── Step 6: Dependencies Check ──────────────────────────────────────────
 
   log.step(bold('Dependencies'));
 
@@ -648,7 +665,7 @@ async function main() {
     }
   }
 
-  // ── Step 6: Advanced Config ─────────────────────────────────────────────
+  // ── Step 7: Advanced Config ─────────────────────────────────────────────
 
   let policyTier = 'review';
   let codeGraph = false;
@@ -809,7 +826,7 @@ async function main() {
     }
   }
 
-  // ── Step 7: Agent Selection ─────────────────────────────────────────────
+  // ── Step 8: Agent Selection ─────────────────────────────────────────────
 
   let selectedAgents = [];
   let agentWorkspaces = {};
@@ -884,7 +901,7 @@ async function main() {
     log.info('No agents found in OpenClaw config — skipping agent selection');
   }
 
-  // ── Step 8: Summary ─────────────────────────────────────────────────────
+  // ── Step 9: Summary ─────────────────────────────────────────────────────
 
   const summaryLines = [
     `Obsidian vault:    ${green(vaultPath)}`,
@@ -896,6 +913,7 @@ async function main() {
     `Provenance:        ${green(String(provenance))}`,
     `Local-first:       ${green(String(localFirst))}`,
     `Guard level:       ${green(guardLevel)}`,
+    `Platforms:         ${green(selectedPlatforms.join(', ') || 'none')}`,
   ];
 
   if (operatingMode === 'connected' && curatorUrl) {
@@ -930,7 +948,7 @@ async function main() {
     process.exit(0);
   }
 
-  // ── Step 8: Write Config ────────────────────────────────────────────────
+  // ── Step 10: Write Config ───────────────────────────────────────────────
 
   const config = {
     version: '1.0.0',
@@ -959,6 +977,7 @@ async function main() {
       selected: selectedAgents,
       workspaces: agentWorkspaces,
     },
+    platforms: selectedPlatforms,
   };
 
   try {

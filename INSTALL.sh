@@ -1529,7 +1529,84 @@ write_tools_md() {
     fi
 }
 
-# ─── Step 9: Run validation ─────────────────────────────────────────────────
+# ─── Step 9: Platform setup (Claude Code / Codex) ───────────────────────────
+
+setup_platforms() {
+    local platforms="${WIZARD_PLATFORMS:-}"
+    if [ -z "$platforms" ]; then
+        log_info "No platforms selected — skipping platform setup"
+        return
+    fi
+
+    log_step 9 "Setting up platform integrations"
+
+    # Claude Code: install hooks + MCP server
+    if echo "$platforms" | grep -q "claude-code"; then
+        log_info "Configuring Claude Code..."
+
+        # Hooks
+        local hooks_script="$PLUGIN_PATH/hooks/adapters/setup-claude-code.sh"
+        if [ -f "$hooks_script" ]; then
+            bash "$hooks_script" --global 2>/dev/null && \
+                log_success "Claude Code hooks installed (global)" || \
+                log_warning "Claude Code hooks setup had issues"
+        fi
+
+        # MCP server
+        local mcp_script="$PLUGIN_PATH/mcp/setup-mcp.sh"
+        if [ -f "$mcp_script" ]; then
+            bash "$mcp_script" --global 2>/dev/null && \
+                log_success "Claude Code MCP server registered (global)" || \
+                log_warning "Claude Code MCP setup had issues"
+        fi
+
+        # Install MCP dependencies
+        local mcp_dir="$PLUGIN_PATH/mcp"
+        if [ -f "$mcp_dir/package.json" ]; then
+            (cd "$mcp_dir" && npm install --production 2>/dev/null) && \
+                log_success "MCP server dependencies installed" || \
+                log_warning "MCP dependency install had issues — run: cd $mcp_dir && npm install"
+        fi
+
+        # Copy rules files
+        if [ -f "$PLUGIN_PATH/rules/ENGRAM.md" ]; then
+            log_info "Engram behavioral rules available at: $PLUGIN_PATH/rules/ENGRAM.md"
+            log_info "Append to your project CLAUDE.md for automatic memory behaviors"
+        fi
+    fi
+
+    # Codex: MCP server only
+    if echo "$platforms" | grep -q "codex"; then
+        log_info "Configuring Codex..."
+
+        # MCP server (same as Claude Code, but user places in .codex/mcp.json)
+        local mcp_script="$PLUGIN_PATH/mcp/setup-mcp.sh"
+        if [ -f "$mcp_script" ]; then
+            local mcp_json
+            mcp_json=$(bash "$mcp_script" --print 2>/dev/null | head -n -1)
+            if [ -n "$mcp_json" ]; then
+                log_success "Codex MCP config generated"
+                log_info "To activate: save the mcpServers block to .codex/mcp.json in your repo"
+                log_info "Run: bash $mcp_script --print"
+            fi
+        fi
+
+        # Install MCP dependencies (if not already done for claude-code)
+        local mcp_dir="$PLUGIN_PATH/mcp"
+        if [ -f "$mcp_dir/package.json" ] && [ ! -d "$mcp_dir/node_modules" ]; then
+            (cd "$mcp_dir" && npm install --production 2>/dev/null) && \
+                log_success "MCP server dependencies installed" || \
+                log_warning "MCP dependency install had issues"
+        fi
+    fi
+
+    # OpenClaw: native plugin (already handled by main install)
+    if echo "$platforms" | grep -q "openclaw"; then
+        log_success "OpenClaw: native plugin already configured via gateway"
+    fi
+}
+
+# ─── Step 10: Run validation ────────────────────────────────────────────────
 
 run_validation() {
     log_step 9 "Validating installation"
@@ -1770,6 +1847,12 @@ load_config_from_json() {
         WIZARD_CONTEXT_ENGINE_RESOLVED="$WIZARD_CONTEXT_ENGINE"
     fi
 
+    # Parse platforms array
+    WIZARD_PLATFORMS=$(node -p "
+        var c = JSON.parse(require('fs').readFileSync('$config_file','utf8'));
+        (c.platforms || []).join(',')
+    " 2>/dev/null || echo "")
+
     # Set DETECTED_VAULT for use by installation steps
     DETECTED_VAULT="$WIZARD_VAULT"
 
@@ -1842,6 +1925,7 @@ main() {
     init_obsidian_vault
     init_stack_and_integrations
     write_tools_md
+    setup_platforms
     run_validation
     print_summary
 

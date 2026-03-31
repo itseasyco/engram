@@ -130,46 +130,78 @@ const lacpPlugin = {
     });
 
     api.on("before_tool_call", async (event, ctx) => {
-      // Determine guard mode based on tool name
-      const toolName = (event as any)?.name ?? (event as any)?.tool_name ?? "";
-      const toolInput = (event as any)?.input ?? (event as any)?.tool_input ?? {};
+      const toolName = (event as any)?.toolName ?? (event as any)?.name ?? (event as any)?.tool_name ?? "";
+      const toolInput = (event as any)?.params ?? (event as any)?.input ?? (event as any)?.tool_input ?? {};
       const hasCommand = typeof toolInput.command === "string";
-      const hasFilePath = typeof toolInput.file_path === "string";
+      const hasFilePath = typeof (toolInput.file_path ?? toolInput.path) === "string";
 
-      const guardMode = hasCommand ? "command" : hasFilePath ? "file" : "";
+      if (!hasCommand && !hasFilePath) return;
 
-      if (guardMode) {
-        const payload = JSON.stringify({ tool_input: toolInput, tool_name: toolName });
-        const scriptPath = join(pluginDir, "hooks", "handlers", "pretool-guard.py");
+      // Normalize: gateway uses "path" but our guard expects "file_path"
+      const normalizedInput = { ...toolInput };
+      if (!normalizedInput.file_path && normalizedInput.path) {
+        normalizedInput.file_path = normalizedInput.path;
+      }
 
-        logToolCall({
-          hook: "before_tool_call",
-          toolName,
-          guardMode,
-          commandPreview: (toolInput.command || toolInput.file_path || "").substring(0, 200),
+      const payload = JSON.stringify({ tool_input: normalizedInput, tool_name: toolName });
+      const scriptPath = join(pluginDir, "hooks", "handlers", "pretool-guard.py");
+
+      logToolCall({
+        hook: "before_tool_call",
+        toolName,
+        guardMode: hasCommand ? "command" : "file",
+        commandPreview: (toolInput.command || toolInput.file_path || "").substring(0, 200),
+      });
+
+      try {
+        const stdout = execFileSync("python3", [scriptPath, "structured"], {
+          input: payload,
+          encoding: "utf-8",
+          timeout: 10_000,
+          env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir, LACP_OBSIDIAN_VAULT: vaultPath },
         });
 
-        try {
-          const result = execFileSync("python3", [scriptPath, guardMode], {
-            input: payload,
-            encoding: "utf-8",
-            timeout: 10_000,
-            env: { ...process.env, OPENCLAW_PLUGIN_DIR: pluginDir, LACP_OBSIDIAN_VAULT: vaultPath },
-          });
-          logToolCall({ hook: "before_tool_call_result", exitCode: 0, blocked: false });
-        } catch (err: any) {
-          const exitCode = err.status ?? 1;
-          const stderr = err.stderr?.toString().trim() ?? "";
-          logToolCall({
-            hook: "before_tool_call_result",
-            exitCode,
-            blocked: exitCode === 1,
-            error: stderr.substring(0, 300),
-          });
-          if (exitCode === 1) {
-            throw new Error(stderr || "Blocked by pretool-guard");
-          }
+        const verdict = JSON.parse(stdout.trim());
+
+        logToolCall({
+          hook: "before_tool_call_result",
+          verdict: verdict.verdict,
+          ruleId: verdict.rule_id,
+          blocked: verdict.verdict === "block",
+        });
+
+        if (verdict.verdict === "block") {
+          return {
+            block: true,
+            blockReason: verdict.message || `Blocked by guard rule: ${verdict.rule_id}`,
+          };
         }
+
+        if (verdict.verdict === "warn") {
+          return {
+            requireApproval: {
+              title: `Guard: ${verdict.label || verdict.rule_id}`,
+              description: verdict.message,
+              severity: verdict.category === "exfiltration" ? "critical" as const : "warning" as const,
+              timeoutMs: 120_000,
+              timeoutBehavior: "deny" as const,
+            },
+          };
+        }
+
+        // "allow" and "log" — let the tool call proceed
+      } catch (err: any) {
+        // Script crashed or timed out — fail closed
+        const stderr = err.stderr?.toString().trim() ?? "";
+        logToolCall({
+          hook: "before_tool_call_result",
+          error: stderr.substring(0, 300),
+          blocked: true,
+        });
+        return {
+          block: true,
+          blockReason: stderr || "pretool-guard failed unexpectedly — blocking for safety",
+        };
       }
     });
 

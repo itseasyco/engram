@@ -1,0 +1,65 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${ENGRAM_DIR}/hooks/adapters/claude-session-start.sh\"",
+            "timeout": 15,
+            "statusMessage": "Injecting engram context..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${ENGRAM_DIR}/hooks/adapters/claude-pretool-guard.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking guard rules..."
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${ENGRAM_DIR}/hooks/adapters/claude-pretool-guard.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking guard rules..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${ENGRAM_DIR}/hooks/adapters/claude-write-validate.sh\"",
+            "timeout": 10,
+            "statusMessage": "Validating write..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${ENGRAM_DIR}/hooks/adapters/claude-stop-quality-gate.sh\"",
+            "timeout": 35,
+            "statusMessage": "Running quality gate..."
+          }
+        ]
+      }
+    ]
+  }
+}

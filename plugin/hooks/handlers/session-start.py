@@ -167,6 +167,85 @@ def _git_context() -> dict[str, str]:
     return context
 
 
+def _check_gitnexus_stale() -> str | None:
+    """Check if the GitNexus index is stale relative to the latest git commit.
+
+    Returns a warning string if stale, None otherwise.
+    Never raises — all errors are swallowed so session start isn't blocked.
+    """
+    try:
+        cwd = Path(os.getcwd())
+        gitnexus_dir = cwd / ".gitnexus"
+        if not gitnexus_dir.is_dir():
+            return None
+
+        meta_path = gitnexus_dir / "meta.json"
+        if not meta_path.exists():
+            return None
+
+        meta = json.loads(meta_path.read_text())
+
+        # Get index timestamp — try analyzed_at first, then updated_at
+        index_ts = meta.get("analyzed_at") or meta.get("updated_at")
+        if not index_ts:
+            return None
+
+        # Parse the index timestamp (could be ISO string or epoch)
+        from datetime import datetime, timezone
+
+        if isinstance(index_ts, (int, float)):
+            index_epoch = float(index_ts)
+        else:
+            # ISO 8601 string
+            ts_str = str(index_ts)
+            # Handle Z suffix
+            ts_str = ts_str.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(ts_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            index_epoch = dt.timestamp()
+
+        # Get latest git commit timestamp
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%ct"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=str(cwd),
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+
+        commit_epoch = float(result.stdout.strip())
+
+        # Compare: if latest commit is newer than the index, it's stale
+        if commit_epoch <= index_epoch:
+            return None
+
+        # Format dates for the message
+        index_date = datetime.fromtimestamp(index_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        commit_date = datetime.fromtimestamp(commit_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        # Check if embeddings exist
+        has_embeddings = False
+        stats = meta.get("stats", {})
+        if isinstance(stats, dict):
+            embeddings_count = stats.get("embeddings", 0)
+            if isinstance(embeddings_count, (int, float)) and embeddings_count > 0:
+                has_embeddings = True
+
+        cmd = "npx gitnexus analyze"
+        if has_embeddings:
+            cmd += " --embeddings"
+
+        return (
+            f"GitNexus index is STALE (last indexed: {index_date}, "
+            f"latest commit: {commit_date}). Run `{cmd}` to update."
+        )
+    except Exception:
+        return None
+
+
 def _detect_test_command() -> str | None:
     """Auto-detect test command from project files in cwd."""
     cwd = Path(os.getcwd())
@@ -428,6 +507,11 @@ def main() -> None:
         git_ctx = _git_context()
         if git_ctx:
             parts.append(_format_git_context(git_ctx))
+
+    # GitNexus stale-index detection
+    gitnexus_warning = _check_gitnexus_stale()
+    if gitnexus_warning:
+        parts.append(f"\n=== GitNexus Index Warning ===\n{gitnexus_warning}")
 
     # Detect and cache test command
     test_cmd = _detect_test_command()

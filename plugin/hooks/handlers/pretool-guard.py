@@ -704,6 +704,147 @@ def run_file_guard(payload: Dict) -> Tuple[int, Optional[str]]:
     return exit_code, error
 
 
+def run_structured_guard(payload: Dict) -> Dict[str, Any]:
+    """
+    Structured guard for the plugin SDK hook runner.
+
+    Returns a verdict dict with full rule metadata, suitable for the
+    TypeScript before_tool_call hook to translate into block/requireApproval/allow.
+
+    Verdict fields:
+      verdict: "allow" | "block" | "warn" | "log"
+      rule_id, label, message, block_level, category  (present when verdict != "allow")
+    """
+    tool_input = payload.get("tool_input", {})
+    cmd = _get_command(payload)
+    file_path = _get_file_path(payload)
+    session_id = _get_session_id()
+    config = _load_guard_config()
+    repo_path = _resolve_repo_path(payload)
+
+    # --- Command guard ---
+    if cmd.strip():
+        result = _structured_check_command(cmd, session_id, config, repo_path, payload)
+        if result["verdict"] != "allow":
+            return result
+
+    # --- File path guard ---
+    if file_path:
+        result = _structured_check_path(file_path, session_id, config, repo_path, payload)
+        if result["verdict"] != "allow":
+            return result
+
+    return {"verdict": "allow"}
+
+
+def _structured_check_command(cmd: str, session_id: str, config: Optional[Dict],
+                               repo_path: Optional[str], payload: Dict) -> Dict[str, Any]:
+    """Check command and return structured verdict with metadata."""
+    if config is not None:
+        if _check_command_allowlist(cmd, config, repo_path):
+            return {"verdict": "allow"}
+
+        command_rules = _get_command_rules(config)
+        ttl = config.get("defaults", {}).get("ttl_seconds", DEFAULT_TTL_SECONDS)
+        log_blocks = config.get("defaults", {}).get("log_blocks", True)
+
+        for pattern, rule_id, label, message, category in command_rules:
+            if not _is_rule_enabled(rule_id, config, repo_path):
+                continue
+            if pattern.search(cmd):
+                if _is_approved(session_id, label, ttl):
+                    return {"verdict": "allow"}
+
+                rule_cfg_level = ""
+                for r in config.get("rules", []):
+                    if r.get("id") == rule_id:
+                        rule_cfg_level = r.get("block_level", "")
+                        break
+
+                block_level = _resolve_block_level(rule_id, rule_cfg_level, config, repo_path)
+
+                if log_blocks:
+                    _write_block_log(rule_id, label, cmd, block_level, block_level, session_id, repo_path)
+
+                return {
+                    "verdict": block_level if block_level in ("block", "warn", "log") else "block",
+                    "rule_id": rule_id,
+                    "label": label,
+                    "message": message,
+                    "block_level": block_level,
+                    "category": category,
+                    "subject": cmd[:200],
+                }
+    else:
+        # Fallback patterns — always block
+        for pattern, rule_id, label, error_msg in _FALLBACK_DANGEROUS_PATTERNS:
+            if pattern.search(cmd):
+                if _is_approved(session_id, label):
+                    return {"verdict": "allow"}
+                _write_block_log(rule_id, label, cmd, "block", "block", session_id, repo_path)
+                return {
+                    "verdict": "block",
+                    "rule_id": rule_id,
+                    "label": label,
+                    "message": error_msg,
+                    "block_level": "block",
+                    "category": "destructive",
+                    "subject": cmd[:200],
+                }
+
+    return {"verdict": "allow"}
+
+
+def _structured_check_path(file_path: str, session_id: str, config: Optional[Dict],
+                            repo_path: Optional[str], payload: Dict) -> Dict[str, Any]:
+    """Check file path and return structured verdict with metadata."""
+    if config is not None:
+        if _check_path_allowlist(file_path, config, repo_path):
+            return {"verdict": "allow"}
+
+        path_rules = _get_path_rules(config)
+        log_blocks = config.get("defaults", {}).get("log_blocks", True)
+
+        for pattern, rule_id, label, message, category in path_rules:
+            if not _is_rule_enabled(rule_id, config, repo_path):
+                continue
+            if pattern.search(file_path):
+                rule_cfg_level = ""
+                for r in config.get("rules", []):
+                    if r.get("id") == rule_id:
+                        rule_cfg_level = r.get("block_level", "")
+                        break
+
+                block_level = _resolve_block_level(rule_id, rule_cfg_level, config, repo_path)
+
+                if log_blocks:
+                    _write_block_log(rule_id, label, file_path, block_level, block_level, session_id, repo_path)
+
+                return {
+                    "verdict": block_level if block_level in ("block", "warn", "log") else "block",
+                    "rule_id": rule_id,
+                    "label": label,
+                    "message": message,
+                    "block_level": block_level,
+                    "category": category,
+                    "subject": file_path,
+                }
+    else:
+        if _FALLBACK_PROTECTED_PATHS.search(file_path):
+            _write_block_log("protected-path", "protected file", file_path, "block", "block", session_id, repo_path)
+            return {
+                "verdict": "block",
+                "rule_id": "protected-path",
+                "label": "protected file",
+                "message": f"Protected file access: {file_path}. This file contains sensitive data.",
+                "block_level": "block",
+                "category": "protected-path",
+                "subject": file_path,
+            }
+
+    return {"verdict": "allow"}
+
+
 # ============================================================================
 # CLI Interface
 # ============================================================================
@@ -731,6 +872,14 @@ def main() -> int:
         if error:
             print(error, file=sys.stderr)
         return exit_code
+
+    elif mode == "structured":
+        # Structured JSON output mode — used by the plugin SDK hook runner.
+        # Runs both command and file guards, returns a JSON verdict on stdout.
+        # Always exits 0; the verdict payload carries the decision.
+        verdict = run_structured_guard(payload)
+        print(json.dumps(verdict))
+        return 0
 
     else:
         print(f"Unknown mode: {mode}", file=sys.stderr)
