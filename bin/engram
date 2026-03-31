@@ -81,29 +81,42 @@ show_help() {
     echo "  engram <command> [options]"
     echo ""
     echo -e "${BOLD}COMMANDS${NC}"
-    echo -e "  ${GREEN}wizard${NC}              Run the interactive setup wizard"
-    echo -e "  ${GREEN}status${NC}              Show current system status"
-    echo -e "  ${GREEN}connect${NC}             Join a shared vault (shortcut for engram-connect join)"
-    echo -e "  ${GREEN}disconnect${NC}          Leave the shared vault"
-    echo -e "  ${GREEN}doctor${NC}              Run diagnostics and health checks"
+    echo -e "  ${GREEN}wizard${NC}              Interactive setup wizard"
+    echo -e "  ${GREEN}status${NC}              System overview"
+    echo -e "  ${GREEN}doctor${NC}              Full diagnostics (plugin, layers, MCP)"
     echo ""
-    echo -e "${BOLD}WIZARD SECTIONS${NC} ${DIM}(use with: engram wizard --section <name>)${NC}"
-    echo -e "  vault               Obsidian vault path selection"
-    echo -e "  engine              Context engine (auto/file-based/lossless-claw)"
-    echo -e "  profile             Safety profile selection"
-    echo -e "  mode                Operating mode (standalone/connected/curator)"
-    echo -e "  guard               Guard rules, block levels, allowlists"
-    echo -e "  dependencies        GitNexus, lossless-claw, obsidian-headless"
-    echo -e "  all                 Full wizard (default)"
+    echo -e "${BOLD}MEMORY${NC}"
+    echo -e "  ${GREEN}memory query${NC} <topic>    Search memory              ${DIM}(→ engram-context)${NC}"
+    echo -e "  ${GREEN}memory promote${NC}          Promote facts              ${DIM}(→ engram-promote)${NC}"
+    echo -e "  ${GREEN}memory status${NC}           Memory dashboard           ${DIM}(→ engram-memory-status)${NC}"
     echo ""
-    echo -e "${BOLD}TOOLS${NC} ${DIM}(pass-through to plugin CLI tools)${NC}"
-    echo -e "  ${GREEN}guard${NC}               Manage guard rules    ${DIM}(engram guard rules|blocks|toggle|...)${NC}"
-    echo -e "  ${GREEN}memory${NC}              Query/promote memory  ${DIM}(engram memory query|promote|status)${NC}"
-    echo -e "  ${GREEN}ingest${NC}              Ingest files to vault ${DIM}(engram ingest <type> <source>)${NC}"
-    echo -e "  ${GREEN}brain${NC}               Brain tools           ${DIM}(engram brain expand|resolve|kpi|optimize)${NC}"
-    echo -e "  ${GREEN}vault${NC}               Vault management      ${DIM}(engram vault status|audit|backup|restore|migrate)${NC}"
-    echo -e "  ${GREEN}connector${NC}           Manage connectors     ${DIM}(engram connector list|add|remove|test)${NC}"
-    echo -e "  ${GREEN}watch${NC}               File watcher          ${DIM}(engram watch setup|run|status)${NC}"
+    echo -e "${BOLD}GUARD${NC}"
+    echo -e "  ${GREEN}guard rules${NC}             List rules                 ${DIM}(engram guard rules)${NC}"
+    echo -e "  ${GREEN}guard blocks${NC}            Recent blocks              ${DIM}(engram guard blocks)${NC}"
+    echo -e "  ${GREEN}guard toggle${NC} <id>       Toggle rule                ${DIM}(engram guard toggle npm-publish)${NC}"
+    echo -e "  ${GREEN}guard allow/deny${NC} \"<cmd>\" Allowlist management      ${DIM}(engram guard allow \"git reset\")${NC}"
+    echo -e "  ${GREEN}guard config${NC}            Interactive config"
+    echo ""
+    echo -e "${BOLD}VAULT${NC}"
+    echo -e "  ${GREEN}vault status${NC}            Vault health               ${DIM}(→ engram-obsidian status)${NC}"
+    echo -e "  ${GREEN}vault audit${NC}             Full audit                 ${DIM}(→ engram-obsidian audit)${NC}"
+    echo -e "  ${GREEN}vault backup${NC}            Backup vault"
+    echo -e "  ${GREEN}vault restore${NC}           Restore from backup"
+    echo -e "  ${GREEN}vault optimize${NC}          Graph physics              ${DIM}(→ engram-obsidian-optimize)${NC}"
+    echo -e "  ${GREEN}vault kpi${NC}               Quality KPIs               ${DIM}(→ engram-memory-kpi)${NC}"
+    echo -e "  ${GREEN}vault heal${NC}              Vault doctor               ${DIM}(→ vault_doctor.py)${NC}"
+    echo -e "  ${GREEN}vault migrate${NC}           Structure migration        ${DIM}(→ engram-vault-migrate)${NC}"
+    echo ""
+    echo -e "${BOLD}BRAIN${NC}"
+    echo -e "  ${GREEN}brain expand${NC}            Layer expansion (default)"
+    echo -e "  ${GREEN}brain expand${NC} --consolidate  Mycelium consolidation"
+    echo -e "  ${GREEN}brain expand${NC} --curator-cycle Full 8-step maintenance"
+    echo -e "  ${GREEN}brain graph${NC}             Knowledge graph ops        ${DIM}(init|index|query)${NC}"
+    echo -e "  ${GREEN}brain code${NC}              AST analysis"
+    echo -e "  ${GREEN}brain resolve${NC}           Contradiction resolution"
+    echo ""
+    echo -e "${BOLD}INGEST${NC}"
+    echo -e "  ${GREEN}ingest${NC} <type> <source>  Ingest content             ${DIM}(transcript|url|pdf|file|video|audio)${NC}"
     echo ""
     echo -e "${BOLD}MANAGEMENT${NC}"
     echo -e "  ${GREEN}uninstall${NC}           Remove Engram (preserves vault data)"
@@ -114,14 +127,17 @@ show_help() {
     echo ""
     echo -e "${BOLD}EXAMPLES${NC}"
     echo "  engram wizard                          # Full interactive setup"
-    echo "  engram wizard --section guard           # Just configure the guard"
-    echo "  engram wizard --section profile          # Just pick a safety profile"
-    echo "  engram guard rules                      # List all guard rules"
-    echo "  engram guard toggle npm-publish          # Toggle a rule"
-    echo "  engram memory query payment              # Search memory for payment facts"
-    echo "  engram brain expand --consolidate        # Run mycelium consolidation"
-    echo "  engram status                            # System overview"
-    echo "  engram connect --token inv_abc123        # Join a shared vault"
+    echo "  engram status                          # System overview"
+    echo "  engram doctor                          # Run all diagnostics"
+    echo "  engram memory query payment            # Search memory for payment facts"
+    echo "  engram guard rules                     # List all guard rules"
+    echo "  engram vault status                    # Vault health check"
+    echo "  engram vault kpi                       # Vault quality metrics"
+    echo "  engram brain expand --consolidate      # Run mycelium consolidation"
+    echo "  engram ingest video meeting.mp4        # Ingest a video file"
+    echo ""
+    echo -e "${BOLD}COMING SOON${NC}"
+    echo -e "  ${DIM}connect, disconnect, connector, watch${NC}"
     echo ""
 }
 
@@ -284,12 +300,17 @@ except Exception as e:
 }
 
 cmd_doctor() {
+    _source_env_config
     show_banner
     echo -e "${BOLD}Running diagnostics...${NC}"
     echo ""
 
     local pass=0
     local fail=0
+    local warn=0
+
+    # ── Plugin Infrastructure ────────────────────────────────────────────
+    echo -e "  ${BLUE}Plugin Infrastructure${NC}"
 
     # Check plugin
     if [[ -f ~/.openclaw/extensions/engram/index.ts ]]; then
@@ -336,6 +357,7 @@ cmd_doctor() {
             ((pass++))
         else
             echo -e "  ${YELLOW}warn${NC}  Module missing: ${mod}"
+            ((warn++))
         fi
     done
 
@@ -345,9 +367,134 @@ cmd_doctor() {
         ((pass++))
     else
         echo -e "  ${YELLOW}warn${NC}  Guard config missing (using factory defaults)"
+        ((warn++))
     fi
 
-    # Run tests
+    # ── Layer 1: Session Memory ──────────────────────────────────────────
+    echo ""
+    echo -e "  ${BLUE}Layer 1: Session Memory${NC}"
+
+    local session_root="${SESSION_MEMORY_ROOT:-$HOME/.openclaw/projects}"
+    if [[ -d "$session_root" ]]; then
+        local project_count
+        project_count=$(find "$session_root" -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        echo -e "  ${GREEN}pass${NC}  Session root exists ($((project_count - 1)) projects)"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  Session root not found at $session_root"
+        ((warn++))
+    fi
+
+    # ── Layer 2: Knowledge Graph ─────────────────────────────────────────
+    echo ""
+    echo -e "  ${BLUE}Layer 2: Knowledge Graph${NC}"
+
+    local vault_path="${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-}}"
+    if [[ -n "$vault_path" ]] && [[ -d "$vault_path" ]]; then
+        echo -e "  ${GREEN}pass${NC}  Obsidian vault exists at $vault_path"
+        ((pass++))
+
+        for dir_name in projects engineering knowledge inbox; do
+            if [[ -d "$vault_path/$dir_name" ]]; then
+                echo -e "  ${GREEN}pass${NC}  $dir_name/"
+                ((pass++))
+            else
+                echo -e "  ${YELLOW}warn${NC}  $dir_name/ (missing)"
+                ((warn++))
+            fi
+        done
+    else
+        echo -e "  ${YELLOW}warn${NC}  Obsidian vault not found or not configured"
+        ((warn++))
+    fi
+
+    if command -v qmd &>/dev/null; then
+        echo -e "  ${GREEN}pass${NC}  QMD available"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  QMD not installed (optional)"
+        ((warn++))
+    fi
+
+    # ── Layer 3: Ingestion Pipeline ──────────────────────────────────────
+    echo ""
+    echo -e "  ${BLUE}Layer 3: Ingestion Pipeline${NC}"
+
+    if [[ -x "$PLUGIN_BIN/engram-brain-ingest" ]]; then
+        echo -e "  ${GREEN}pass${NC}  engram-brain-ingest available"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  engram-brain-ingest not found"
+        ((warn++))
+    fi
+
+    if command -v ffmpeg &>/dev/null; then
+        echo -e "  ${GREEN}pass${NC}  ffmpeg available"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  ffmpeg not installed (optional, for video/audio)"
+        ((warn++))
+    fi
+
+    # ── Layer 4: Code Intelligence ───────────────────────────────────────
+    echo ""
+    echo -e "  ${BLUE}Layer 4: Code Intelligence${NC}"
+
+    if [[ -x "$PLUGIN_BIN/engram-brain-code" ]]; then
+        echo -e "  ${GREEN}pass${NC}  engram-brain-code available"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  engram-brain-code not found"
+        ((warn++))
+    fi
+
+    if command -v gitnexus &>/dev/null; then
+        echo -e "  ${GREEN}pass${NC}  GitNexus available"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  GitNexus not installed (optional)"
+        ((warn++))
+    fi
+
+    # ── Layer 5: Agent Identity & Provenance ─────────────────────────────
+    echo ""
+    echo -e "  ${BLUE}Layer 5: Agent Identity & Provenance${NC}"
+
+    local agent_store="${AGENT_ID_STORE:-$HOME/.openclaw/agent-ids}"
+    if [[ -d "$agent_store" ]]; then
+        local id_count
+        id_count=$(find "$agent_store" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+        echo -e "  ${GREEN}pass${NC}  Agent ID store: $id_count identities"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  Agent ID store not found"
+        ((warn++))
+    fi
+
+    local prov_root="${PROVENANCE_ROOT:-$HOME/.openclaw/provenance}"
+    if [[ -d "$prov_root" ]]; then
+        echo -e "  ${GREEN}pass${NC}  Provenance root exists"
+        ((pass++))
+    else
+        echo -e "  ${YELLOW}warn${NC}  Provenance root not found"
+        ((warn++))
+    fi
+
+    # ── MCP Connectivity ─────────────────────────────────────────────────
+    echo ""
+    echo -e "  ${BLUE}MCP Connectivity${NC}"
+
+    for tool in qmd obsidian web_fetch; do
+        if command -v "$tool" &>/dev/null; then
+            echo -e "  ${GREEN}pass${NC}  $tool"
+            ((pass++))
+        else
+            echo -e "  ${YELLOW}warn${NC}  $tool (not available)"
+            ((warn++))
+        fi
+    done
+
+    # ── Tests ────────────────────────────────────────────────────────────
     echo ""
     echo -e "  ${DIM}Running test suite...${NC}"
     local test_result
@@ -361,7 +508,7 @@ cmd_doctor() {
     fi
 
     echo ""
-    echo -e "  ${BOLD}Results: ${pass} passed, ${fail} failed${NC}"
+    echo -e "  ${BOLD}Results: ${pass} passed, ${fail} failed, ${warn} warnings${NC}"
     echo ""
 
     [[ "$fail" -gt 0 ]] && exit 1
@@ -386,13 +533,15 @@ case "$1" in
     doctor)
         cmd_doctor
         ;;
+    # COMING SOON — connected mode (connect/disconnect)
     connect)
-        shift
-        exec "$PLUGIN_BIN/engram-connect" join "$@"
+        echo -e "${YELLOW}Coming soon:${NC} engram connect (shared vault support)"
+        echo "Follow progress at https://github.com/itseasyco/engram"
+        exit 0
         ;;
     disconnect)
-        shift
-        exec "$PLUGIN_BIN/engram-connect" disconnect "$@"
+        echo -e "${YELLOW}Coming soon:${NC} engram disconnect (shared vault support)"
+        exit 0
         ;;
     guard)
         shift
@@ -405,8 +554,7 @@ case "$1" in
             query)   exec "$PLUGIN_BIN/engram-context" query --topic "$@" ;;
             promote) exec "$PLUGIN_BIN/engram-promote" "$@" ;;
             status)  exec "$PLUGIN_BIN/engram-memory-status" "$@" ;;
-            kpi)     exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
-            *)       echo "Usage: engram memory <query|promote|status|kpi> [args]"; exit 1 ;;
+            *)       echo "Usage: engram memory <query|promote|status> [args]"; exit 1 ;;
         esac
         ;;
     ingest)
@@ -419,36 +567,40 @@ case "$1" in
         case "$subcmd" in
             expand)   exec "$PLUGIN_BIN/engram-brain-expand" "$@" ;;
             resolve)  exec "$PLUGIN_BIN/engram-brain-resolve" "$@" ;;
-            kpi)      exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
-            optimize) exec "$PLUGIN_BIN/engram-obsidian-optimize" "$@" ;;
             code)     exec "$PLUGIN_BIN/engram-brain-code" "$@" ;;
             graph)    exec "$PLUGIN_BIN/engram-brain-graph" "$@" ;;
-            ingest)   exec "$PLUGIN_BIN/engram-brain-ingest" "$@" ;;
-            doctor)   exec "$PLUGIN_BIN/engram-brain-doctor" "$@" ;;
-            heal)
-                _source_env_config
-                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}" "$@"
-                ;;
-            *)        echo "Usage: engram brain <expand|resolve|kpi|optimize|code|graph|ingest|doctor|heal> [args]"; exit 1 ;;
+            *)        echo "Usage: engram brain <expand|resolve|code|graph> [args]"; exit 1 ;;
         esac
         ;;
     vault)
         shift
         case "${1:-}" in
-            migrate) shift; exec python3 "$PLUGIN_BIN/engram-vault-migrate" "$@" ;;
-            *)       exec "$PLUGIN_BIN/engram-obsidian" "$@" ;;
+            status)   shift; exec "$PLUGIN_BIN/engram-obsidian" status "$@" ;;
+            audit)    shift; exec "$PLUGIN_BIN/engram-obsidian" audit "$@" ;;
+            backup)   shift; exec "$PLUGIN_BIN/engram-obsidian" backup "$@" ;;
+            restore)  shift; exec "$PLUGIN_BIN/engram-obsidian" restore "$@" ;;
+            optimize) shift; exec "$PLUGIN_BIN/engram-obsidian-optimize" "$@" ;;
+            kpi)      shift; exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
+            heal)
+                shift
+                _source_env_config
+                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}" "$@"
+                ;;
+            migrate)  shift; exec python3 "$PLUGIN_BIN/engram-vault-migrate" "$@" ;;
+            *)        echo "Usage: engram vault <status|audit|backup|restore|optimize|kpi|heal|migrate>"; exit 1 ;;
         esac
         ;;
+    # COMING SOON — connector management
     connector)
-        shift
-        exec "$PLUGIN_BIN/engram-connector" "$@"
+        echo -e "${YELLOW}Coming soon:${NC} engram connector (external integrations)"
+        echo "Follow progress at https://github.com/itseasyco/engram"
+        exit 0
         ;;
+    # COMING SOON — file watcher
     watch)
-        shift
-        case "${1:-}" in
-            curator) shift; exec python3 "$PLUGIN_BIN/engram-curator-watch" "$@" ;;
-            *)       exec "$PLUGIN_BIN/engram-ingest-watch" "$@" ;;
-        esac
+        echo -e "${YELLOW}Coming soon:${NC} engram watch (file watcher for auto-ingestion)"
+        echo "Follow progress at https://github.com/itseasyco/engram"
+        exit 0
         ;;
     uninstall)
         shift
