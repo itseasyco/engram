@@ -110,10 +110,10 @@ function textResult(text: string) {
 
 // ─── Plugin ──────────────────────────────────────────────────────────────────
 
-const lacpPlugin = {
-  name: "OpenClaw LACP Fusion",
+const engramPlugin = {
+  name: "Engram",
   description:
-    "LACP integration — hooks, policy gates, gated execution, memory scaffolding, and evidence verification",
+    "Persistent memory, knowledge graph, policy gates, and provenance chain for AI agents",
 
   register(api: OpenClawPluginApi) {
 
@@ -513,4 +513,4 @@ const lacpPlugin = {
   },
 };
 
-export default lacpPlugin;
+export default engramPlugin;

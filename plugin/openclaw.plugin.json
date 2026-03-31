@@ -1,12 +1,12 @@
 {
   "id": "engram",
   "kind": "provider",
-  "name": "OpenClaw LACP Fusion",
-  "version": "2.2.0",
-  "description": "Local Agent Control Plane — hooks, policy gates, memory scaffolding, knowledge graph, code intelligence, and provenance tracking",
-  "author": "Easy Labs",
+  "name": "Engram",
+  "version": "3.2.0",
+  "description": "Persistent memory, knowledge graph, curator engine, policy gates, and provenance chain for AI agents",
+  "author": "Easy Labs <engineering@itseasy.co>",
   "license": "MIT",
-  "repository": "https://github.com/openclaw/plugins/engram",
+  "repository": "https://github.com/itseasyco/engram",
   "uiHints": {
     "profile": {
       "label": "Safety Profile",
@@ -18,7 +18,7 @@
     },
     "knowledgeRoot": {
       "label": "Knowledge Root",
-      "help": "Directory for LACP knowledge graph data (default: ~/.openclaw/data/knowledge)"
+      "help": "Directory for Engram knowledge graph data (default: ~/.openclaw/data/knowledge)"
     },
     "localFirst": {
       "label": "Local-First Mode",
@@ -151,7 +151,7 @@
     "session-start": {
       "handler": "hooks/handlers/session-start.py",
       "trigger": "session_initialization",
-      "description": "Inject git context and LACP memory at session start"
+      "description": "Inject git context and Engram memory at session start"
     },
     "pretool-guard": {
       "handler": "hooks/handlers/pretool-guard.py",

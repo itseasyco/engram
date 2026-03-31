@@ -1,11 +1,11 @@
 {
   "id": "engram",
-  "name": "OpenClaw LACP Fusion",
-  "version": "1.0.0",
-  "author": "OpenClaw Community",
+  "name": "Engram",
+  "version": "3.2.0",
+  "author": "Easy Labs <engineering@itseasy.co>",
   "license": "MIT",
-  "repository": "https://github.com/openclaw/plugins/engram",
-  "description": "LACP (Local Agent Control Plane) integration for OpenClaw — hooks, policy gates, gated execution, memory scaffolding, and evidence verification. Provides execution safety, policy enforcement, and comprehensive audit logging.",
+  "repository": "https://github.com/itseasyco/engram",
+  "description": "Persistent memory, knowledge graph, curator engine, policy gates, and provenance chain for AI agents. Provides execution safety, memory promotion, and cross-platform deployment (OpenClaw, Claude Code, Codex).",
   "keywords": [
     "hooks",
     "policy",
@@ -63,7 +63,7 @@
   },
   "installation": {
     "method": "direct",
-    "path": "~/.openclaw/plugins/engram"
+    "path": "~/.openclaw/extensions/engram"
   },
   "configuration": {
     "schema": "config/policy/risk-policy.json",

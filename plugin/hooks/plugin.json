@@ -1,8 +1,8 @@
 {
-  "name": "lacp-hooks",
-  "version": "1.0.0",
-  "description": "LACP-inspired hooks for safety + quality",
-  "author": "Agent D",
+  "name": "engram-hooks",
+  "version": "3.2.0",
+  "description": "Engram execution hooks — safety gates, context injection, and quality assurance",
+  "author": "Easy Labs <engineering@itseasy.co>",
   "license": "MIT",
   "hooks": {
     "session-start": {
