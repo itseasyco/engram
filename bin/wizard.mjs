@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Engram Interactive Configuration Wizard
-// Replaces bash wizard prompts with @clack/prompts for arrow-key navigation.
+// Platform-first flow: choose target platforms, then configure accordingly.
 // Outputs config to /tmp/engram-wizard-config.json for INSTALL.sh to consume.
 
 import {
@@ -19,15 +19,23 @@ import {
 } from '@clack/prompts';
 import { styleText } from 'node:util';
 import { execSync, exec } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
-import { join, resolve, basename } from 'node:path';
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { join, resolve, basename, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const HOME = homedir();
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME || join(HOME, '.openclaw');
+const ENGRAM_HOME = join(HOME, '.engram');
 const CONFIG_OUTPUT = '/tmp/engram-wizard-config.json';
+
+// Where this script lives — used to find sibling files (adapters, mcp, etc.)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const REPO_ROOT = resolve(__dirname, '..');
+const PLUGIN_ROOT = existsSync(join(REPO_ROOT, 'plugin')) ? join(REPO_ROOT, 'plugin') : REPO_ROOT;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -159,6 +167,7 @@ function detectDependencies() {
   deps.pipx = commandExists('pipx');
   deps.brew = commandExists('brew');
   deps.apt = commandExists('apt-get');
+  deps.node = commandExists('node');
 
   // PDF extraction
   deps.pdftotext = commandExists('pdftotext');
@@ -192,6 +201,9 @@ function detectDependencies() {
     deps.obVersion = getCommandOutput('ob --version') || 'unknown';
   }
 
+  // OpenClaw
+  deps.openclaw = commandExists('openclaw') && existsSync(join(OPENCLAW_HOME, 'openclaw.json'));
+
   // lossless-claw
   deps.losslessClaw = existsSync(join(OPENCLAW_HOME, 'extensions', 'lossless-claw'));
   deps.lcmDb = existsSync(join(OPENCLAW_HOME, 'lcm.db'));
@@ -209,6 +221,7 @@ function detectDependencies() {
 
 function loadGuardRules() {
   const paths = [
+    join(PLUGIN_ROOT, 'config', 'guard-rules.json'),
     join(process.cwd(), 'plugin', 'config', 'guard-rules.json'),
     join(OPENCLAW_HOME, 'extensions', 'engram', 'config', 'guard-rules.json'),
   ];
@@ -238,6 +251,93 @@ ${dim('                                              w i z a r d')}
   console.log(banner);
 }
 
+// ── Claude Code Direct Install ──────────────────────────────────────────────
+
+async function installClaudeCode(vaultPath, safetyProfile, guardLevel) {
+  log.step(bold('Installing for Claude Code'));
+
+  // 1. Install MCP dependencies
+  const mcpDir = join(PLUGIN_ROOT, 'mcp');
+  if (existsSync(join(mcpDir, 'package.json'))) {
+    const s = spinner();
+    s.start('Installing MCP server dependencies...');
+    try {
+      await runCommand(`cd "${mcpDir}" && npm install --production`);
+      s.stop('MCP server dependencies installed');
+    } catch (err) {
+      s.stop(red('MCP dependency install failed'));
+      log.warn(`Run manually: cd "${mcpDir}" && npm install`);
+    }
+  }
+
+  // 2. Register MCP server in ~/.claude/settings.json
+  const setupMcp = join(PLUGIN_ROOT, 'mcp', 'setup-mcp.sh');
+  if (existsSync(setupMcp)) {
+    try {
+      const output = getCommandOutput(`LACP_OBSIDIAN_VAULT="${vaultPath}" bash "${setupMcp}" --global 2>&1`);
+      if (output) log.info(dim(output));
+      log.success('MCP server registered in ~/.claude/settings.json');
+    } catch (err) {
+      log.warn('MCP server registration failed — run manually:');
+      log.info(dim(`  bash "${setupMcp}" --global`));
+    }
+  } else {
+    log.warn(`MCP setup script not found at ${setupMcp}`);
+  }
+
+  // 3. Register hooks in ~/.claude/settings.json
+  const setupHooks = join(PLUGIN_ROOT, 'hooks', 'adapters', 'setup-claude-code.sh');
+  if (existsSync(setupHooks)) {
+    try {
+      const output = getCommandOutput(`ENGRAM_DIR="${PLUGIN_ROOT}" bash "${setupHooks}" --global 2>&1`);
+      if (output) log.info(dim(output));
+      log.success('Hooks registered in ~/.claude/settings.json');
+    } catch (err) {
+      log.warn('Hooks registration failed — run manually:');
+      log.info(dim(`  bash "${setupHooks}" --global`));
+    }
+  } else {
+    log.warn(`Hooks setup script not found at ${setupHooks}`);
+  }
+
+  log.success('Claude Code configuration complete');
+  log.info(dim('MCP server starts automatically when Claude Code launches.'));
+  log.info(dim('Hooks fire on every session start, tool call, write, and stop.'));
+}
+
+// ── Codex Direct Install ────────────────────────────────────────────────────
+
+async function installCodex(vaultPath) {
+  log.step(bold('Installing for Codex'));
+
+  // 1. Install MCP dependencies (shared with Claude Code)
+  const mcpDir = join(PLUGIN_ROOT, 'mcp');
+  if (existsSync(join(mcpDir, 'package.json')) && !existsSync(join(mcpDir, 'node_modules'))) {
+    const s = spinner();
+    s.start('Installing MCP server dependencies...');
+    try {
+      await runCommand(`cd "${mcpDir}" && npm install --production`);
+      s.stop('MCP server dependencies installed');
+    } catch (err) {
+      s.stop(red('MCP dependency install failed'));
+      log.warn(`Run manually: cd "${mcpDir}" && npm install`);
+    }
+  }
+
+  // 2. Print MCP config for Codex
+  const setupMcp = join(PLUGIN_ROOT, 'mcp', 'setup-mcp.sh');
+  if (existsSync(setupMcp)) {
+    const mcpJson = getCommandOutput(`LACP_OBSIDIAN_VAULT="${vaultPath}" bash "${setupMcp}" --print 2>&1`);
+    if (mcpJson) {
+      log.success('Codex MCP config generated');
+      log.info('Save this to .codex/mcp.json in your project:');
+      log.info(dim(mcpJson.split('\n').filter(l => !l.startsWith('#')).join('\n')));
+    }
+  }
+
+  log.success('Codex configuration complete');
+}
+
 // ── Main Wizard ─────────────────────────────────────────────────────────────
 
 async function main() {
@@ -247,10 +347,44 @@ async function main() {
 
   log.info(dim('Arrow keys to navigate, Enter to select. Press Ctrl+C to cancel.'));
 
-  // ── Step 1: Vault Selection ─────────────────────────────────────────────
+  // ── Step 1: Platform Selection ──────────────────────────────────────────
+
+  log.step(bold('Platform'));
+  log.message(dim('Which AI coding platforms are you using? This determines what gets configured.'));
+
+  // Auto-detect available platforms
+  const deps = detectDependencies();
+  const platformOptions = [];
+
+  if (deps.openclaw) {
+    platformOptions.push({ value: 'openclaw', label: 'OpenClaw', hint: 'detected — native plugin (hooks + tools + agents)' });
+  } else {
+    platformOptions.push({ value: 'openclaw', label: 'OpenClaw', hint: 'not detected — native plugin integration' });
+  }
+  platformOptions.push({ value: 'claude-code', label: 'Claude Code', hint: 'hooks + MCP server (auto-starts with Claude)' });
+  platformOptions.push({ value: 'codex', label: 'Codex (OpenAI)', hint: 'MCP server for tools' });
+
+  const selectedPlatforms = handleCancel(await multiselect({
+    message: 'Select your platforms',
+    options: platformOptions,
+    required: true,
+  }));
+
+  if (!selectedPlatforms || selectedPlatforms.length === 0) {
+    cancel('At least one platform is required.');
+    process.exit(0);
+  }
+
+  log.success(`Platforms: ${green(selectedPlatforms.join(', '))}`);
+
+  const hasOpenClaw = selectedPlatforms.includes('openclaw');
+  const hasClaudeCode = selectedPlatforms.includes('claude-code');
+  const hasCodex = selectedPlatforms.includes('codex');
+
+  // ── Step 2: Vault Selection ─────────────────────────────────────────────
 
   log.step(bold('Obsidian Vault'));
-  log.message(dim('Your Obsidian vault stores knowledge graph data (Layer 2).'));
+  log.message(dim('Your Obsidian vault stores the knowledge graph. All platforms share it.'));
 
   const s = spinner();
   s.start('Scanning for Obsidian vaults...');
@@ -284,35 +418,32 @@ async function main() {
     }));
     vaultPath = resolve(custom.replace(/^~/, HOME));
   } else if (vaultChoice === '__skip__') {
-    vaultPath = join(OPENCLAW_HOME, 'data', 'knowledge');
-    log.info('No vault selected -- using default knowledge directory');
+    const defaultDir = hasOpenClaw ? join(OPENCLAW_HOME, 'data', 'knowledge') : join(ENGRAM_HOME, 'knowledge');
+    vaultPath = defaultDir;
+    log.info(`No vault selected — using default: ${dim(defaultDir)}`);
   } else {
     vaultPath = vaultChoice;
   }
 
   log.success(`Vault: ${green(vaultPath)}`);
 
-  // ── Vault migration check ─────────────────────────────────────────────
+  // ── Vault migration check (only if OpenClaw or vault exists) ──────────
 
   const hasObsidian = existsSync(join(vaultPath, '.obsidian'));
-  // Check if vault-schema.json exists in the plugin config (not the vault itself)
   const pluginSchemaPath = join(OPENCLAW_HOME, 'extensions', 'engram', 'config', 'vault-schema.json');
   const hasEngramSchema = existsSync(pluginSchemaPath);
 
-  // Even if schema exists, check if vault structure actually matches
   let vaultNeedsMigration = false;
-  if (hasObsidian) {
+  if (hasObsidian && hasOpenClaw) {
     if (!hasEngramSchema) {
       vaultNeedsMigration = true;
     } else {
-      // Schema exists — check if vault has the expected folders
       try {
         const schema = JSON.parse(readFileSync(pluginSchemaPath, 'utf-8'));
         const paths = schema.paths || {};
         const expectedFolders = Object.values(paths).filter(p => !p.includes('.'));
         const topLevel = expectedFolders.filter(p => !p.includes('/'));
         const missingCount = topLevel.filter(f => !existsSync(join(vaultPath, f))).length;
-        // If more than half the expected folders are missing, offer migration
         if (missingCount > topLevel.length / 2) {
           vaultNeedsMigration = true;
         }
@@ -340,7 +471,7 @@ async function main() {
 
       log.info(`Running vault migration${wantMigrate === 'dry-run' ? ' (preview)' : ''}...`);
       try {
-        const output = await runCommandLive(`python3 "${migrateScript}" "${vaultPath}" ${flags}`);
+        await runCommandLive(`python3 "${migrateScript}" "${vaultPath}" ${flags}`);
         if (wantMigrate === 'dry-run') {
           const proceed = handleCancel(await confirm({
             message: 'Apply these changes?',
@@ -367,110 +498,6 @@ async function main() {
     log.success('Vault already configured for Engram');
   }
 
-  // ── Step 2: Context Engine ──────────────────────────────────────────────
-
-  log.step(bold('Context Engine'));
-  log.message(dim('Controls how LACP stores and retrieves context facts.'));
-
-  const deps = detectDependencies();
-
-  // ── Install required dependencies automatically ────────────────────────
-
-  const required = [];
-  if (!deps.qmd) required.push({ id: 'qmd', label: 'QMD', install: 'npm install -g @nicepkg/qmd', hint: 'semantic search and memory backend (required)' });
-  if (!deps.pdftotext) required.push({ id: 'poppler', label: 'poppler (pdftotext)', install: deps.brew ? 'brew install poppler' : 'sudo apt-get install -y poppler-utils', hint: 'PDF text extraction (required)' });
-  if (!deps.watchdog) required.push({ id: 'watchdog', label: 'watchdog', install: 'pip3 install watchdog', hint: 'real-time filesystem events for curator reactive loop (required)' });
-
-  if (required.length > 0) {
-    log.info(`Installing ${required.length} required dependenc${required.length === 1 ? 'y' : 'ies'}...`);
-    for (const dep of required) {
-      log.info(`${bold(dep.label)}: ${dim(dep.install)}`);
-      try {
-        await runCommandLive(dep.install);
-        log.success(`${dep.label} installed`);
-      } catch (err) {
-        log.error(`${dep.label} failed: ${err.message}`);
-        log.warn(`Install manually: ${dep.install}`);
-      }
-    }
-    Object.assign(deps, detectDependencies());
-  } else {
-    log.success('Required dependencies found (QMD, poppler)');
-  }
-
-  // ── Offer optional dependencies ──────────────────────────────────────
-
-  // Install pipx if needed (used for isolated Python tool installs)
-  if (!deps.pipx) {
-    log.info('Installing pipx (isolated Python package manager)...');
-    try {
-      const pipxCmd = deps.brew ? 'brew install pipx && pipx ensurepath' : 'pip3 install pipx && pipx ensurepath';
-      await runCommandLive(pipxCmd);
-      deps.pipx = true;
-      log.success('pipx installed');
-    } catch {
-      log.warn('Could not install pipx — whisper install may need manual setup');
-    }
-  }
-
-  const optional = [];
-  if (!deps.ffmpeg) optional.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
-  if (!deps.insanelyFastWhisper) optional.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pipx install insanely-fast-whisper==0.0.15 --force --pip-args="--ignore-requires-python"', hint: 'video/audio transcription (via pipx — no conflicts)' });
-
-  if (optional.length > 0) {
-    const toInstall = handleCancel(await multiselect({
-      message: 'Install optional dependencies?',
-      options: optional.map(m => ({
-        value: m.id,
-        label: m.label,
-        hint: `${m.hint} — ${dim(m.install)}`,
-      })),
-      required: false,
-    })) || [];
-
-    if (toInstall.length > 0) {
-      for (const depId of toInstall) {
-        const dep = optional.find(m => m.id === depId);
-        log.info(`${bold(dep.label)}: ${dim(dep.install)}`);
-        try {
-          await runCommandLive(dep.install);
-          log.success(`${dep.label} installed`);
-        } catch (err) {
-          log.error(`${dep.label} failed: ${err.message}`);
-          log.warn(`You can install manually: ${dep.install}`);
-        }
-      }
-      Object.assign(deps, detectDependencies());
-    }
-  }
-
-  const contextStatus = [];
-  if (deps.losslessClaw) contextStatus.push('lossless-claw extension detected');
-  if (deps.lcmDb) contextStatus.push('LCM database found');
-  if (contextStatus.length > 0) {
-    log.info(contextStatus.map(s => green('+') + ' ' + s).join('\n'));
-  }
-
-  let contextEngineOptions;
-  if (deps.losslessClaw) {
-    contextEngineOptions = [
-      { value: 'lossless-claw', label: 'lossless-claw', hint: 'native LCM database (recommended, already installed)' },
-      { value: 'file-based', label: 'file-based', hint: 'JSON files on disk (simpler, no database)' },
-    ];
-  } else {
-    contextEngineOptions = [
-      { value: 'file-based', label: 'file-based', hint: 'JSON files on disk (no extra dependencies)' },
-      { value: 'lossless-claw', label: 'lossless-claw', hint: 'install native LCM database for better performance' },
-    ];
-  }
-
-  const contextEngine = handleCancel(await select({
-    message: 'Context engine',
-    options: contextEngineOptions,
-  }));
-
-  log.success(`Context engine: ${green(contextEngine)}`);
-
   // ── Step 3: Safety Profile ──────────────────────────────────────────────
 
   log.step(bold('Safety Profile'));
@@ -491,261 +518,16 @@ async function main() {
 
   log.success(`Safety profile: ${green(safetyProfile)}`);
 
-  // ── Step 4: Operating Mode ──────────────────────────────────────────────
+  // ── Step 4: Guard Level ─────────────────────────────────────────────────
 
-  log.step(bold('Operating Mode'));
-  log.message(dim('Controls how this node participates in the knowledge network.'));
-
-  let operatingMode = handleCancel(await select({
-    message: 'Mode',
-    options: [
-      { value: 'standalone', label: 'standalone', hint: 'local vault, all brain commands active (default)' },
-      { value: 'connected', label: 'connected', hint: 'sync to shared vault, mutations delegated to curator' },
-      { value: 'curator', label: 'curator', hint: 'server node: connectors, mycelium, git backup, invites' },
-    ],
-  }));
-
-  log.success(`Operating mode: ${green(operatingMode)}`);
-
-  // Connected mode: collect curator details
-  let curatorUrl = '';
-  let curatorToken = '';
-
-  if (operatingMode === 'connected') {
-    curatorUrl = handleCancel(await text({
-      message: 'Curator URL',
-      placeholder: 'https://curator.example.com',
-      validate: (val) => {
-        if (!val) return 'Curator URL is required';
-        try { new URL(val); } catch { return 'Must be a valid URL'; }
-      },
-    }));
-
-    curatorToken = handleCancel(await text({
-      message: 'Invite token',
-      placeholder: 'paste your invite token here',
-    }));
-
-    if (!curatorToken) {
-      log.warn('No invite token provided. Set it later via: openclaw-lacp-connect join');
-    }
-  }
-
-  if (operatingMode === 'curator') {
-    log.info('Curator mode flags will be written to config.\n' +
-      dim('Full curator configuration (connectors, schedule, git backup, invites)\n') +
-      dim('will be available in a future release.'));
-  }
-
-  // obsidian-headless check for connected/curator
-  if (operatingMode === 'connected' || operatingMode === 'curator') {
-    if (!deps.obsidianHeadless) {
-      const installOb = handleCancel(await confirm({
-        message: 'obsidian-headless (ob) is required for this mode. Install it now?',
-        initialValue: true,
-      }));
-
-      if (installOb) {
-        const s = spinner();
-        s.start('Installing obsidian-headless...');
-        try {
-          await runCommand('npm install -g obsidian-headless');
-          s.stop('obsidian-headless installed');
-          deps.obsidianHeadless = true;
-        } catch {
-          s.stop(red('obsidian-headless installation failed'));
-          log.warn(`Falling back to standalone mode. Install later:\n  npm install -g obsidian-headless`);
-          operatingMode = 'standalone';
-          curatorUrl = '';
-          curatorToken = '';
-        }
-      } else {
-        log.warn(`Cannot proceed with ${operatingMode} mode without obsidian-headless.\nFalling back to standalone mode.`);
-        operatingMode = 'standalone';
-        curatorUrl = '';
-        curatorToken = '';
-      }
-    }
-  }
-
-  // ── Step 5: Platform ───────────────────────────────────────────────────
-
-  log.step(bold('Platform'));
-  log.message(dim('Choose which AI coding platforms to configure Engram for.'));
-
-  const selectedPlatforms = handleCancel(await multiselect({
-    message: 'Platforms',
-    options: [
-      { value: 'openclaw', label: 'OpenClaw', hint: 'native plugin integration (hooks + tools)' },
-      { value: 'claude-code', label: 'Claude Code', hint: 'hooks via settings.json + MCP server for tools' },
-      { value: 'codex', label: 'Codex (OpenAI)', hint: 'MCP server for tools' },
-    ],
-    required: false,
-  })) || [];
-
-  log.success(`Platforms: ${green(selectedPlatforms.join(', ') || 'none')}`);
-
-  // ── Step 6: Dependencies Check ──────────────────────────────────────────
-
-  log.step(bold('Dependencies'));
-
-  // QMD
-  if (deps.qmd) {
-    log.success(`QMD found ${dim(`(${deps.qmdPath})`)}`);
-  } else {
-    const installQmd = handleCancel(await confirm({
-      message: 'QMD not found. Install it? (semantic vector search for vault)',
-      initialValue: true,
-    }));
-
-    if (installQmd) {
-      const s = spinner();
-      s.start('Installing QMD...');
-      try {
-        await runCommand('npm install -g @tobilu/qmd');
-        s.stop('QMD installed');
-        deps.qmd = true;
-      } catch {
-        s.stop(red('QMD installation failed'));
-        log.warn('Skipped QMD. Install later: npm install -g @tobilu/qmd');
-      }
-    } else {
-      log.info('Skipped QMD installation');
-    }
-  }
-
-  // Obsidian CLI
-  if (deps.obsidianCli) {
-    log.success(`Obsidian CLI found ${dim(`(${deps.obsidianCliPath})`)}`);
-  } else {
-    const installObsCli = handleCancel(await confirm({
-      message: 'Obsidian CLI not found. Install it? (manage vault from terminal)',
-      initialValue: false,
-    }));
-
-    if (installObsCli) {
-      const s = spinner();
-      s.start('Installing Obsidian CLI...');
-      try {
-        await runCommand('npm install -g obsidian-cli');
-        s.stop('Obsidian CLI installed');
-        deps.obsidianCli = true;
-      } catch {
-        s.stop(red('Obsidian CLI installation failed'));
-        log.warn('Skipped Obsidian CLI. Install later: npm install -g obsidian-cli');
-      }
-    } else {
-      log.info('Skipped Obsidian CLI installation');
-    }
-  }
-
-  // lossless-claw (if selected but not installed)
-  let contextEngineResolved = contextEngine;
-  if (contextEngine === 'lossless-claw' && !deps.losslessClaw) {
-    const installLc = handleCancel(await confirm({
-      message: 'lossless-claw is not installed. Install it now?',
-      initialValue: true,
-    }));
-
-    if (installLc) {
-      const s = spinner();
-      s.start('Installing lossless-claw...');
-      try {
-        await runCommand('openclaw plugins install @martian-engineering/lossless-claw');
-        s.stop('lossless-claw installed');
-        deps.losslessClaw = true;
-      } catch {
-        s.stop(red('lossless-claw installation failed'));
-        log.warn('Falling back to file-based context engine.\nInstall later: openclaw plugins install @martian-engineering/lossless-claw');
-        contextEngineResolved = 'file-based';
-      }
-    } else {
-      log.warn('lossless-claw not available. Falling back to file-based context engine.');
-      contextEngineResolved = 'file-based';
-    }
-  }
-
-  // ── Step 7: Advanced Config ─────────────────────────────────────────────
-
-  let policyTier = 'review';
-  let codeGraph = false;
-  let provenance = true;
-  let localFirst = true;
   let guardLevel = 'block';
-  let disabledRules = [];
-  let ruleOverrides = {};
 
-  const wantAdvanced = handleCancel(await confirm({
-    message: 'Configure advanced options?',
+  const wantGuardConfig = handleCancel(await confirm({
+    message: 'Configure guard rules? (default: block dangerous commands)',
     initialValue: false,
   }));
 
-  if (wantAdvanced) {
-    log.step(bold('Advanced Configuration'));
-
-    // Policy tier
-    policyTier = handleCancel(await select({
-      message: 'Default policy tier',
-      options: [
-        { value: 'review', label: 'review', hint: 'require review before execution' },
-        { value: 'safe', label: 'safe', hint: 'auto-approve safe operations' },
-        { value: 'critical', label: 'critical', hint: 'all operations require approval' },
-      ],
-    }));
-    log.success(`Policy tier: ${green(policyTier)}`);
-
-    // Code intelligence
-    const wantCodeIntel = handleCancel(await confirm({
-      message: 'Enable code intelligence (AST analysis)?',
-      initialValue: false,
-    }));
-
-    if (wantCodeIntel) {
-      if (deps.gitnexus) {
-        codeGraph = true;
-        log.success(`Code intelligence enabled with GitNexus ${dim(`(${deps.gitnexusPath})`)}`);
-      } else {
-        const installGn = handleCancel(await confirm({
-          message: 'GitNexus not found. Install it?',
-          initialValue: true,
-        }));
-
-        if (installGn) {
-          const s = spinner();
-          s.start('Installing GitNexus...');
-          try {
-            await runCommand('npm install -g gitnexus');
-            s.stop('GitNexus installed');
-            codeGraph = true;
-            deps.gitnexus = true;
-          } catch {
-            s.stop(red('GitNexus installation failed'));
-            log.warn('Code intelligence disabled. Install later: npm install -g gitnexus');
-          }
-        } else {
-          log.info('Skipped GitNexus. Code intelligence disabled.');
-        }
-      }
-    }
-
-    // Provenance
-    log.info(dim('Provenance creates a tamper-proof audit trail of every agent session —'));
-    log.info(dim('who ran, what changed, when, chained with SHA-256 hashes. Useful for'));
-    log.info(dim('teams running multiple agents. Can be verified later with: engram provenance verify'));
-    provenance = handleCancel(await confirm({
-      message: 'Enable provenance tracking?',
-      initialValue: true,
-    }));
-    log.success(`Provenance: ${green(provenance ? 'enabled' : 'disabled')}`);
-
-    // Local-first
-    localFirst = handleCancel(await confirm({
-      message: 'Local-first mode (no external sync)?',
-      initialValue: true,
-    }));
-    log.success(`Local-first: ${green(localFirst ? 'enabled' : 'disabled')}`);
-
-    // Guard configuration
+  if (wantGuardConfig) {
     log.step(bold('Guard Configuration'));
     log.message(dim('Controls how the pretool guard handles dangerous commands.'));
 
@@ -758,183 +540,364 @@ async function main() {
       ],
     }));
     log.success(`Guard block level: ${green(guardLevel)}`);
-
-    // Individual guard rules
-    const wantRuleConfig = handleCancel(await confirm({
-      message: 'Configure individual guard rules?',
-      initialValue: false,
-    }));
-
-    if (wantRuleConfig) {
-      const guardData = loadGuardRules();
-      if (guardData && guardData.rules && guardData.rules.length > 0) {
-        const ruleOptions = guardData.rules.map((rule) => ({
-          value: rule.id,
-          label: rule.label || rule.id,
-          hint: `[${rule.category}] ${rule.block_level}`,
-        }));
-
-        // Select which rules to DISABLE
-        const rulesToDisable = handleCancel(await multiselect({
-          message: 'Select rules to DISABLE (all enabled by default)',
-          options: ruleOptions,
-          required: false,
-        }));
-
-        disabledRules = rulesToDisable || [];
-
-        if (disabledRules.length > 0) {
-          log.info(`${disabledRules.length} rule${disabledRules.length === 1 ? '' : 's'} will be disabled: ${dim(disabledRules.join(', '))}`);
-        } else {
-          log.success('All guard rules remain enabled');
-        }
-
-        // Offer per-rule overrides for remaining enabled rules
-        const enabledRules = guardData.rules.filter(r => !disabledRules.includes(r.id));
-        if (enabledRules.length > 0) {
-          const wantOverrides = handleCancel(await confirm({
-            message: 'Override block level for specific rules?',
-            initialValue: false,
-          }));
-
-          if (wantOverrides) {
-            for (const rule of enabledRules) {
-              const override = handleCancel(await select({
-                message: `${rule.label || rule.id} [currently: ${rule.block_level}]`,
-                options: [
-                  { value: '__keep__', label: `Keep: ${rule.block_level}`, hint: 'no change' },
-                  { value: 'block', label: 'block' },
-                  { value: 'warn', label: 'warn' },
-                  { value: 'log', label: 'log' },
-                ],
-              }));
-
-              if (override !== '__keep__') {
-                ruleOverrides[rule.id] = override;
-              }
-            }
-
-            const overrideCount = Object.keys(ruleOverrides).length;
-            if (overrideCount > 0) {
-              log.info(`${overrideCount} rule override${overrideCount === 1 ? '' : 's'} configured`);
-            }
-          }
-        }
-      } else {
-        log.warn('Guard rules config not found -- will use factory defaults');
-      }
-    }
   }
 
-  // ── Step 8: Agent Selection ─────────────────────────────────────────────
+  // ── OpenClaw-specific steps ─────────────────────────────────────────────
 
+  let contextEngine = 'file-based';
+  let contextEngineResolved = 'file-based';
+  let operatingMode = 'standalone';
+  let curatorUrl = '';
+  let curatorToken = '';
+  let policyTier = 'review';
+  let codeGraph = false;
+  let provenance = true;
+  let localFirst = true;
+  let disabledRules = [];
+  let ruleOverrides = {};
   let selectedAgents = [];
   let agentWorkspaces = {};
 
-  // Scan openclaw.json for configured agents
-  const gatewayPath = join(OPENCLAW_HOME, 'openclaw.json');
-  let allAgents = [];
+  if (hasOpenClaw) {
+    // ── Context Engine ────────────────────────────────────────────────
 
-  if (existsSync(gatewayPath)) {
-    try {
-      const gatewayData = JSON.parse(readFileSync(gatewayPath, 'utf-8'));
-      const agentList = gatewayData?.agents?.list || [];
-      for (const agent of agentList) {
-        if (agent.id && agent.name) {
-          allAgents.push({
-            id: agent.id,
-            name: agent.name,
-            workspace: agent.workspace || null,
-            emoji: agent.identity?.emoji || '',
-          });
+    log.step(bold('Context Engine'));
+    log.message(dim('Controls how Engram stores and retrieves context facts.'));
+
+    // Install required dependencies
+    const required = [];
+    if (!deps.qmd) required.push({ id: 'qmd', label: 'QMD', install: 'npm install -g @nicepkg/qmd', hint: 'semantic search and memory backend (required)' });
+    if (!deps.pdftotext) required.push({ id: 'poppler', label: 'poppler (pdftotext)', install: deps.brew ? 'brew install poppler' : 'sudo apt-get install -y poppler-utils', hint: 'PDF text extraction (required)' });
+    if (!deps.watchdog) required.push({ id: 'watchdog', label: 'watchdog', install: 'pip3 install watchdog', hint: 'real-time filesystem events for curator reactive loop (required)' });
+
+    if (required.length > 0) {
+      log.info(`Installing ${required.length} required dependenc${required.length === 1 ? 'y' : 'ies'}...`);
+      for (const dep of required) {
+        log.info(`${bold(dep.label)}: ${dim(dep.install)}`);
+        try {
+          await runCommandLive(dep.install);
+          log.success(`${dep.label} installed`);
+        } catch (err) {
+          log.error(`${dep.label} failed: ${err.message}`);
+          log.warn(`Install manually: ${dep.install}`);
         }
       }
-    } catch { /* gateway parse failed */ }
-  }
+      Object.assign(deps, detectDependencies());
+    } else {
+      log.success('Required dependencies found (QMD, poppler)');
+    }
 
-  if (allAgents.length > 0) {
-    log.info(`Found ${bold(String(allAgents.length))} agent${allAgents.length === 1 ? '' : 's'} in OpenClaw config`);
+    // pipx for optional deps
+    if (!deps.pipx) {
+      try {
+        const pipxCmd = deps.brew ? 'brew install pipx && pipx ensurepath' : 'pip3 install pipx && pipx ensurepath';
+        await runCommandLive(pipxCmd);
+        deps.pipx = true;
+      } catch { /* non-critical */ }
+    }
 
-    const agentChoices = allAgents.map((a) => ({
-      value: a.id,
-      label: `${a.emoji} ${a.name} (${a.id})`,
-      hint: a.workspace ? dim(a.workspace) : dim('no workspace'),
+    // Optional deps
+    const optional = [];
+    if (!deps.ffmpeg) optional.push({ id: 'ffmpeg', label: 'ffmpeg', install: deps.brew ? 'brew install ffmpeg' : 'sudo apt-get install -y ffmpeg', hint: 'video/audio processing' });
+    if (!deps.insanelyFastWhisper) optional.push({ id: 'whisper', label: 'insanely-fast-whisper', install: 'pipx install insanely-fast-whisper==0.0.15 --force --pip-args="--ignore-requires-python"', hint: 'video/audio transcription (via pipx)' });
+
+    if (optional.length > 0) {
+      const toInstall = handleCancel(await multiselect({
+        message: 'Install optional dependencies?',
+        options: optional.map(m => ({
+          value: m.id,
+          label: m.label,
+          hint: `${m.hint} — ${dim(m.install)}`,
+        })),
+        required: false,
+      })) || [];
+
+      for (const depId of toInstall) {
+        const dep = optional.find(m => m.id === depId);
+        try {
+          await runCommandLive(dep.install);
+          log.success(`${dep.label} installed`);
+        } catch (err) {
+          log.warn(`${dep.label} failed: ${err.message}`);
+        }
+      }
+      Object.assign(deps, detectDependencies());
+    }
+
+    // Context engine selection
+    const contextStatus = [];
+    if (deps.losslessClaw) contextStatus.push('lossless-claw extension detected');
+    if (deps.lcmDb) contextStatus.push('LCM database found');
+    if (contextStatus.length > 0) {
+      log.info(contextStatus.map(s => green('+') + ' ' + s).join('\n'));
+    }
+
+    let contextEngineOptions;
+    if (deps.losslessClaw) {
+      contextEngineOptions = [
+        { value: 'lossless-claw', label: 'lossless-claw', hint: 'native LCM database (recommended, already installed)' },
+        { value: 'file-based', label: 'file-based', hint: 'JSON files on disk (simpler, no database)' },
+      ];
+    } else {
+      contextEngineOptions = [
+        { value: 'file-based', label: 'file-based', hint: 'JSON files on disk (no extra dependencies)' },
+        { value: 'lossless-claw', label: 'lossless-claw', hint: 'install native LCM database for better performance' },
+      ];
+    }
+
+    contextEngine = handleCancel(await select({
+      message: 'Context engine',
+      options: contextEngineOptions,
+    }));
+    contextEngineResolved = contextEngine;
+    log.success(`Context engine: ${green(contextEngine)}`);
+
+    // ── Operating Mode ────────────────────────────────────────────────
+
+    log.step(bold('Operating Mode'));
+    log.message(dim('Controls how this node participates in the knowledge network.'));
+
+    operatingMode = handleCancel(await select({
+      message: 'Mode',
+      options: [
+        { value: 'standalone', label: 'standalone', hint: 'local vault, all brain commands active (default)' },
+        { value: 'connected', label: 'connected', hint: 'sync to shared vault, mutations delegated to curator' },
+        { value: 'curator', label: 'curator', hint: 'server node: connectors, mycelium, git backup, invites' },
+      ],
+    }));
+    log.success(`Operating mode: ${green(operatingMode)}`);
+
+    if (operatingMode === 'connected') {
+      curatorUrl = handleCancel(await text({
+        message: 'Curator URL',
+        placeholder: 'https://curator.example.com',
+        validate: (val) => {
+          if (!val) return 'Curator URL is required';
+          try { new URL(val); } catch { return 'Must be a valid URL'; }
+        },
+      }));
+      curatorToken = handleCancel(await text({
+        message: 'Invite token',
+        placeholder: 'paste your invite token here',
+      }));
+      if (!curatorToken) {
+        log.warn('No invite token provided. Set it later via: engram connect join');
+      }
+    }
+
+    if (operatingMode === 'connected' || operatingMode === 'curator') {
+      if (!deps.obsidianHeadless) {
+        const installOb = handleCancel(await confirm({
+          message: 'obsidian-headless (ob) is required for this mode. Install it now?',
+          initialValue: true,
+        }));
+        if (installOb) {
+          try {
+            await runCommand('npm install -g obsidian-headless');
+            deps.obsidianHeadless = true;
+            log.success('obsidian-headless installed');
+          } catch {
+            log.warn('Falling back to standalone mode.');
+            operatingMode = 'standalone';
+          }
+        } else {
+          operatingMode = 'standalone';
+        }
+      }
+    }
+
+    // ── Advanced Config ───────────────────────────────────────────────
+
+    const wantAdvanced = handleCancel(await confirm({
+      message: 'Configure advanced options? (policy tier, code intelligence, provenance)',
+      initialValue: false,
     }));
 
-    selectedAgents = handleCancel(await multiselect({
-      message: 'Which agents should use Engram memory tools?',
-      options: agentChoices,
-      required: false,
-    })) || [];
+    if (wantAdvanced) {
+      log.step(bold('Advanced Configuration'));
 
-    if (selectedAgents.length > 0) {
-      // Build workspace map for selected agents
-      for (const agentId of selectedAgents) {
-        const agent = allAgents.find(a => a.id === agentId);
-        if (agent?.workspace) {
-          agentWorkspaces[agentId] = agent.workspace;
+      policyTier = handleCancel(await select({
+        message: 'Default policy tier',
+        options: [
+          { value: 'review', label: 'review', hint: 'require review before execution' },
+          { value: 'safe', label: 'safe', hint: 'auto-approve safe operations' },
+          { value: 'critical', label: 'critical', hint: 'all operations require approval' },
+        ],
+      }));
+      log.success(`Policy tier: ${green(policyTier)}`);
+
+      const wantCodeIntel = handleCancel(await confirm({
+        message: 'Enable code intelligence (AST analysis)?',
+        initialValue: false,
+      }));
+      if (wantCodeIntel) {
+        if (deps.gitnexus) {
+          codeGraph = true;
+          log.success(`Code intelligence enabled with GitNexus ${dim(`(${deps.gitnexusPath})`)}`);
+        } else {
+          const installGn = handleCancel(await confirm({
+            message: 'GitNexus not found. Install it?',
+            initialValue: true,
+          }));
+          if (installGn) {
+            try {
+              await runCommand('npm install -g gitnexus');
+              codeGraph = true;
+              log.success('GitNexus installed');
+            } catch {
+              log.warn('Code intelligence disabled. Install later: npm install -g gitnexus');
+            }
+          }
         }
       }
 
-      log.success(`${selectedAgents.length} agent${selectedAgents.length === 1 ? '' : 's'} selected: ${selectedAgents.join(', ')}`);
+      log.info(dim('Provenance creates a tamper-proof audit trail of every agent session.'));
+      provenance = handleCancel(await confirm({
+        message: 'Enable provenance tracking?',
+        initialValue: true,
+      }));
+      log.success(`Provenance: ${green(provenance ? 'enabled' : 'disabled')}`);
 
-      // Check which workspaces have TOOLS.md
-      const toolsMdAgents = selectedAgents.filter(id => {
-        const ws = agentWorkspaces[id];
-        return ws && existsSync(join(ws, 'TOOLS.md'));
-      });
-      const noToolsMdAgents = selectedAgents.filter(id => {
-        const ws = agentWorkspaces[id];
-        return ws && !existsSync(join(ws, 'TOOLS.md'));
-      });
+      localFirst = handleCancel(await confirm({
+        message: 'Local-first mode (no external sync)?',
+        initialValue: true,
+      }));
+      log.success(`Local-first: ${green(localFirst ? 'enabled' : 'disabled')}`);
 
-      if (toolsMdAgents.length > 0) {
-        log.info(`Will append Engram docs to TOOLS.md and AGENTS.md: ${toolsMdAgents.join(', ')}`);
+      // Guard rule configuration
+      const wantRuleConfig = handleCancel(await confirm({
+        message: 'Configure individual guard rules?',
+        initialValue: false,
+      }));
+
+      if (wantRuleConfig) {
+        const guardData = loadGuardRules();
+        if (guardData && guardData.rules && guardData.rules.length > 0) {
+          const ruleOptions = guardData.rules.map((rule) => ({
+            value: rule.id,
+            label: rule.label || rule.id,
+            hint: `[${rule.category}] ${rule.block_level}`,
+          }));
+
+          disabledRules = handleCancel(await multiselect({
+            message: 'Select rules to DISABLE (all enabled by default)',
+            options: ruleOptions,
+            required: false,
+          })) || [];
+
+          if (disabledRules.length > 0) {
+            log.info(`${disabledRules.length} rule(s) will be disabled: ${dim(disabledRules.join(', '))}`);
+          }
+        }
       }
-      if (noToolsMdAgents.length > 0) {
-        log.info(`Will create TOOLS.md and AGENTS.md for: ${noToolsMdAgents.join(', ')}`);
-      }
-    } else {
-      log.info('No agents selected — TOOLS.md and AGENTS.md will not be modified');
     }
-  } else {
-    log.info('No agents found in OpenClaw config — skipping agent selection');
+
+    // ── Agent Selection (OpenClaw only) ───────────────────────────────
+
+    const gatewayPath = join(OPENCLAW_HOME, 'openclaw.json');
+    let allAgents = [];
+
+    if (existsSync(gatewayPath)) {
+      try {
+        const gatewayData = JSON.parse(readFileSync(gatewayPath, 'utf-8'));
+        const agentList = gatewayData?.agents?.list || [];
+        for (const agent of agentList) {
+          if (agent.id && agent.name) {
+            allAgents.push({
+              id: agent.id,
+              name: agent.name,
+              workspace: agent.workspace || null,
+              emoji: agent.identity?.emoji || '',
+            });
+          }
+        }
+      } catch { /* gateway parse failed */ }
+    }
+
+    if (allAgents.length > 0) {
+      log.info(`Found ${bold(String(allAgents.length))} agent${allAgents.length === 1 ? '' : 's'} in OpenClaw config`);
+
+      const agentChoices = allAgents.map((a) => ({
+        value: a.id,
+        label: `${a.emoji} ${a.name} (${a.id})`,
+        hint: a.workspace ? dim(a.workspace) : dim('no workspace'),
+      }));
+
+      selectedAgents = handleCancel(await multiselect({
+        message: 'Which agents should use Engram memory tools?',
+        options: agentChoices,
+        required: false,
+      })) || [];
+
+      if (selectedAgents.length > 0) {
+        for (const agentId of selectedAgents) {
+          const agent = allAgents.find(a => a.id === agentId);
+          if (agent?.workspace) {
+            agentWorkspaces[agentId] = agent.workspace;
+          }
+        }
+        log.success(`${selectedAgents.length} agent(s) selected: ${selectedAgents.join(', ')}`);
+      }
+    }
+
+    // lossless-claw resolution
+    if (contextEngine === 'lossless-claw' && !deps.losslessClaw) {
+      const installLc = handleCancel(await confirm({
+        message: 'lossless-claw is not installed. Install it now?',
+        initialValue: true,
+      }));
+      if (installLc) {
+        try {
+          await runCommand('openclaw plugins install @martian-engineering/lossless-claw');
+          deps.losslessClaw = true;
+          log.success('lossless-claw installed');
+        } catch {
+          log.warn('Falling back to file-based context engine.');
+          contextEngineResolved = 'file-based';
+        }
+      } else {
+        contextEngineResolved = 'file-based';
+      }
+    }
   }
 
-  // ── Step 9: Summary ─────────────────────────────────────────────────────
+  // ── Summary ─────────────────────────────────────────────────────────────
 
   const summaryLines = [
+    `Platforms:         ${green(selectedPlatforms.join(', '))}`,
     `Obsidian vault:    ${green(vaultPath)}`,
-    `Context engine:    ${green(contextEngineResolved)}`,
     `Safety profile:    ${green(safetyProfile)}`,
-    `Operating mode:    ${green(operatingMode)}`,
-    `Policy tier:       ${green(policyTier)}`,
-    `Code graph:        ${green(String(codeGraph))}`,
-    `Provenance:        ${green(String(provenance))}`,
-    `Local-first:       ${green(String(localFirst))}`,
     `Guard level:       ${green(guardLevel)}`,
-    `Platforms:         ${green(selectedPlatforms.join(', ') || 'none')}`,
   ];
 
-  if (operatingMode === 'connected' && curatorUrl) {
-    summaryLines.push(`Curator URL:       ${green(curatorUrl)}`);
-  }
-
-  if (selectedAgents.length > 0) {
-    summaryLines.push(`Agents:            ${green(selectedAgents.join(', '))}`);
+  if (hasOpenClaw) {
+    summaryLines.push(
+      `Context engine:    ${green(contextEngineResolved)}`,
+      `Operating mode:    ${green(operatingMode)}`,
+      `Policy tier:       ${green(policyTier)}`,
+      `Code graph:        ${green(String(codeGraph))}`,
+      `Provenance:        ${green(String(provenance))}`,
+      `Local-first:       ${green(String(localFirst))}`,
+    );
+    if (operatingMode === 'connected' && curatorUrl) {
+      summaryLines.push(`Curator URL:       ${green(curatorUrl)}`);
+    }
+    if (selectedAgents.length > 0) {
+      summaryLines.push(`Agents:            ${green(selectedAgents.join(', '))}`);
+    }
   }
 
   if (disabledRules.length > 0) {
     summaryLines.push(`Disabled rules:    ${yellow(disabledRules.join(', '))}`);
   }
 
-  const overrideCount = Object.keys(ruleOverrides).length;
-  if (overrideCount > 0) {
-    summaryLines.push(`Rule overrides:    ${yellow(`${overrideCount} rule${overrideCount === 1 ? '' : 's'}`)}`);
-  }
-
   summaryLines.push('');
-  summaryLines.push(`Install path:      ${dim(join(OPENCLAW_HOME, 'extensions', 'engram'))}`);
+  if (hasOpenClaw) {
+    summaryLines.push(`Install path:      ${dim(join(OPENCLAW_HOME, 'extensions', 'engram'))}`);
+  }
+  if (hasClaudeCode) {
+    summaryLines.push(`Claude settings:   ${dim(join(HOME, '.claude', 'settings.json'))}`);
+  }
 
   note(summaryLines.join('\n'), 'Installation Summary');
 
@@ -948,8 +911,9 @@ async function main() {
     process.exit(0);
   }
 
-  // ── Step 10: Write Config ───────────────────────────────────────────────
+  // ── Install ─────────────────────────────────────────────────────────────
 
+  // Write config for INSTALL.sh (OpenClaw path)
   const config = {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
@@ -988,7 +952,34 @@ async function main() {
     process.exit(1);
   }
 
-  outro(bold('Configuration complete. Starting installation...'));
+  // Direct install for Claude Code and Codex (no INSTALL.sh needed)
+  if (hasClaudeCode) {
+    await installClaudeCode(vaultPath, safetyProfile, guardLevel);
+  }
+
+  if (hasCodex) {
+    await installCodex(vaultPath);
+  }
+
+  // For OpenClaw, hand off to INSTALL.sh
+  if (hasOpenClaw) {
+    outro(bold('Configuration complete. Starting OpenClaw installation...'));
+    // INSTALL.sh will be invoked by the caller (engram CLI)
+  } else {
+    // No OpenClaw — we're done
+    log.success('Installation complete!');
+    log.info('');
+    if (hasClaudeCode) {
+      log.info('Claude Code: restart Claude Code to activate Engram.');
+      log.info(dim('  MCP server and hooks are registered in ~/.claude/settings.json'));
+      log.info(dim('  10 memory tools available: engram_memory_query, engram_promote_fact, etc.'));
+      log.info(dim('  4 hooks active: session start, pretool guard, write validate, stop gate'));
+    }
+    if (hasCodex) {
+      log.info('Codex: copy the MCP config to .codex/mcp.json in your project.');
+    }
+    outro(bold('Done!'));
+  }
 }
 
 // ── Entry Point ─────────────────────────────────────────────────────────────

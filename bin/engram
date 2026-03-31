@@ -145,12 +145,6 @@ cmd_wizard() {
         exec "$PLUGIN_BIN/engram-guard" config
     fi
 
-    if [[ ! -f "$INSTALL_SH" ]]; then
-        echo -e "${RED}INSTALL.sh not found at $INSTALL_SH${NC}"
-        echo "Run engram from the repo directory or install globally via npm install -g engram"
-        exit 1
-    fi
-
     # Run Node.js interactive wizard (outputs config to /tmp/engram-wizard-config.json)
     local wizard_mjs="$ROOT_DIR/bin/wizard.mjs"
     local wizard_config="/tmp/engram-wizard-config.json"
@@ -160,12 +154,29 @@ cmd_wizard() {
         node "$wizard_mjs" || exit $?
 
         if [[ ! -f "$wizard_config" ]]; then
-            echo -e "${RED}Wizard did not produce config file at $wizard_config${NC}"
-            exit 1
+            # Wizard handled everything directly (Claude Code / Codex only)
+            exit 0
         fi
 
-        # Hand off to INSTALL.sh with the wizard config
-        exec bash "$INSTALL_SH" --from-config "$wizard_config"
+        # Check if OpenClaw was selected — only then run INSTALL.sh
+        local has_openclaw
+        has_openclaw=$(node -p "
+            var c = JSON.parse(require('fs').readFileSync('$wizard_config','utf8'));
+            (c.platforms || []).includes('openclaw') ? 'yes' : 'no'
+        " 2>/dev/null || echo "no")
+
+        if [[ "$has_openclaw" = "yes" ]]; then
+            if [[ ! -f "$INSTALL_SH" ]]; then
+                echo -e "${RED}INSTALL.sh not found at $INSTALL_SH${NC}"
+                echo "Run engram from the repo directory or install globally via npm install -g engram"
+                exit 1
+            fi
+            # Hand off to INSTALL.sh for OpenClaw-specific setup
+            exec bash "$INSTALL_SH" --from-config "$wizard_config"
+        else
+            # Non-OpenClaw install complete — wizard handled Claude Code / Codex directly
+            exit 0
+        fi
     else
         # Fallback: no Node wizard available, run legacy interactive INSTALL.sh
         echo -e "${YELLOW}Node wizard not found at $wizard_mjs — falling back to legacy prompts.${NC}"
