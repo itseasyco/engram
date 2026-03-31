@@ -256,13 +256,13 @@ ${dim('                                              w i z a r d')}
 async function installClaudeCode(vaultPath, safetyProfile, guardLevel) {
   log.step(bold('Installing for Claude Code'));
 
-  // 1. Register MCP server in ~/.claude/settings.json
+  // 1. Register MCP server in ~/.claude.json
   const setupMcp = join(PLUGIN_ROOT, 'mcp', 'setup-mcp.sh');
   if (existsSync(setupMcp)) {
     try {
       const output = getCommandOutput(`LACP_OBSIDIAN_VAULT="${vaultPath}" bash "${setupMcp}" --global 2>&1`);
       if (output) log.info(dim(output));
-      log.success('MCP server registered in ~/.claude/settings.json');
+      log.success('MCP server registered in ~/.claude.json');
     } catch (err) {
       log.warn('MCP server registration failed — run manually:');
       log.info(dim(`  bash "${setupMcp}" --global`));
@@ -868,7 +868,8 @@ async function main() {
     summaryLines.push(`Install path:      ${dim(join(OPENCLAW_HOME, 'extensions', 'engram'))}`);
   }
   if (hasClaudeCode) {
-    summaryLines.push(`Claude settings:   ${dim(join(HOME, '.claude', 'settings.json'))}`);
+    summaryLines.push(`Claude MCP:        ${dim(join(HOME, '.claude.json'))}`);
+    summaryLines.push(`Claude hooks:      ${dim(join(HOME, '.claude', 'settings.json'))}`);
   }
 
   note(summaryLines.join('\n'), 'Installation Summary');
@@ -943,7 +944,8 @@ async function main() {
     log.info('');
     if (hasClaudeCode) {
       log.info('Claude Code: restart Claude Code to activate Engram.');
-      log.info(dim('  MCP server and hooks are registered in ~/.claude/settings.json'));
+      log.info(dim('  MCP server registered in ~/.claude.json'));
+      log.info(dim('  Hooks registered in ~/.claude/settings.json'));
       log.info(dim('  10 memory tools available: engram_memory_query, engram_promote_fact, etc.'));
       log.info(dim('  4 hooks active: session start, pretool guard, write validate, stop gate'));
     }

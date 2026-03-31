@@ -44,6 +44,7 @@ MCP_JSON=$(cat <<ENDJSON
 {
   "mcpServers": {
     "engram": {
+      "type": "stdio",
       "command": "$NODE_BIN",
       "args": ["$SERVER_MJS"],
       "env": {
@@ -93,8 +94,8 @@ usage() {
   cat <<EOF
 Usage: setup-mcp.sh [--global | --project | --print]
 
-  --global   Merge into ~/.claude/settings.json  (user-wide)
-  --project  Merge into .claude/settings.json    (current repo)
+  --global   Merge into ~/.claude.json            (user-wide)
+  --project  Merge into .mcp.json                (current repo)
   --print    Print the mcpServers JSON to stdout
 
 NOTE: For Codex compatibility, create .codex/mcp.json in your repo with
@@ -113,12 +114,12 @@ case "$MODE" in
     echo "# Codex: save the above JSON to .codex/mcp.json in your repo."
     ;;
   --global)
-    merge_into "$HOME/.claude/settings.json"
+    merge_into "$HOME/.claude.json"
     echo ""
     echo "# Codex: save the mcpServers JSON to .codex/mcp.json in your repo."
     ;;
   --project)
-    merge_into ".claude/settings.json"
+    merge_into ".mcp.json"
     echo ""
     echo "# Codex: save the mcpServers JSON to .codex/mcp.json in your repo."
     ;;
