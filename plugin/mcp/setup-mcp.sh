@@ -32,12 +32,19 @@ resolve_vault() {
 
 VAULT_PATH="$(resolve_vault)"
 
+# ── Resolve absolute node path (nvm doesn't export to subprocesses) ─
+NODE_BIN="$(command -v node 2>/dev/null || which node 2>/dev/null)"
+if [[ -z "$NODE_BIN" ]]; then
+  echo "Error: node not found in PATH" >&2
+  exit 1
+fi
+
 # ── Build mcpServers JSON block ────────────────────────────────────
 MCP_JSON=$(cat <<ENDJSON
 {
   "mcpServers": {
     "engram": {
-      "command": "node",
+      "command": "$NODE_BIN",
       "args": ["$SERVER_MJS"],
       "env": {
         "ENGRAM_DIR": "$ENGRAM_DIR",
