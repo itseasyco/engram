@@ -16,16 +16,29 @@ import sys
 from pathlib import Path
 
 # Configurable knowledge paths (colon-separated)
+def _default_vault_root():
+    """Resolve vault root from env-source.sh config or fallback."""
+    env_file = os.path.expanduser("~/.openclaw/extensions/engram/config/.engram.env")
+    if os.path.isfile(env_file):
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("LACP_OBSIDIAN_VAULT="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return os.path.expanduser("~/.openclaw/data/knowledge")
+
+_vault_root = os.environ.get("OPENCLAW_VAULT_ROOT") or _default_vault_root()
+
 KNOWLEDGE_PATHS_ENV = os.environ.get(
     "OPENCLAW_WRITE_VALIDATE_PATHS",
-    os.environ.get("OPENCLAW_VAULT_ROOT", os.path.expanduser("/Volumes/Cortex"))
+    _vault_root
     + ":"
     + os.environ.get("OPENCLAW_KNOWLEDGE_ROOT", os.path.expanduser("~/.openclaw/knowledge"))
 )
 
 TAXONOMY_PATH = os.environ.get(
     "OPENCLAW_TAXONOMY_PATH",
-    os.path.expanduser("/Volumes/Cortex/_metadata/taxonomy.json"),
+    os.path.join(_vault_root, "_metadata", "taxonomy.json"),
 )
 
 REQUIRED_FIELDS = ["title", "category"]

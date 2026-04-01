@@ -106,6 +106,7 @@ show_help() {
     echo -e "  ${GREEN}vault kpi${NC}               Quality KPIs               ${DIM}(→ engram-memory-kpi)${NC}"
     echo -e "  ${GREEN}vault heal${NC}              Vault doctor               ${DIM}(→ vault_doctor.py)${NC}"
     echo -e "  ${GREEN}vault migrate${NC}           Structure migration        ${DIM}(→ engram-vault-migrate)${NC}"
+    echo -e "  ${GREEN}vault review-stale${NC}      Process stale inbox notes   ${DIM}(classify → route to folders)${NC}"
     echo ""
     echo -e "${BOLD}BRAIN${NC}"
     echo -e "  ${GREEN}brain expand${NC}            Layer expansion (default)"
@@ -117,6 +118,24 @@ show_help() {
     echo ""
     echo -e "${BOLD}INGEST${NC}"
     echo -e "  ${GREEN}ingest${NC} <type> <source>  Ingest content             ${DIM}(transcript|url|pdf|file|video|audio)${NC}"
+    echo ""
+    echo -e "${BOLD}AGENT${NC}"
+    echo -e "  ${GREEN}agent create${NC}            Scaffold a new agent workspace from templates"
+    echo ""
+    echo -e "${BOLD}REPO${NC}"
+    echo -e "  ${GREEN}repo init${NC}               Generate repositories.json from GitNexus registry"
+    echo ""
+    echo -e "${BOLD}CODE${NC}"
+    echo -e "  ${GREEN}code report${NC}             Full code health report             ${DIM}(→ engram-code-report)${NC}"
+    echo -e "  ${GREEN}code dead-code${NC}          Find dead exports"
+    echo -e "  ${GREEN}code hotspots${NC}           Find complexity hotspots"
+    echo -e "  ${GREEN}code blast-radius${NC}       Find high blast-radius functions"
+    echo -e "  ${GREEN}code orphans${NC}            Find orphaned files"
+    echo -e "  ${GREEN}code architecture${NC}       Architecture cluster analysis"
+    echo ""
+    echo -e "${BOLD}MAINTENANCE${NC}"
+    echo -e "  ${GREEN}update${NC}              Migrate agent workspaces to latest template format"
+    echo -e "  ${GREEN}tune-up${NC}             Workspace cleanup — find bloat, stray files, old logs"
     echo ""
     echo -e "${BOLD}MANAGEMENT${NC}"
     echo -e "  ${GREEN}uninstall${NC}           Remove Engram (preserves vault data)"
@@ -135,6 +154,11 @@ show_help() {
     echo "  engram vault kpi                       # Vault quality metrics"
     echo "  engram brain expand --consolidate      # Run mycelium consolidation"
     echo "  engram ingest video meeting.mp4        # Ingest a video file"
+    echo "  engram code report --repo easy-api      # Full code health report"
+    echo "  engram code dead-code --repo easy-api   # Find dead exports"
+    echo "  engram code report --all --output ~/report.txt  # Save report to file"
+    echo "  engram tune-up                         # Clean up agent workspaces"
+    echo "  engram tune-up --dry-run               # Preview what would be cleaned"
     echo ""
     echo -e "${BOLD}COMING SOON${NC}"
     echo -e "  ${DIM}connect, disconnect, connector, watch${NC}"
@@ -561,6 +585,43 @@ case "$1" in
         shift
         exec "$PLUGIN_BIN/engram-brain-ingest" "$@"
         ;;
+    agent)
+        shift
+        subcmd="${1:-}"; shift || true
+        case "$subcmd" in
+            create) exec "$PLUGIN_BIN/engram-agent-create" "$@" ;;
+            *)      echo "Usage: engram agent <create> [args]"; exit 1 ;;
+        esac
+        ;;
+    repo)
+        shift
+        subcmd="${1:-}"; shift || true
+        case "$subcmd" in
+            init) exec python3 "$PLUGIN_BIN/engram-repo-init" "$@" ;;
+            *)    echo "Usage: engram repo <init> [args]"; exit 1 ;;
+        esac
+        ;;
+    code)
+        shift
+        subcmd="${1:-report}"; shift || true
+        case "$subcmd" in
+            report)        exec python3 "$PLUGIN_BIN/engram-code-report" "$@" ;;
+            dead-code)     exec python3 "$PLUGIN_BIN/engram-code-report" "dead-code" "$@" ;;
+            hotspots)      exec python3 "$PLUGIN_BIN/engram-code-report" "hotspots" "$@" ;;
+            blast-radius)  exec python3 "$PLUGIN_BIN/engram-code-report" "blast-radius" "$@" ;;
+            orphans)       exec python3 "$PLUGIN_BIN/engram-code-report" "orphans" "$@" ;;
+            architecture)  exec python3 "$PLUGIN_BIN/engram-code-report" "architecture" "$@" ;;
+            *)             echo "Usage: engram code <report|dead-code|hotspots|blast-radius|orphans|architecture> [--repo <name>] [--output <path>]"; exit 1 ;;
+        esac
+        ;;
+    update|upgrade)
+        shift
+        exec "$PLUGIN_BIN/engram-update" "$@"
+        ;;
+    tune-up|tuneup|oilchange)
+        shift
+        exec "$PLUGIN_BIN/engram-tune-up" "$@"
+        ;;
     brain)
         shift
         subcmd="${1:-}"; shift || true
@@ -586,8 +647,9 @@ case "$1" in
                 _source_env_config
                 exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}" "$@"
                 ;;
-            migrate)  shift; exec python3 "$PLUGIN_BIN/engram-vault-migrate" "$@" ;;
-            *)        echo "Usage: engram vault <status|audit|backup|restore|optimize|kpi|heal|migrate>"; exit 1 ;;
+            migrate)       shift; exec python3 "$PLUGIN_BIN/engram-vault-migrate" "$@" ;;
+            review-stale)  shift; exec python3 "$PLUGIN_BIN/engram-vault-review-stale" "$@" ;;
+            *)        echo "Usage: engram vault <status|audit|backup|restore|optimize|kpi|heal|migrate|review-stale>"; exit 1 ;;
         esac
         ;;
     # COMING SOON — connector management

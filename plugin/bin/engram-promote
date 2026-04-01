@@ -163,23 +163,7 @@ _Receipt: ${receipt_hash:0:12}..._
 
 EOF
 
-    # Also write to category-specific file
-    local cat_file="${project_dir}/${category}.md"
-    if [[ ! -f "$cat_file" ]]; then
-        echo "# ${project} — ${category}" > "$cat_file"
-        echo "" >> "$cat_file"
-    fi
-
-    cat >> "$cat_file" <<EOF
-
-### ${timestamp}
-${fact}
-_Receipt: ${receipt_hash:0:12}..._
-
-EOF
-
     log_ok "Written to Layer 1: ${memory_file}"
-    log_ok "Written to category: ${cat_file}"
 }
 
 # Write wikilink to LACP Layer 2

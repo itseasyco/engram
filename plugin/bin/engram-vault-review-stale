@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""
+engram-vault-review-stale — Process stale notes sitting in inbox/review-stale/.
+
+The staleness scanner (curator step 4) moves notes into review-stale/ but
+nothing processes them afterward. This command:
+
+1. Removes timestamp-suffix duplicates (created by staleness scanner collisions)
+2. Re-classifies each note using inbox_processor's category inference
+3. Routes notes to the correct vault folder or archive
+4. Optionally uses QMD semantic search to check for superseded content
+
+Usage:
+  engram vault review-stale [--dry-run] [--auto] [--limit N]
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+# ── Colors ──────────────────────────────────────────────────────────────────
+GREEN = "\033[0;32m"
+YELLOW = "\033[1;33m"
+RED = "\033[0;31m"
+CYAN = "\033[0;36m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+NC = "\033[0m"
+
+# ── Resolve vault ───────────────────────────────────────────────────────────
+
+def resolve_vault() -> Path:
+    """Find the vault root from env vars or engram config."""
+    for var in ("LACP_OBSIDIAN_VAULT", "OPENCLAW_VAULT", "OPENCLAW_VAULT_ROOT"):
+        val = os.environ.get(var)
+        if val and Path(val).is_dir():
+            return Path(val)
+
+    env_file = Path.home() / ".openclaw/extensions/engram/config/.engram.env"
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("LACP_OBSIDIAN_VAULT="):
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if Path(val).is_dir():
+                    return Path(val)
+
+    return Path.home() / ".openclaw/data/knowledge"
+
+
+# ── Frontmatter parsing ────────────────────────────────────────────────────
+
+def parse_frontmatter(content: str) -> dict:
+    """Quick YAML frontmatter parser (no PyYAML dependency)."""
+    if not content.startswith("---"):
+        return {}
+    end = content.find("---", 3)
+    if end == -1:
+        return {}
+    fm = {}
+    for line in content[3:end].strip().split("\n"):
+        if ":" in line:
+            key, val = line.split(":", 1)
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if val.startswith("[") and val.endswith("]"):
+                val = [v.strip().strip('"').strip("'") for v in val[1:-1].split(",") if v.strip()]
+            fm[key] = val
+    return fm
+
+
+def get_body(content: str) -> str:
+    """Get content after frontmatter."""
+    if not content.startswith("---"):
+        return content
+    end = content.find("---", 3)
+    if end == -1:
+        return content
+    return content[end + 3:]
+
+
+# ── Category inference (mirrors inbox_processor logic) ──────────────────────
+
+CATEGORY_KEYWORDS = {
+    "projects": [
+        "repo", "repository", "codebase", "pr ", "pull request", "branch",
+        "deploy", "feature", "sprint", "backlog", "api", "endpoint",
+        "dashboard", "migration", "prd", "spec", "requirements",
+    ],
+    "concepts": [
+        "pattern", "architecture", "design", "principle", "convention",
+        "best practice", "standard", "approach",
+    ],
+    "people": [
+        "team", "member", "role", "responsibility", "contact", "onboard",
+    ],
+    "systems": [
+        "infrastructure", "server", "database", "deployment", "monitoring",
+        "ci/cd", "pipeline", "docker", "kubernetes", "supabase", "render",
+        "stripe", "finix", "brale",
+    ],
+    "planning": [
+        "roadmap", "milestone", "timeline", "priority", "objective",
+        "quarter", "okr", "goal", "phase", "launch",
+    ],
+    "research": [
+        "evaluation", "comparison", "benchmark", "competitor", "market",
+        "analysis", "finding",
+    ],
+    "strategy": [
+        "vision", "direction", "fundrais", "investor", "partnership",
+        "hiring", "growth", "positioning", "branding",
+    ],
+    "engineering": [
+        "architecture", "technical", "implementation", "refactor",
+        "testing", "performance", "security", "optimization",
+    ],
+    "knowledge": [
+        "learning", "concept", "reference", "how-to", "guide",
+        "documentation", "notes",
+    ],
+}
+
+# Category to vault folder mapping
+CATEGORY_FOLDERS = {
+    "projects": "projects",
+    "concepts": "knowledge",
+    "people": "people",
+    "systems": "engineering",
+    "planning": "engineering",
+    "research": "research",
+    "strategy": "strategy",
+    "engineering": "engineering",
+    "knowledge": "knowledge",
+    "changelog": "engineering",
+    "reference": "reference",
+}
+
+
+def infer_category(title: str, body: str, tags: list, fm: dict) -> str:
+    """Infer the best category for a note."""
+    # Trust frontmatter category if it's a real category (not "inbox")
+    fm_cat = fm.get("category", "")
+    if fm_cat and fm_cat != "inbox" and fm_cat in CATEGORY_FOLDERS:
+        return fm_cat
+
+    text = f"{title} {body}".lower()
+    tag_text = " ".join(str(t).lower() for t in (tags if isinstance(tags, list) else []))
+    combined = f"{text} {tag_text}"
+
+    scores = {}
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in combined)
+        if score > 0:
+            scores[category] = score
+
+    if not scores:
+        return "knowledge"  # default
+
+    return max(scores, key=scores.get)
+
+
+# ── QMD semantic search ────────────────────────────────────────────────────
+
+def qmd_search(query: str, limit: int = 3) -> list:
+    """Run QMD semantic search, return top results."""
+    try:
+        result = subprocess.run(
+            ["qmd", "search", query, "--limit", str(limit), "--json"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            if isinstance(data, list):
+                return data
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    return []
+
+
+def check_superseded(title: str, body_preview: str) -> dict | None:
+    """Check if similar content already exists in the vault."""
+    query = title[:100]
+    results = qmd_search(query)
+    if not results:
+        return None
+
+    # Check if any result is a strong match (not from review-stale itself)
+    for r in results:
+        path = r.get("path", "")
+        score = r.get("score", 0)
+        if "review-stale" not in path and score > 0.7:
+            return {"path": path, "score": score, "title": r.get("title", "")}
+    return None
+
+
+# ── Duplicate detection ────────────────────────────────────────────────────
+
+TIMESTAMP_SUFFIX = re.compile(r'^(.+)-(\d{10})\.md$')
+
+
+def find_duplicates(stale_dir: Path) -> tuple:
+    """
+    Find timestamp-suffix duplicates created by staleness scanner collisions.
+
+    Returns (duplicates_to_remove, originals_kept).
+    """
+    duplicates = []
+    originals = set()
+
+    for f in sorted(stale_dir.iterdir()):
+        if not f.is_file() or not f.name.endswith(".md"):
+            continue
+        match = TIMESTAMP_SUFFIX.match(f.name)
+        if match:
+            base_name = match.group(1) + ".md"
+            original = stale_dir / base_name
+            if original.exists():
+                # Check if the only diff is the title field
+                try:
+                    orig_content = original.read_text(encoding="utf-8")
+                    dup_content = f.read_text(encoding="utf-8")
+                    # Strip the title line and compare
+                    orig_lines = orig_content.split("\n")
+                    dup_lines = dup_content.split("\n")
+                    # Find title lines
+                    orig_no_title = [l for l in orig_lines if not l.startswith("title:")]
+                    dup_no_title = [l for l in dup_lines if not l.startswith("title:")]
+                    if orig_no_title == dup_no_title:
+                        duplicates.append(f)
+                        originals.add(original)
+                        continue
+                except (IOError, UnicodeDecodeError):
+                    pass
+            # If no original, this IS the content (just timestamp-named)
+            # Keep it but flag it for rename
+            duplicates.append(f)
+        else:
+            originals.add(f)
+
+    return duplicates, originals
+
+
+# ── Main processing ────────────────────────────────────────────────────────
+
+def process_review_stale(
+    vault: Path,
+    dry_run: bool = True,
+    auto: bool = False,
+    limit: int = 0,
+    use_qmd: bool = True,
+) -> dict:
+    """Process all notes in inbox/review-stale/."""
+
+    stale_dir = vault / "inbox" / "review-stale"
+    if not stale_dir.exists():
+        print(f"  {DIM}No review-stale folder found.{NC}")
+        return {"total": 0}
+
+    all_files = sorted(f for f in stale_dir.iterdir() if f.is_file() and f.name.endswith(".md"))
+    total = len(all_files)
+
+    print(f"  {BOLD}Found {total} files in inbox/review-stale/{NC}")
+    print()
+
+    # ── Phase 1: Remove duplicates ──────────────────────────────────────
+    print(f"  {BOLD}{CYAN}Phase 1: Duplicate Detection{NC}")
+    duplicates, originals = find_duplicates(stale_dir)
+
+    stats = {
+        "total": total,
+        "duplicates_removed": 0,
+        "classified": {},
+        "archived": 0,
+        "superseded": 0,
+        "moved": 0,
+        "skipped": 0,
+    }
+
+    if duplicates:
+        print(f"  {YELLOW}{len(duplicates)}{NC} timestamp-suffix duplicates (title-only diffs)")
+        if dry_run:
+            print(f"  {DIM}Would remove {len(duplicates)} duplicates{NC}")
+        else:
+            if not auto:
+                print(f"  Remove {len(duplicates)} duplicates? [Y/n]: ", end="")
+                confirm = input().strip()
+                if confirm.lower() in ("n", "no"):
+                    print(f"  {DIM}Skipped duplicate removal{NC}")
+                    duplicates = []
+
+            for dup in duplicates:
+                if not dry_run:
+                    dup.unlink()
+                stats["duplicates_removed"] += 1
+
+            if stats["duplicates_removed"] > 0:
+                print(f"  {GREEN}Removed {stats['duplicates_removed']} duplicates{NC}")
+    else:
+        print(f"  {GREEN}No duplicates found{NC}")
+    print()
+
+    # ── Phase 2: Classify and route remaining notes ─────────────────────
+    print(f"  {BOLD}{CYAN}Phase 2: Classification & Routing{NC}")
+
+    # Re-scan after duplicate removal
+    remaining = sorted(f for f in stale_dir.iterdir() if f.is_file() and f.name.endswith(".md"))
+    if limit > 0:
+        remaining = remaining[:limit]
+
+    print(f"  {len(remaining)} notes to classify")
+    print()
+
+    # First pass: classify everything
+    classifications = []
+    for f in remaining:
+        try:
+            content = f.read_text(encoding="utf-8")
+        except (IOError, UnicodeDecodeError):
+            classifications.append({"file": f, "category": "archive", "reason": "unreadable"})
+            continue
+
+        fm = parse_frontmatter(content)
+        body = get_body(content)
+        title = fm.get("title", f.stem)
+        tags = fm.get("tags", [])
+
+        category = infer_category(title, body, tags, fm)
+        target_folder = CATEGORY_FOLDERS.get(category, "knowledge")
+
+        # Check for superseded content via QMD
+        superseded_by = None
+        if use_qmd and not dry_run:
+            superseded_by = check_superseded(title, body[:200])
+
+        classifications.append({
+            "file": f,
+            "title": title,
+            "category": category,
+            "target_folder": target_folder,
+            "superseded_by": superseded_by,
+            "fm": fm,
+        })
+
+    # Group by target folder for display
+    by_folder = {}
+    for c in classifications:
+        folder = c["target_folder"]
+        if folder not in by_folder:
+            by_folder[folder] = []
+        by_folder[folder].append(c)
+
+    for folder, notes in sorted(by_folder.items()):
+        print(f"  {BOLD}{folder}/{NC} ({len(notes)} notes)")
+        stats["classified"][folder] = len(notes)
+        for note in notes[:5]:  # show first 5 per category
+            superseded = ""
+            if note.get("superseded_by"):
+                superseded = f"  {DIM}(superseded by: {note['superseded_by']['title']}){NC}"
+            print(f"    {note['title']}{superseded}")
+        if len(notes) > 5:
+            print(f"    {DIM}... and {len(notes) - 5} more{NC}")
+    print()
+
+    if dry_run:
+        print(f"  {YELLOW}DRY RUN — no files moved. Run without --dry-run to apply.{NC}")
+        return stats
+
+    # ── Phase 3: Move files ─────────────────────────────────────────────
+    if not auto:
+        print(f"  Move {len(classifications)} notes to their target folders? [Y/n]: ", end="")
+        confirm = input().strip()
+        if confirm.lower() in ("n", "no"):
+            print(f"  {DIM}Cancelled{NC}")
+            return stats
+
+    print()
+    print(f"  {BOLD}{CYAN}Phase 3: Moving Files{NC}")
+
+    for c in classifications:
+        f = c["file"]
+        target = vault / c["target_folder"]
+
+        # If superseded and in auto mode, archive instead
+        if c.get("superseded_by") and auto:
+            target = vault / "archive"
+            stats["archived"] += 1
+        else:
+            stats["moved"] += 1
+
+        target.mkdir(parents=True, exist_ok=True)
+        dest = target / f.name
+        if dest.exists():
+            dest = target / f"{f.stem}-{int(datetime.now(timezone.utc).timestamp())}.md"
+
+        # Update frontmatter status before moving
+        try:
+            content = f.read_text(encoding="utf-8")
+            if "status: review" in content or "status: stale" in content:
+                content = content.replace("status: review", "status: active").replace("status: stale", "status: active")
+                f.write_text(content, encoding="utf-8")
+        except (IOError, UnicodeDecodeError):
+            pass
+
+        shutil.move(str(f), str(dest))
+
+    print(f"  {GREEN}Moved {stats['moved']} notes to target folders{NC}")
+    if stats["archived"] > 0:
+        print(f"  {GREEN}Archived {stats['archived']} superseded notes{NC}")
+
+    return stats
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Process stale notes from inbox/review-stale/"
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Preview without changes")
+    parser.add_argument("--auto", action="store_true", help="Non-interactive mode (for heartbeat/cron)")
+    parser.add_argument("--limit", type=int, default=0, help="Process only first N notes")
+    parser.add_argument("--no-qmd", action="store_true", help="Skip QMD semantic search")
+    parser.add_argument("--vault", type=str, help="Override vault path")
+
+    args = parser.parse_args()
+
+    vault = Path(args.vault) if args.vault else resolve_vault()
+    if not vault.is_dir():
+        print(f"{RED}Vault not found: {vault}{NC}")
+        sys.exit(1)
+
+    print()
+    print(f"  {BOLD}{CYAN}Engram Vault: Review Stale Notes{NC}")
+    print(f"  {DIM}Vault: {vault}{NC}")
+    print()
+
+    stats = process_review_stale(
+        vault=vault,
+        dry_run=args.dry_run,
+        auto=args.auto,
+        limit=args.limit,
+        use_qmd=not args.no_qmd,
+    )
+
+    print()
+    print(f"  {BOLD}Summary{NC}")
+    print(f"    Total:              {stats.get('total', 0)}")
+    print(f"    Duplicates removed: {stats.get('duplicates_removed', 0)}")
+    print(f"    Moved to folders:   {stats.get('moved', 0)}")
+    print(f"    Archived:           {stats.get('archived', 0)}")
+    if stats.get("classified"):
+        print(f"    Classification:")
+        for folder, count in sorted(stats["classified"].items()):
+            print(f"      {folder}: {count}")
+    print()
+
+
+if __name__ == "__main__":
+    main()

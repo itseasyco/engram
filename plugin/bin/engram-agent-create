@@ -1,0 +1,455 @@
+#!/usr/bin/env bash
+# engram-agent-create — Scaffold a new OpenClaw agent workspace.
+set -euo pipefail
+
+source "$(dirname "$0")/lib/env-source.sh"
+
+# ── Colors ───────────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+DIM='\033[2m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# ── Usage / Help ─────────────────────────────────────────────────────────────
+usage() {
+  echo -e "${BOLD}Usage:${NC} engram agent create [OPTIONS]"
+  echo ""
+  echo "Scaffold a new OpenClaw agent workspace."
+  echo ""
+  echo -e "${BOLD}Options:${NC}"
+  echo "  --name NAME            Agent name (e.g. \"Sofia\")"
+  echo "  --emoji EMOJI          Agent emoji (e.g. \"🔬\")"
+  echo "  --role ROLE            Role title (e.g. \"Data Engineer\")"
+  echo "  --description DESC     Role description"
+  echo "  --type TYPE            agent or subagent (default: agent)"
+  echo "  --parent ID            Parent agent id (required if --type subagent)"
+  echo "  --expertise EXPERTISE  What they're expert at (optional)"
+  echo "  --rules RULES          Custom rules (optional)"
+  echo "  --vibe VIBE            Personality vibe"
+  echo "  --workflow WORKFLOW    Workflow description (optional)"
+  echo "  --help                 Show this help message"
+  echo ""
+  echo -e "${BOLD}Examples:${NC}"
+  echo -e "  ${DIM}# Interactive mode:${NC}"
+  echo "  engram agent create"
+  echo ""
+  echo -e "  ${DIM}# Flag mode:${NC}"
+  echo "  engram agent create \\"
+  echo "    --name \"Sofia\" --emoji \"🔬\" --role \"Data Engineer\" \\"
+  echo "    --description \"You build data pipelines.\" --vibe \"Data-obsessed.\" \\"
+  echo "    --expertise \"Postgres, dbt, Airflow, Python\""
+  echo ""
+  echo -e "  ${DIM}# Sub-agent:${NC}"
+  echo "  engram agent create \\"
+  echo "    --name \"Aria\" --emoji \"🎨\" --role \"UI Designer\" \\"
+  echo "    --description \"Frontend components.\" --vibe \"Pixel-perfect.\" \\"
+  echo "    --type subagent --parent zoe"
+}
+
+# ── Parse flags ──────────────────────────────────────────────────────────────
+AGENT_NAME=""
+AGENT_EMOJI=""
+AGENT_ROLE=""
+AGENT_DESCRIPTION=""
+AGENT_TYPE=""
+AGENT_PARENT=""
+AGENT_EXPERTISE=""
+AGENT_RULES=""
+AGENT_VIBE=""
+AGENT_WORKFLOW=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)       usage; exit 0 ;;
+    --name)       AGENT_NAME="$2"; shift 2 ;;
+    --emoji)      AGENT_EMOJI="$2"; shift 2 ;;
+    --role)       AGENT_ROLE="$2"; shift 2 ;;
+    --description) AGENT_DESCRIPTION="$2"; shift 2 ;;
+    --type)       AGENT_TYPE="$2"; shift 2 ;;
+    --parent)     AGENT_PARENT="$2"; shift 2 ;;
+    --expertise)  AGENT_EXPERTISE="$2"; shift 2 ;;
+    --rules)      AGENT_RULES="$2"; shift 2 ;;
+    --vibe)       AGENT_VIBE="$2"; shift 2 ;;
+    --workflow)   AGENT_WORKFLOW="$2"; shift 2 ;;
+    *)
+      echo -e "${RED}Unknown option: $1${NC}" >&2
+      usage; exit 1 ;;
+  esac
+done
+
+# ── Helper: get existing agents from openclaw.json ───────────────────────────
+OPENCLAW_JSON="$HOME/.openclaw/openclaw.json"
+
+get_agent_ids() {
+  if [[ -f "$OPENCLAW_JSON" ]]; then
+    python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        config = json.load(f)
+    for a in config.get('agents', {}).get('list', []):
+        print(a.get('id', ''))
+except: pass
+" "$OPENCLAW_JSON" 2>/dev/null || true
+  fi
+}
+
+get_agent_display() {
+  if [[ -f "$OPENCLAW_JSON" ]]; then
+    python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        config = json.load(f)
+    for a in config.get('agents', {}).get('list', []):
+        emoji = a.get('identity', {}).get('emoji', '')
+        name = a.get('name', a.get('id', ''))
+        aid = a.get('id', '')
+        print(f'{emoji} {name} ({aid})')
+except: pass
+" "$OPENCLAW_JSON" 2>/dev/null || true
+  fi
+}
+
+# ── Interactive mode ─────────────────────────────────────────────────────────
+if [[ -z "$AGENT_NAME" ]]; then
+  echo ""
+  echo -e "${BOLD}${CYAN}  ┌─────────────────────────────────┐${NC}"
+  echo -e "${BOLD}${CYAN}  │   OpenClaw Agent Creator        │${NC}"
+  echo -e "${BOLD}${CYAN}  └─────────────────────────────────┘${NC}"
+  echo ""
+
+  # Q1: Name
+  read -rp "$(echo -e "  ${YELLOW}1.${NC} What's the agent's name? ")" AGENT_NAME
+  if [[ -z "$AGENT_NAME" ]]; then
+    echo -e "${RED}  Name is required.${NC}" >&2; exit 1
+  fi
+
+  # Q2: Emoji picker
+  echo ""
+  echo -e "  ${YELLOW}2.${NC} Pick an emoji:"
+  echo ""
+  EMOJI_LIST=(
+    "🔬 Research/Science"
+    "⚙️  Infrastructure/Backend"
+    "🎨 Design/Frontend"
+    "🪶 Product/Strategy"
+    "⚡ Orchestration/Lead"
+    "🛡️  Security/Guard"
+    "📚 Documentation/Knowledge"
+    "🔧 DevOps/Tooling"
+    "📊 Data/Analytics"
+    "🧪 Testing/QA"
+    "🌐 API/Integration"
+    "💰 Payments/Finance"
+    "🤖 AI/ML"
+    "📱 Mobile"
+    "🏗️  Architecture"
+    "🔍 Search/Discovery"
+    "📦 Packaging/Deploy"
+    "🎯 Growth/Marketing"
+    "🗄️  Database"
+    "🧹 Maintenance/Cleanup"
+  )
+  for i in "${!EMOJI_LIST[@]}"; do
+    printf "     ${DIM}%2d)${NC} %s\n" $((i + 1)) "${EMOJI_LIST[$i]}"
+  done
+  echo -e "     ${DIM} 0)${NC} Custom (type your own)"
+  echo ""
+  read -rp "$(echo -e "     Choice ${DIM}[1-${#EMOJI_LIST[@]} or 0]${NC}: ")" emoji_choice
+
+  if [[ "$emoji_choice" == "0" ]]; then
+    read -rp "     Custom emoji: " AGENT_EMOJI
+  elif [[ "$emoji_choice" =~ ^[0-9]+$ ]] && (( emoji_choice >= 1 && emoji_choice <= ${#EMOJI_LIST[@]} )); then
+    AGENT_EMOJI=$(echo "${EMOJI_LIST[$((emoji_choice - 1))]}" | cut -d' ' -f1)
+  else
+    echo -e "${RED}  Invalid choice.${NC}" >&2; exit 1
+  fi
+  if [[ -z "$AGENT_EMOJI" ]]; then
+    echo -e "${RED}  Emoji is required.${NC}" >&2; exit 1
+  fi
+  echo -e "     Selected: ${AGENT_EMOJI}"
+  echo ""
+
+  # Q3: Role
+  read -rp "$(echo -e "  ${YELLOW}3.${NC} What's their role? (e.g. Web Developer) ")" AGENT_ROLE
+  if [[ -z "$AGENT_ROLE" ]]; then
+    echo -e "${RED}  Role is required.${NC}" >&2; exit 1
+  fi
+
+  # Q4: Description
+  echo ""
+  read -rp "$(echo -e "  ${YELLOW}4.${NC} Describe what they do in one sentence: ")" AGENT_DESCRIPTION
+  if [[ -z "$AGENT_DESCRIPTION" ]]; then
+    echo -e "${RED}  Description is required.${NC}" >&2; exit 1
+  fi
+
+  # Q5: Agent or sub-agent
+  echo ""
+  echo -e "  ${YELLOW}5.${NC} Agent or sub-agent?"
+  echo -e "     ${DIM}1)${NC} Agent (independent)"
+  echo -e "     ${DIM}2)${NC} Sub-agent (runs under a parent agent)"
+  read -rp "$(echo -e "     Choice ${DIM}[1 or 2]${NC}: ")" type_choice
+
+  if [[ "$type_choice" == "2" ]]; then
+    AGENT_TYPE="subagent"
+    echo ""
+    echo -e "     Who's the parent? Existing agents:"
+    echo ""
+    # List existing agents
+    while IFS= read -r agent_line; do
+      [[ -z "$agent_line" ]] && continue
+      echo -e "       $agent_line"
+    done <<< "$(get_agent_display)"
+    echo ""
+    read -rp "$(echo -e "     Parent agent id: ")" AGENT_PARENT
+    if [[ -z "$AGENT_PARENT" ]]; then
+      echo -e "${RED}  Parent is required for sub-agents.${NC}" >&2; exit 1
+    fi
+  else
+    AGENT_TYPE="agent"
+  fi
+
+  # Q6: Expertise
+  echo ""
+  read -rp "$(echo -e "  ${YELLOW}6.${NC} What are they expert at? ${DIM}(e.g. \"Postgres, Supabase, Render, backend APIs\", Enter to skip)${NC} ")" AGENT_EXPERTISE
+
+  # Q7: Rules
+  echo ""
+  echo -e "  ${YELLOW}7.${NC} Any specific rules? ${DIM}(optional, press Enter twice to finish, Enter to skip)${NC}"
+  AGENT_RULES=""
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && break
+    if [[ -n "$AGENT_RULES" ]]; then
+      AGENT_RULES="${AGENT_RULES}"$'\n'"${line}"
+    else
+      AGENT_RULES="${line}"
+    fi
+  done
+
+  # Q8: Vibe
+  echo -e "  ${YELLOW}8.${NC} What's their personality/vibe?"
+  read -rp "     " AGENT_VIBE
+  if [[ -z "$AGENT_VIBE" ]]; then
+    echo -e "${RED}  Vibe is required.${NC}" >&2; exit 1
+  fi
+
+  # Q9: Workflow
+  echo ""
+  read -rp "$(echo -e "  ${YELLOW}9.${NC} Who do they work with? ${DIM}(optional handoff chain, Enter to skip)${NC} ")" AGENT_WORKFLOW
+fi
+
+# ── Validate required fields ────────────────────────────────────────────────
+missing=()
+[[ -z "$AGENT_NAME" ]]        && missing+=("--name")
+[[ -z "$AGENT_EMOJI" ]]       && missing+=("--emoji")
+[[ -z "$AGENT_ROLE" ]]        && missing+=("--role")
+[[ -z "$AGENT_DESCRIPTION" ]] && missing+=("--description")
+[[ -z "$AGENT_VIBE" ]]        && missing+=("--vibe")
+
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo -e "${RED}Error: Missing required fields: ${missing[*]}${NC}" >&2
+  usage; exit 1
+fi
+
+AGENT_TYPE="${AGENT_TYPE:-agent}"
+
+if [[ "$AGENT_TYPE" == "subagent" ]] && [[ -z "$AGENT_PARENT" ]]; then
+  echo -e "${RED}Error: --parent is required when --type is subagent${NC}" >&2
+  exit 1
+fi
+
+# ── Derived values ───────────────────────────────────────────────────────────
+NAME_LOWER="$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]')"
+WORKSPACE_DIR="$HOME/.openclaw/workspace-${NAME_LOWER}"
+AGENT_DIR="$HOME/.openclaw/agents/${NAME_LOWER}/agent"
+
+EXPERTISE_VALUE="${AGENT_EXPERTISE:-Not specified}"
+RULES_VALUE="${AGENT_RULES:-None specified}"
+WORKFLOW_VALUE="${AGENT_WORKFLOW:-Not specified}"
+AGENT_TYPE_VALUE="${AGENT_TYPE:-agent}"
+PARENT_VALUE="${AGENT_PARENT:-None}"
+
+echo ""
+echo -e "${BOLD}Creating agent: ${AGENT_EMOJI} ${AGENT_NAME} — ${AGENT_ROLE}${NC}"
+if [[ "$AGENT_TYPE" == "subagent" ]]; then
+  echo -e "${DIM}  Sub-agent of: ${AGENT_PARENT}${NC}"
+fi
+echo ""
+
+# ── Step 1: Create workspace + agent directories ────────────────────────────
+if [[ -d "$WORKSPACE_DIR" ]]; then
+  echo -e "${RED}Error: Workspace already exists at ${WORKSPACE_DIR}${NC}" >&2
+  exit 1
+fi
+
+mkdir -p "$WORKSPACE_DIR"
+mkdir -p "$AGENT_DIR"
+echo -e "${GREEN}✓${NC} Created workspace: ${DIM}${WORKSPACE_DIR}${NC}"
+echo -e "${GREEN}✓${NC} Created agent dir: ${DIM}${AGENT_DIR}${NC}"
+
+# ── Step 2: Locate template files ───────────────────────────────────────────
+TEMPLATE_DIR=""
+
+if [[ -d "$HOME/.openclaw/shared/agent-template" ]]; then
+  TEMPLATE_DIR="$HOME/.openclaw/shared/agent-template"
+else
+  # Fallback to bundled templates in the engram plugin
+  local_templates="$(cd "$(dirname "$0")/../templates/agent-template" 2>/dev/null && pwd)" || true
+  if [[ -n "$local_templates" ]] && [[ -d "$local_templates" ]]; then
+    TEMPLATE_DIR="$local_templates"
+  fi
+fi
+
+if [[ -z "$TEMPLATE_DIR" ]]; then
+  echo -e "${RED}Error: Could not find agent template directory.${NC}" >&2
+  echo -e "${DIM}Checked: ~/.openclaw/shared/agent-template/ and plugin/templates/agent-template/${NC}"
+  rm -rf "$WORKSPACE_DIR"
+  exit 1
+fi
+
+echo -e "${GREEN}✓${NC} Found templates: ${DIM}${TEMPLATE_DIR}${NC}"
+
+# ── Step 3: Copy and populate template files ─────────────────────────────────
+TEMPLATE_FILES=(AGENTS.md SOUL.md IDENTITY.md USER.md HEARTBEAT.md TOOLS.md BOOTSTRAP.md)
+
+for tpl in "${TEMPLATE_FILES[@]}"; do
+  src="${TEMPLATE_DIR}/${tpl}"
+  dst="${WORKSPACE_DIR}/${tpl}"
+
+  if [[ ! -f "$src" ]]; then
+    echo -e "${YELLOW}⚠ Template not found, skipping: ${tpl}${NC}"
+    continue
+  fi
+
+  sed \
+    -e "s|{{NAME}}|${AGENT_NAME}|g" \
+    -e "s|{{EMOJI}}|${AGENT_EMOJI}|g" \
+    -e "s|{{ROLE_TITLE}}|${AGENT_ROLE}|g" \
+    -e "s|{{ROLE_DESCRIPTION}}|${AGENT_DESCRIPTION}|g" \
+    -e "s|{{EXPERTISE}}|${EXPERTISE_VALUE}|g" \
+    -e "s|{{RULES}}|${RULES_VALUE}|g" \
+    -e "s|{{VIBE}}|${AGENT_VIBE}|g" \
+    -e "s|{{WORKFLOW}}|${WORKFLOW_VALUE}|g" \
+    -e "s|{{AGENT_TYPE}}|${AGENT_TYPE_VALUE}|g" \
+    -e "s|{{PARENT}}|${PARENT_VALUE}|g" \
+    "$src" > "$dst"
+
+  echo -e "${GREEN}✓${NC} Created ${tpl}"
+done
+
+# ── Step 4: Ensure TOOLS.md has Engram tools reference ───────────────────────
+TOOLS_FILE="${WORKSPACE_DIR}/TOOLS.md"
+if [[ -f "$TOOLS_FILE" ]]; then
+  if ! grep -q "Engram Tools" "$TOOLS_FILE" 2>/dev/null; then
+    {
+      echo ""
+      echo "## Engram Tools"
+      echo 'See `~/.openclaw/shared/ENGRAM.md` for workflow.'
+      echo 'Available: `engram_memory_query`, `engram_promote_fact`, `engram_save_session`, `engram_ingest`, `engram_brain_resolve`'
+    } >> "$TOOLS_FILE"
+    echo -e "${GREEN}✓${NC} Appended Engram tools reference to TOOLS.md"
+  fi
+fi
+
+# ── Step 5: Create .openclaw subdirectory ────────────────────────────────────
+mkdir -p "${WORKSPACE_DIR}/.openclaw"
+echo -e "${GREEN}✓${NC} Created .openclaw/ subdirectory"
+
+# ── Step 6: Initialize git repository ────────────────────────────────────────
+git -C "$WORKSPACE_DIR" init --quiet
+echo -e "${GREEN}✓${NC} Initialized git repository"
+
+# ── Step 7: Register agent in openclaw.json ──────────────────────────────────
+if [[ ! -f "$OPENCLAW_JSON" ]]; then
+  echo -e "${YELLOW}⚠ ${OPENCLAW_JSON} not found — creating it${NC}"
+  echo '{"agents":{"list":[]}}' > "$OPENCLAW_JSON"
+fi
+
+python3 -c "
+import json, sys
+
+config_path = sys.argv[1]
+agent_id = sys.argv[2]
+agent_name = sys.argv[3]
+workspace = sys.argv[4]
+agent_dir = sys.argv[5]
+emoji = sys.argv[6]
+agent_type = sys.argv[7]
+parent_id = sys.argv[8] if len(sys.argv) > 8 else ''
+
+with open(config_path, 'r') as f:
+    config = json.load(f)
+
+new_agent = {
+    'id': agent_id,
+    'name': agent_name,
+    'workspace': workspace,
+    'agentDir': agent_dir,
+    'identity': {
+        'name': agent_name,
+        'emoji': emoji
+    }
+}
+
+# Ensure agents.list exists
+if 'agents' not in config:
+    config['agents'] = {}
+if 'list' not in config['agents']:
+    config['agents']['list'] = []
+
+# Remove duplicate if exists
+config['agents']['list'] = [a for a in config['agents']['list'] if a.get('id') != agent_id]
+config['agents']['list'].append(new_agent)
+
+# If sub-agent, add to parent's subagents.allowAgents[]
+if agent_type == 'subagent' and parent_id:
+    for agent in config['agents']['list']:
+        if agent.get('id') == parent_id:
+            if 'subagents' not in agent:
+                agent['subagents'] = {}
+            if 'allowAgents' not in agent['subagents']:
+                agent['subagents']['allowAgents'] = []
+            if agent_id not in agent['subagents']['allowAgents']:
+                agent['subagents']['allowAgents'].append(agent_id)
+            break
+    else:
+        print(f'Warning: parent agent \"{parent_id}\" not found in openclaw.json', file=sys.stderr)
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" \
+  "$OPENCLAW_JSON" \
+  "$NAME_LOWER" \
+  "$AGENT_NAME" \
+  "$WORKSPACE_DIR" \
+  "$AGENT_DIR" \
+  "$AGENT_EMOJI" \
+  "$AGENT_TYPE" \
+  "${AGENT_PARENT:-}"
+
+echo -e "${GREEN}✓${NC} Registered in openclaw.json"
+if [[ "$AGENT_TYPE" == "subagent" ]]; then
+  echo -e "${GREEN}✓${NC} Added to ${AGENT_PARENT}'s subagents.allowAgents[]"
+fi
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  Agent created successfully!${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  ${BOLD}Name:${NC}        ${AGENT_EMOJI} ${AGENT_NAME}"
+echo -e "  ${BOLD}Role:${NC}        ${AGENT_ROLE}"
+echo -e "  ${BOLD}Type:${NC}        ${AGENT_TYPE}${AGENT_PARENT:+ (parent: $AGENT_PARENT)}"
+echo -e "  ${BOLD}Expertise:${NC}   ${EXPERTISE_VALUE}"
+echo -e "  ${BOLD}Vibe:${NC}        ${AGENT_VIBE}"
+echo -e "  ${BOLD}Workspace:${NC}   ${DIM}${WORKSPACE_DIR}${NC}"
+echo -e "  ${BOLD}Agent dir:${NC}   ${DIM}${AGENT_DIR}${NC}"
+echo ""
+echo -e "  ${DIM}Files: SOUL.md, IDENTITY.md, TOOLS.md, AGENTS.md, USER.md, HEARTBEAT.md, BOOTSTRAP.md${NC}"
+echo ""

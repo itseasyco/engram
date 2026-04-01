@@ -1485,15 +1485,31 @@ write_tools_md() {
         log_success "Updated $updated / created $created TOOLS.md file(s)"
     fi
 
-    # Now handle AGENTS.md
-    local agents_template="$PLUGIN_PATH/templates/agents-engram.md"
-    if [ ! -f "$agents_template" ]; then
-        log_warning "Engram AGENTS.md template not found — skipping"
-        return
+    # ── Write shared/ENGRAM.md (single source of truth) ──────────────────
+    local shared_dir="$HOME/.openclaw/shared"
+    mkdir -p "$shared_dir"
+
+    local engram_shared="$shared_dir/ENGRAM.md"
+    local engram_shared_template="$PLUGIN_PATH/templates/engram-shared.md"
+    if [ -f "$engram_shared_template" ]; then
+        cp "$engram_shared_template" "$engram_shared"
+        log_success "Wrote shared/ENGRAM.md (memory workflow for all agents)"
+    else
+        log_warning "engram-shared.md template not found — shared/ENGRAM.md not updated"
     fi
 
-    local agents_updated=0
-    local agents_created=0
+    # ── Generate shared/repositories.json from GitNexus registry ──────────
+    local repo_init="$PLUGIN_PATH/bin/engram-repo-init"
+    if [ -x "$repo_init" ] || [ -f "$repo_init" ]; then
+        python3 "$repo_init" 2>/dev/null && log_success "Generated shared/repositories.json from GitNexus registry" \
+            || log_warning "repositories.json generation failed — run 'engram repo init' manually"
+    else
+        log_info "engram-repo-init not found — skipping repositories.json generation"
+    fi
+
+    # ── Add ENGRAM.md reference to agent AGENTS.md files ──────────────────
+    # Only inject a single reference line, never the full boilerplate.
+    local agents_ref_updated=0
 
     while IFS= read -r agent_id; do
         [ -z "$agent_id" ] && continue
@@ -1508,24 +1524,31 @@ write_tools_md() {
         local agents_file="$workspace/AGENTS.md"
 
         if [ -f "$agents_file" ]; then
-            if grep -q "## Engram" "$agents_file" 2>/dev/null; then
+            # Skip if already references ENGRAM.md
+            if grep -q "ENGRAM.md" "$agents_file" 2>/dev/null; then
                 continue
             fi
+            # Remove old full boilerplate if present
+            if grep -q "## Engram — Memory-First Workflow" "$agents_file" 2>/dev/null; then
+                python3 -c "
+import re, sys
+with open('$agents_file', 'r') as f:
+    content = f.read()
+content = re.sub(r'\n*## Engram — Memory-First Workflow.*', '', content, flags=re.DOTALL)
+with open('$agents_file', 'w') as f:
+    f.write(content.rstrip() + '\n')
+" 2>/dev/null || true
+            fi
+            # Append slim reference
             echo "" >> "$agents_file"
-            cat "$agents_template" >> "$agents_file"
-            log_success "Agent '$agent_id': appended Engram workflow to AGENTS.md"
-            (( agents_updated++ )) || true
-        else
-            echo "# Agents" > "$agents_file"
-            echo "" >> "$agents_file"
-            cat "$agents_template" >> "$agents_file"
-            log_success "Agent '$agent_id': created AGENTS.md with Engram workflow"
-            (( agents_created++ )) || true
+            echo "## Engram" >> "$agents_file"
+            echo "- [\`ENGRAM.md\`](~/.openclaw/shared/ENGRAM.md) — memory workflow (non-negotiable, read every session)" >> "$agents_file"
+            (( agents_ref_updated++ )) || true
         fi
     done <<< "$agent_ids"
 
-    if [ $((agents_updated + agents_created)) -gt 0 ]; then
-        log_success "Updated $agents_updated / created $agents_created AGENTS.md file(s)"
+    if [ "$agents_ref_updated" -gt 0 ]; then
+        log_success "Added ENGRAM.md reference to $agents_ref_updated AGENTS.md file(s)"
     fi
 }
 

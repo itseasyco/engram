@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""
+engram-repo-init
+
+Generates ~/.openclaw/shared/repositories.json by reading
+~/.gitnexus/registry.json and enriching each repo entry.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+
+def read_registry(path: Path) -> list:
+    """Read and parse the gitnexus registry.json. Returns empty list if not found."""
+    if not path.exists():
+        print(f"Note: GitNexus registry not found at {path} — creating blank repositories.json", file=sys.stderr)
+        return []
+    with open(path) as f:
+        return json.load(f)
+
+
+def detect_default_branch(repo_path: str) -> str:
+    """Detect the default branch via git symbolic-ref, fallback to 'main'."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # e.g. refs/remotes/origin/staging -> staging
+            return result.stdout.strip().split("/")[-1]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return "main"
+
+
+def detect_deploy(repo_path: str) -> str:
+    """Infer the deploy target from repo files."""
+    p = Path(repo_path)
+    if (p / "vercel.json").exists():
+        return "Vercel"
+    if (p / "render.yaml").exists():
+        return "Render"
+    pkg = p / "package.json"
+    if pkg.exists():
+        try:
+            with open(pkg) as f:
+                data = json.load(f)
+            if "publishConfig" in data:
+                return "npm publish"
+        except (json.JSONDecodeError, OSError):
+            pass
+    return "local"
+
+
+def detect_stack(repo_path: str) -> list:
+    """Infer the tech stack from repo files."""
+    p = Path(repo_path)
+    stack = []
+    if (p / "package.json").exists():
+        stack.append("Node.js")
+    if (p / "tsconfig.json").exists():
+        stack.append("TypeScript")
+    # next.config.* (js, mjs, ts, etc.)
+    if any(p.glob("next.config.*")):
+        stack.append("Next.js")
+    if (p / "requirements.txt").exists() or (p / "pyproject.toml").exists():
+        stack.append("Python")
+    if (p / "Cargo.toml").exists():
+        stack.append("Rust")
+    if (p / "go.mod").exists():
+        stack.append("Go")
+    return stack
+
+
+def find_provenance(repo_path: str, provenance_dir: Path) -> str | None:
+    """Check if a provenance directory exists for this repo path."""
+    if not provenance_dir.exists():
+        return None
+    # Path encoding: /Users/andrewfisher/Development/Easy Labs/repo
+    # becomes Users-andrewfisher-Development-Easy Labs-repo
+    encoded = repo_path.lstrip("/").replace("/", "-")
+    candidate = provenance_dir / encoded
+    if candidate.exists() and candidate.is_dir():
+        return str(candidate)
+    return None
+
+
+def _resolve_vault_root() -> str:
+    """Resolve vault root from env vars or engram config."""
+    for var in ("LACP_OBSIDIAN_VAULT", "OPENCLAW_VAULT", "OPENCLAW_VAULT_ROOT"):
+        val = os.environ.get(var)
+        if val:
+            return val
+    env_file = Path.home() / ".openclaw/extensions/engram/config/.engram.env"
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("LACP_OBSIDIAN_VAULT="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return str(Path.home() / ".openclaw/data/knowledge")
+
+
+def find_cortex(repo_name: str) -> str | None:
+    """Check if a vault directory exists for this repo."""
+    vault = _resolve_vault_root()
+    candidates = [
+        Path(vault) / "projects" / repo_name,
+        Path(vault) / "engineering" / "projects" / repo_name,
+    ]
+    for c in candidates:
+        if c.exists() and c.is_dir():
+            return str(c)
+    return None
+
+
+def enrich_repo(entry: dict, provenance_dir: Path) -> dict:
+    """Build an enriched repo record from a registry entry."""
+    name = entry["name"]
+    repo_path = entry["path"]
+
+    # Extract date from ISO indexedAt
+    indexed_at = entry.get("indexedAt", "")
+    gitnexus_indexed = indexed_at[:10] if len(indexed_at) >= 10 else None
+
+    return {
+        "org": "itseasyco",
+        "path": repo_path,
+        "default_branch": detect_default_branch(repo_path),
+        "deploy": detect_deploy(repo_path),
+        "stack": detect_stack(repo_path),
+        "gitnexus_indexed": gitnexus_indexed,
+        "gitnexus_path": entry.get("storagePath"),
+        "provenance": find_provenance(repo_path, provenance_dir),
+        "cortex": find_cortex(name),
+        "last_agent": None,
+        "last_worked": None,
+        "conventions": [],
+        "gotchas": [],
+    }
+
+
+# Fields that should be preserved from existing data on merge
+PRESERVE_FIELDS = {"last_agent", "last_worked", "conventions", "gotchas"}
+
+
+def merge_repos(existing: dict, new: dict) -> dict:
+    """Merge new enriched data into existing repos, preserving manual fields."""
+    merged = {}
+    for name, new_entry in new.items():
+        if name in existing:
+            old = existing[name]
+            result = dict(new_entry)
+            for field in PRESERVE_FIELDS:
+                if field in old and old[field] is not None and old[field] != []:
+                    result[field] = old[field]
+            merged[name] = result
+        else:
+            merged[name] = new_entry
+    # Keep repos that are in existing but not in new registry
+    for name, old_entry in existing.items():
+        if name not in merged:
+            merged[name] = old_entry
+    return merged
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate ~/.openclaw/shared/repositories.json from gitnexus registry"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=os.path.expanduser("~/.openclaw/shared/repositories.json"),
+        help="Output file path (default: ~/.openclaw/shared/repositories.json)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="print_json",
+        help="Print JSON to stdout instead of writing to file",
+    )
+    args = parser.parse_args()
+
+    home = Path.home()
+    registry_path = home / ".gitnexus" / "registry.json"
+    provenance_dir = home / ".openclaw" / "provenance"
+
+    registry = read_registry(registry_path)
+
+    # Build enriched repos dict
+    repos = {}
+    for entry in registry:
+        name = entry.get("name")
+        if not name:
+            continue
+        repos[name] = enrich_repo(entry, provenance_dir)
+
+    # If output file exists, merge with existing data
+    output_path = Path(args.output)
+    existing_data = {}
+    if output_path.exists():
+        try:
+            with open(output_path) as f:
+                existing_data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    existing_repos = existing_data.get("repos", {})
+    merged_repos = merge_repos(existing_repos, repos)
+
+    result = {
+        "_meta": {
+            "generated_by": "engram",
+            "generated_at": date.today().isoformat(),
+            "source": "~/.gitnexus/registry.json",
+        },
+        "repos": merged_repos,
+    }
+
+    output_json = json.dumps(result, indent=2) + "\n"
+
+    if args.print_json:
+        print(output_json, end="")
+    else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            f.write(output_json)
+        print(f"Wrote {len(merged_repos)} repos to {output_path}")
+
+
+if __name__ == "__main__":
+    main()

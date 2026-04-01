@@ -1,0 +1,612 @@
+#!/usr/bin/env bash
+# engram-tune-up — Maintenance sweep for OpenClaw agent workspaces.
+# Finds bloat, stray files, old logs, and offers to clean or ingest them.
+set -euo pipefail
+
+source "$(dirname "$0")/lib/env-source.sh"
+
+# ── Colors ───────────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+DIM='\033[2m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# ── Config ───────────────────────────────────────────────────────────────────
+OPENCLAW_DIR="$HOME/.openclaw"
+WORKSPACE_GLOB="${OPENCLAW_DIR}/workspace-*"
+KNOWN_FILES="AGENTS.md|SOUL.md|IDENTITY.md|USER.md|TOOLS.md|HEARTBEAT.md|MEMORY.md|BOOTSTRAP.md"
+SIZE_THRESHOLD_KB=200   # .md files larger than this get flagged
+MEMORY_KEEP_DAYS=14     # daily logs older than this get flagged
+PLUGIN_BIN="$(dirname "$0")"
+
+# ── Usage ────────────────────────────────────────────────────────────────────
+usage() {
+  echo -e "${BOLD}Usage:${NC} engram tune-up [OPTIONS]"
+  echo ""
+  echo "Maintenance sweep for OpenClaw agent workspaces."
+  echo "Finds bloat, stray files, and old daily logs."
+  echo ""
+  echo -e "${BOLD}Options:${NC}"
+  echo "  --dry-run     Show what would be done without doing it"
+  echo "  --agent NAME  Only check a specific agent's workspace"
+  echo "  --help        Show this help message"
+}
+
+DRY_RUN=false
+TARGET_AGENT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)     usage; exit 0 ;;
+    --dry-run)  DRY_RUN=true; shift ;;
+    --agent)    TARGET_AGENT="$2"; shift 2 ;;
+    *)          echo -e "${RED}Unknown option: $1${NC}" >&2; usage; exit 1 ;;
+  esac
+done
+
+# ── Collect workspaces ───────────────────────────────────────────────────────
+workspaces=()
+if [[ -n "$TARGET_AGENT" ]]; then
+  ws="${OPENCLAW_DIR}/workspace-${TARGET_AGENT}"
+  if [[ -d "$ws" ]]; then
+    workspaces+=("$ws")
+  else
+    echo -e "${RED}Workspace not found: ${ws}${NC}" >&2
+    exit 1
+  fi
+else
+  for ws in $WORKSPACE_GLOB; do
+    [[ -d "$ws" ]] && workspaces+=("$ws")
+  done
+fi
+
+if [[ ${#workspaces[@]} -eq 0 ]]; then
+  echo -e "${YELLOW}No workspaces found.${NC}"
+  exit 0
+fi
+
+# ── Scan phase ───────────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}${CYAN}"
+echo "  ███████╗███╗   ██╗ ██████╗ ██████╗  █████╗ ███╗   ███╗"
+echo "  ██╔════╝████╗  ██║██╔════╝ ██╔══██╗██╔══██╗████╗ ████║"
+echo "  █████╗  ██╔██╗ ██║██║  ███╗██████╔╝███████║██╔████╔██║"
+echo "  ██╔══╝  ██║╚██╗██║██║   ██║██╔══██╗██╔══██║██║╚██╔╝██║"
+echo "  ███████╗██║ ╚████║╚██████╔╝██║  ██║██║  ██║██║ ╚═╝ ██║"
+echo "  ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝"
+echo -e "${YELLOW}"
+echo "  ████████╗██╗   ██╗███╗   ██╗███████╗   ██╗   ██╗██████╗"
+echo "  ╚══██╔══╝██║   ██║████╗  ██║██╔════╝   ██║   ██║██╔══██╗"
+echo "     ██║   ██║   ██║██╔██╗ ██║█████╗     ██║   ██║██████╔╝"
+echo "     ██║   ██║   ██║██║╚██╗██║██╔══╝     ██║   ██║██╔═══╝"
+echo "     ██║   ╚██████╔╝██║ ╚████║███████╗   ╚██████╔╝██║"
+echo "     ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚══════╝    ╚═════╝ ╚═╝"
+echo -e "${NC}"
+echo ""
+echo -e "${DIM}Scanning ${#workspaces[@]} workspace(s)...${NC}"
+echo ""
+
+# Arrays to collect findings
+declare -a bloat_dirs=()       # Large non-workspace directories (node_modules, project clones)
+declare -a bloat_dir_sizes=()
+declare -a bloat_dir_agents=()
+
+declare -a stray_files=()      # .md files at root that aren't known workspace files
+declare -a stray_file_sizes=()
+declare -a stray_file_agents=()
+
+declare -a large_files=()      # Known .md files that are oversized
+declare -a large_file_sizes=()
+declare -a large_file_agents=()
+
+declare -a old_logs=()         # Daily memory files older than threshold
+declare -a old_log_agents=()
+
+declare -a empty_workspaces=() # Workspaces with no meaningful content
+
+for ws in "${workspaces[@]}"; do
+  agent_name=$(basename "$ws" | sed 's/^workspace-//')
+
+  # ── 1. Find non-standard directories (project clones, repos) ──
+  while IFS= read -r dir; do
+    [[ -z "$dir" ]] && continue
+    dirname_part=$(basename "$dir")
+    # Skip known workspace subdirs
+    case "$dirname_part" in
+      .openclaw|memory|.git|docs|health|scripts) continue ;;
+    esac
+    # Detect project clones by markers (fast, no full traversal)
+    is_bloat=false
+    if [[ -d "$dir/node_modules" ]] || [[ -f "$dir/package.json" ]] || \
+       [[ -f "$dir/Cargo.toml" ]] || [[ -f "$dir/go.mod" ]] || \
+       [[ -d "$dir/.git" ]] || [[ -f "$dir/pyproject.toml" ]]; then
+      is_bloat=true
+    fi
+    # Also flag directories with many files at top level
+    if [[ "$is_bloat" == "false" ]]; then
+      file_count=$(find "$dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+      if [[ $file_count -gt 20 ]]; then
+        is_bloat=true
+      fi
+    fi
+    if [[ "$is_bloat" == "true" ]]; then
+      bloat_dirs+=("$dir")
+      bloat_dir_sizes+=("(computing...)")
+      bloat_dir_agents+=("$agent_name")
+    fi
+  done < <(find "$ws" -maxdepth 1 -type d ! -path "$ws" 2>/dev/null)
+
+  # ── 2. Find stray .md files at workspace root ──
+  while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    fname=$(basename "$file")
+    # Skip known files (use case to avoid grep exit code issue with set -e)
+    case "$fname" in
+      AGENTS.md|SOUL.md|IDENTITY.md|USER.md|TOOLS.md|HEARTBEAT.md|MEMORY.md|BOOTSTRAP.md) continue ;;
+    esac
+    fsize=$(du -sh "$file" 2>/dev/null | cut -f1)
+    stray_files+=("$file")
+    stray_file_sizes+=("$fsize")
+    stray_file_agents+=("$agent_name")
+  done < <(find "$ws" -maxdepth 1 -name "*.md" -type f 2>/dev/null)
+
+  # ── 3. Find oversized known .md files ──
+  while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    fname=$(basename "$file")
+    is_known=false
+    case "$fname" in
+      AGENTS.md|SOUL.md|IDENTITY.md|USER.md|TOOLS.md|HEARTBEAT.md|MEMORY.md|BOOTSTRAP.md) is_known=true ;;
+    esac
+    if [[ "$is_known" == "true" ]]; then
+      fsize_kb=$(du -sk "$file" 2>/dev/null | cut -f1)
+      if [[ $fsize_kb -gt $SIZE_THRESHOLD_KB ]]; then
+        fsize=$(du -sh "$file" 2>/dev/null | cut -f1)
+        large_files+=("$file")
+        large_file_sizes+=("$fsize")
+        large_file_agents+=("$agent_name")
+      fi
+    fi
+  done < <(find "$ws" -maxdepth 1 -name "*.md" -type f 2>/dev/null)
+
+  # ── 4. Find old daily memory logs ──
+  if [[ -d "$ws/memory" ]]; then
+    cutoff_date=$(date -v-${MEMORY_KEEP_DAYS}d +%Y-%m-%d 2>/dev/null || date -d "${MEMORY_KEEP_DAYS} days ago" +%Y-%m-%d 2>/dev/null || echo "")
+    if [[ -n "$cutoff_date" ]]; then
+      old_count=0
+      while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        fname=$(basename "$file" .md)
+        # Only match YYYY-MM-DD pattern
+        if [[ "$fname" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ "$fname" < "$cutoff_date" ]]; then
+          old_logs+=("$file")
+          old_log_agents+=("$agent_name")
+          old_count=$((old_count + 1))
+        fi
+      done < <(find "$ws/memory" -name "*.md" -type f 2>/dev/null)
+    fi
+  fi
+
+  # ── 5. Check for empty/unused workspaces ──
+  md_count=$(find "$ws" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+  has_memory=$(find "$ws/memory" -name "*.md" -type f 2>/dev/null | head -1 || true)
+  if [[ $md_count -le 3 ]] && [[ -z "$has_memory" ]]; then
+    empty_workspaces+=("$ws")
+  fi
+done
+
+# ── 6. Scan promoted memory for orphaned category files ──────────────────────
+MEMORY_ROOT="${OPENCLAW_MEMORY_ROOT:-$HOME/.openclaw/memory}"
+declare -a orphan_cat_files=()
+declare -a orphan_cat_projects=()
+
+if [[ -d "$MEMORY_ROOT" ]]; then
+  while IFS= read -r project_dir; do
+    [[ -z "$project_dir" ]] && continue
+    [[ ! -d "$project_dir" ]] && continue
+    project_name=$(basename "$project_dir")
+    memory_file="${project_dir}/MEMORY.md"
+
+    # Find .md files that aren't MEMORY.md — these are old category files
+    while IFS= read -r cat_file; do
+      [[ -z "$cat_file" ]] && continue
+      fname=$(basename "$cat_file")
+      [[ "$fname" == "MEMORY.md" ]] && continue
+      orphan_cat_files+=("$cat_file")
+      orphan_cat_projects+=("$project_name")
+    done < <(find "$project_dir" -maxdepth 1 -name "*.md" -type f 2>/dev/null)
+  done < <(find "$MEMORY_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+fi
+
+# ── Report phase ─────────────────────────────────────────────────────────────
+total_findings=0
+total_findings=$((total_findings + ${#bloat_dirs[@]} + ${#stray_files[@]} + ${#large_files[@]} + ${#empty_workspaces[@]} + ${#orphan_cat_files[@]}))
+
+# Count old logs by agent (deduplicate agent names into parallel arrays)
+old_log_unique_agents=()
+old_log_unique_counts=()
+for agent in "${old_log_agents[@]+"${old_log_agents[@]}"}"; do
+  [[ -z "$agent" ]] && continue
+  found=false
+  for j in "${!old_log_unique_agents[@]}"; do
+    if [[ "${old_log_unique_agents[$j]}" == "$agent" ]]; then
+      old_log_unique_counts[$j]=$(( ${old_log_unique_counts[$j]} + 1 ))
+      found=true
+      break
+    fi
+  done
+  if [[ "$found" == "false" ]]; then
+    old_log_unique_agents+=("$agent")
+    old_log_unique_counts+=("1")
+  fi
+done
+total_findings=$((total_findings + ${#old_log_unique_agents[@]}))
+
+if [[ $total_findings -eq 0 ]]; then
+  echo -e "${GREEN}All clean! No issues found across ${#workspaces[@]} workspace(s).${NC}"
+  echo ""
+  exit 0
+fi
+
+echo -e "${BOLD}Found ${total_findings} issue(s):${NC}"
+echo ""
+
+# ── Helper: interactive picker ───────────────────────────────────────────────
+# Presents items with [ ] checkboxes, user toggles with numbers, confirms with Enter
+interactive_pick() {
+  local -n items_ref=$1
+  local -n labels_ref=$2
+  local prompt_msg="$3"
+  local -n selected_ref=$4
+
+  if [[ ${#items_ref[@]} -eq 0 ]]; then return; fi
+
+  # Initialize all as selected
+  local -a checked=()
+  for i in "${!items_ref[@]}"; do
+    checked[$i]=1
+  done
+
+  while true; do
+    echo ""
+    for i in "${!items_ref[@]}"; do
+      if [[ ${checked[$i]} -eq 1 ]]; then
+        echo -e "  ${GREEN}[x]${NC} ${DIM}$((i+1)))${NC} ${labels_ref[$i]}"
+      else
+        echo -e "  ${DIM}[ ]${NC} ${DIM}$((i+1)))${NC} ${labels_ref[$i]}"
+      fi
+    done
+    echo ""
+    echo -e "  ${DIM}Toggle: type number(s) separated by spaces. ${BOLD}a${NC}${DIM}=all, ${BOLD}n${NC}${DIM}=none, ${BOLD}Enter${NC}${DIM}=confirm${NC}"
+    read -rp "  > " input
+
+    if [[ -z "$input" ]]; then
+      # Confirm — collect selected items
+      selected_ref=()
+      for i in "${!items_ref[@]}"; do
+        if [[ ${checked[$i]} -eq 1 ]]; then
+          selected_ref+=("${items_ref[$i]}")
+        fi
+      done
+      return
+    elif [[ "$input" == "a" ]]; then
+      for i in "${!items_ref[@]}"; do checked[$i]=1; done
+    elif [[ "$input" == "n" ]]; then
+      for i in "${!items_ref[@]}"; do checked[$i]=0; done
+    else
+      for num in $input; do
+        if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= ${#items_ref[@]} )); then
+          local idx=$((num - 1))
+          if [[ ${checked[$idx]} -eq 1 ]]; then
+            checked[$idx]=0
+          else
+            checked[$idx]=1
+          fi
+        fi
+      done
+    fi
+  done
+}
+
+# ── Category 1: Bloat directories ───────────────────────────────────────────
+if [[ ${#bloat_dirs[@]} -gt 0 ]]; then
+  echo -e "${RED}${BOLD}Directory Bloat${NC} (project clones, node_modules, etc.)"
+  echo ""
+
+  labels=()
+  for i in "${!bloat_dirs[@]}"; do
+    dir_rel=$(echo "${bloat_dirs[$i]}" | sed "s|$OPENCLAW_DIR/||")
+    # Detect what kind of project it is
+    hint=""
+    [[ -d "${bloat_dirs[$i]}/node_modules" ]] && hint=" [node project]"
+    [[ -d "${bloat_dirs[$i]}/.git" ]] && hint=" [git repo]"
+    [[ -f "${bloat_dirs[$i]}/Cargo.toml" ]] && hint=" [rust project]"
+    [[ -f "${bloat_dirs[$i]}/go.mod" ]] && hint=" [go project]"
+    labels+=("${bloat_dir_agents[$i]}: ${dir_rel}${hint}")
+  done
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    for label in "${labels[@]}"; do
+      echo -e "  ${YELLOW}found:${NC} $label"
+    done
+  else
+    echo -e "  ${BOLD}Select directories to remove:${NC}"
+    selected=()
+    interactive_pick bloat_dirs labels "Remove selected directories?" selected
+
+    for dir in "${selected[@]}"; do
+      rm -rf "$dir"
+      echo -e "  ${GREEN}✓${NC} Removed $(basename "$dir")"
+    done
+  fi
+  echo ""
+fi
+
+# ── Category 2: Stray .md files ─────────────────────────────────────────────
+if [[ ${#stray_files[@]} -gt 0 ]]; then
+  echo -e "${YELLOW}${BOLD}Stray Files${NC} (.md files that aren't standard workspace files)"
+  echo ""
+
+  # Check if qmd is available for semantic search
+  QMD_BIN=""
+  if command -v qmd &>/dev/null; then
+    QMD_BIN="qmd"
+  elif [[ -x "$HOME/.bun/bin/qmd" ]]; then
+    QMD_BIN="$HOME/.bun/bin/qmd"
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    for i in "${!stray_files[@]}"; do
+      fname=$(basename "${stray_files[$i]}")
+      fsize="${stray_file_sizes[$i]}"
+      agent="${stray_file_agents[$i]}"
+      echo -e "  ${YELLOW}found:${NC} ${agent}: ${fname} (${fsize})"
+
+      # Run semantic search in dry-run to show what would happen
+      if [[ -n "$QMD_BIN" ]]; then
+        # Extract search query from filename (strip .md, convert dashes to spaces)
+        search_query=$(echo "$fname" | sed 's/\.md$//' | tr '-' ' ' | tr '_' ' ')
+        match=$($QMD_BIN search "$search_query" 2>/dev/null | head -4 || true)
+        if [[ -n "$match" ]]; then
+          echo -e "  ${DIM}  Similar content found in vault:${NC}"
+          echo "$match" | sed 's/^/    /' | head -3
+          echo ""
+        else
+          echo -e "  ${DIM}  No similar content found — likely new information${NC}"
+          echo ""
+        fi
+      fi
+    done
+  else
+    for i in "${!stray_files[@]}"; do
+      file="${stray_files[$i]}"
+      fname=$(basename "$file")
+      agent="${stray_file_agents[$i]}"
+      fsize="${stray_file_sizes[$i]}"
+
+      echo -e "  ${BOLD}${agent}/${fname}${NC} (${fsize})"
+      # Show first few lines for context
+      echo -e "${DIM}"
+      head -5 "$file" 2>/dev/null | sed 's/^/    /'
+      echo -e "${NC}"
+
+      # Semantic search for similar content
+      has_match=false
+      if [[ -n "$QMD_BIN" ]]; then
+        search_query=$(echo "$fname" | sed 's/\.md$//' | tr '-' ' ' | tr '_' ' ')
+        match=$($QMD_BIN search "$search_query" 2>/dev/null | head -6 || true)
+        if [[ -n "$match" ]]; then
+          has_match=true
+          echo -e "  ${CYAN}Similar content already indexed:${NC}"
+          echo "$match" | sed 's/^/    /'
+          echo ""
+          echo -e "  ${DIM}Content may already exist in vault. Ingesting will add to inbox for dedup.${NC}"
+        else
+          echo -e "  ${GREEN}No similar content found${NC} — this looks like new information."
+        fi
+      fi
+      echo ""
+
+      # Prompt with context-aware suggestion
+      if [[ "$has_match" == "true" ]]; then
+        echo -e "  ${BOLD}i${NC}=ingest anyway  ${BOLD}d${NC}=delete (duplicate)  ${BOLD}s${NC}=skip"
+      else
+        echo -e "  ${BOLD}i${NC}=ingest to vault  ${BOLD}d${NC}=delete  ${BOLD}s${NC}=skip"
+      fi
+      read -rp "  > " action
+
+      case "$action" in
+        i|I)
+          # Try engram ingest pipeline first
+          vault_dir="${ENGRAM_VAULT_PATH:-${LACP_OBSIDIAN_VAULT:-}}"
+          if [[ -n "$vault_dir" ]]; then
+            if python3 "$PLUGIN_BIN/engram-brain-ingest" file "$vault_dir" "$file" --title "$(echo "$fname" | sed 's/\.md$//')" 2>/dev/null; then
+              rm "$file"
+              echo -e "  ${GREEN}✓${NC} Ingested via engram and removed ${fname}"
+            else
+              # Fallback: move to vault inbox
+              inbox_dir="${vault_dir}/00_inbox"
+              mkdir -p "$inbox_dir"
+              cp "$file" "${inbox_dir}/${agent}-${fname}"
+              rm "$file"
+              echo -e "  ${GREEN}✓${NC} Moved to vault inbox: ${agent}-${fname}"
+            fi
+            # Re-index if qmd available
+            if [[ -n "$QMD_BIN" ]]; then
+              $QMD_BIN update 2>/dev/null || true
+            fi
+          else
+            echo -e "  ${YELLOW}⚠ No vault path configured (set LACP_OBSIDIAN_VAULT) — file kept${NC}"
+          fi
+          ;;
+        d|D)
+          rm "$file"
+          echo -e "  ${GREEN}✓${NC} Deleted ${fname}"
+          ;;
+        s|S|*)
+          echo -e "  ${DIM}Skipped${NC}"
+          ;;
+      esac
+      echo ""
+    done
+  fi
+fi
+
+# ── Category 3: Oversized .md files ─────────────────────────────────────────
+if [[ ${#large_files[@]} -gt 0 ]]; then
+  echo -e "${YELLOW}${BOLD}Oversized Files${NC} (.md files > ${SIZE_THRESHOLD_KB}KB)"
+  echo ""
+
+  for i in "${!large_files[@]}"; do
+    file="${large_files[$i]}"
+    fname=$(basename "$file")
+    agent="${large_file_agents[$i]}"
+    fsize="${large_file_sizes[$i]}"
+    lines=$(wc -l < "$file" 2>/dev/null)
+
+    echo -e "  ${BOLD}${agent}/${fname}${NC} — ${fsize}, ${lines} lines"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+      echo -e "  ${YELLOW}would flag for review${NC}"
+    else
+      echo -e "  ${DIM}This file is large. Consider trimming it manually.${NC}"
+      if [[ "$fname" == "MEMORY.md" ]]; then
+        echo -e "  ${DIM}Tip: Archive old entries to daily logs or vault.${NC}"
+      fi
+    fi
+    echo ""
+  done
+fi
+
+# ── Category 4: Old daily memory logs ────────────────────────────────────────
+if [[ ${#old_log_unique_agents[@]} -gt 0 ]]; then
+  echo -e "${CYAN}${BOLD}Old Daily Logs${NC} (memory files older than ${MEMORY_KEEP_DAYS} days)"
+  echo ""
+
+  for idx in "${!old_log_unique_agents[@]}"; do
+    agent="${old_log_unique_agents[$idx]}"
+    count="${old_log_unique_counts[$idx]}"
+    ws="${OPENCLAW_DIR}/workspace-${agent}"
+
+    echo -e "  ${BOLD}${agent}:${NC} ${count} old log(s)"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+      echo -e "  ${YELLOW}found — would prompt to archive or remove${NC}"
+    else
+      read -rp "  [a]rchive to vault / [d]elete / [s]kip? " action
+
+      case "$action" in
+        a|A)
+          vault_dir="${ENGRAM_VAULT_PATH:-}"
+          if [[ -z "$vault_dir" ]]; then
+            echo -e "  ${YELLOW}⚠ No vault path configured — skipping archive${NC}"
+          else
+            archive_dir="${vault_dir}/01_memory/${agent}"
+            mkdir -p "$archive_dir"
+            archived=0
+            cutoff_date=$(date -v-${MEMORY_KEEP_DAYS}d +%Y-%m-%d 2>/dev/null || date -d "${MEMORY_KEEP_DAYS} days ago" +%Y-%m-%d 2>/dev/null)
+            while IFS= read -r file; do
+              fname=$(basename "$file" .md)
+              if [[ "$fname" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ "$fname" < "$cutoff_date" ]]; then
+                # Group by month
+                month_dir="${archive_dir}/${fname:0:7}"
+                mkdir -p "$month_dir"
+                mv "$file" "${month_dir}/"
+                archived=$((archived + 1))
+              fi
+            done < <(find "$ws/memory" -name "*.md" -type f 2>/dev/null)
+            echo -e "  ${GREEN}✓${NC} Archived ${archived} files to vault"
+          fi
+          ;;
+        d|D)
+          deleted=0
+          cutoff_date=$(date -v-${MEMORY_KEEP_DAYS}d +%Y-%m-%d 2>/dev/null || date -d "${MEMORY_KEEP_DAYS} days ago" +%Y-%m-%d 2>/dev/null)
+          while IFS= read -r file; do
+            fname=$(basename "$file" .md)
+            if [[ "$fname" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ "$fname" < "$cutoff_date" ]]; then
+              rm "$file"
+              deleted=$((deleted + 1))
+            fi
+          done < <(find "$ws/memory" -name "*.md" -type f 2>/dev/null)
+          echo -e "  ${GREEN}✓${NC} Deleted ${deleted} old log files"
+          ;;
+        s|S|*)
+          echo -e "  ${DIM}Skipped${NC}"
+          ;;
+      esac
+    fi
+    echo ""
+  done
+fi
+
+# ── Category 5: Empty/unused workspaces ──────────────────────────────────────
+if [[ ${#empty_workspaces[@]} -gt 0 ]]; then
+  echo -e "${DIM}${BOLD}Unused Workspaces${NC} (minimal files, no memory)"
+  echo ""
+
+  labels=()
+  for ws in "${empty_workspaces[@]}"; do
+    name=$(basename "$ws" | sed 's/^workspace-//')
+    fcount=$(find "$ws" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+    labels+=("${name} (${fcount} files)")
+  done
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    for label in "${labels[@]}"; do
+      echo -e "  ${YELLOW}found:${NC} $label"
+    done
+  else
+    echo -e "  ${BOLD}Select unused workspaces to remove:${NC}"
+    selected=()
+    interactive_pick empty_workspaces labels "Remove selected workspaces?" selected
+
+    for ws in "${selected[@]}"; do
+      name=$(basename "$ws" | sed 's/^workspace-//')
+      rm -rf "$ws"
+      echo -e "  ${GREEN}✓${NC} Removed workspace-${name}"
+    done
+  fi
+  echo ""
+fi
+
+# ── Category 6: Orphaned promoted-memory category files ──────────────────────
+if [[ ${#orphan_cat_files[@]} -gt 0 ]]; then
+  echo -e "${YELLOW}${BOLD}Orphaned Memory Files${NC} (old category files — content already in MEMORY.md)"
+  echo ""
+
+  labels=()
+  for i in "${!orphan_cat_files[@]}"; do
+    fname=$(basename "${orphan_cat_files[$i]}")
+    fsize=$(du -sh "${orphan_cat_files[$i]}" 2>/dev/null | cut -f1)
+    labels+=("${orphan_cat_projects[$i]}/${fname} (${fsize})")
+  done
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    for label in "${labels[@]}"; do
+      echo -e "  ${YELLOW}found:${NC} $label"
+    done
+  else
+    echo -e "  ${BOLD}Select orphaned files to remove:${NC}"
+    selected=()
+    interactive_pick orphan_cat_files labels "Remove selected files?" selected
+
+    for file in "${selected[@]}"; do
+      rm "$file"
+      echo -e "  ${GREEN}✓${NC} Removed $(basename "$file")"
+    done
+  fi
+  echo ""
+fi
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo -e "${GREEN}  Dry run complete. No changes made.${NC}"
+else
+  echo -e "${GREEN}  Tune-up complete!${NC}"
+fi
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""

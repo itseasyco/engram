@@ -105,14 +105,17 @@ class TestPromoteAuto:
             data = json.loads(f.readline())
         assert len(data["receipt_hash"]) == 64
 
-    def test_auto_creates_category_file(self):
+    def test_auto_writes_to_memory_md(self):
         run_cmd(
             ["auto", "--summary", "sum_cat_test", "--score", "80",
              "--category", "domain-insight", "--project", "easy-api"],
             env_override=self.env,
         )
-        cat_file = os.path.join(self.tmpdir, "memory", "easy-api", "domain-insight.md")
-        assert os.path.exists(cat_file)
+        memory_file = os.path.join(self.tmpdir, "memory", "easy-api", "MEMORY.md")
+        assert os.path.exists(memory_file)
+        with open(memory_file) as f:
+            content = f.read()
+        assert "[domain-insight]" in content
 
 
 class TestPromoteManual:
