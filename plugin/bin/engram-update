@@ -88,24 +88,32 @@ show_help() {
     echo ""
     echo -e "${BOLD}OPTIONS${NC}"
     echo "  --agent <name>     Update a specific agent workspace"
-    echo "  --all              Update all agent workspaces"
+    echo "  --all              Update all (workspaces + platforms + shared)"
+    echo "  --platforms        Update platform configs only (hooks, MCP, extensions)"
+    echo "  --workspaces       Update agent workspaces only"
     echo "  --dry-run          Preview changes without applying"
     echo "  --force            Apply changes without confirmation"
     echo "  --shared           Also update ~/.openclaw/shared/ templates"
     echo "  -h, --help         Show this help"
     echo ""
     echo -e "${BOLD}WHAT IT DOES${NC}"
-    echo "  1. Detects old-format workspace files"
-    echo "  2. Adds missing template files (BOOTSTRAP.md for unconfigured agents)"
-    echo "  3. Replaces old boilerplate in AGENTS.md (SUB-AGENT.md, DISCORD.md, TEAM.md refs)"
-    echo "  4. Creates memory/ directory if missing"
-    echo "  5. Removes deprecated files (SUB-AGENT.md, DISCORD.md, TEAM.md, SAFETY.md from shared)"
-    echo "  6. Updates ~/.openclaw/shared/agent-template/ with latest templates"
+    echo ""
+    echo -e "  ${CYAN}Platforms${NC} (auto-detected)"
+    echo "  - Claude Code: updates hook paths and MCP server config"
+    echo "  - OpenClaw: syncs extension files from latest install"
+    echo "  - Codex: checks MCP config"
+    echo ""
+    echo -e "  ${CYAN}Workspaces${NC}"
+    echo "  - Migrates old-format agent files to current template"
+    echo "  - Adds missing template files, creates memory/ dirs"
+    echo "  - Removes deprecated references and files"
+    echo "  - Updates ~/.openclaw/shared/agent-template/"
     echo ""
     echo -e "${BOLD}EXAMPLES${NC}"
-    echo "  engram update --all --dry-run        # Preview all workspace updates"
-    echo "  engram update --agent alex            # Update alex's workspace"
-    echo "  engram update --all                   # Update everything"
+    echo "  engram update                         # Update everything"
+    echo "  engram update --dry-run               # Preview all changes"
+    echo "  engram update --platforms              # Just update hooks/MCP/extensions"
+    echo "  engram update --agent alex             # Update one workspace"
     echo ""
 }
 
@@ -375,6 +383,363 @@ TOOLS_APPEND
     return 0
 }
 
+# ── Platform detection ─────────────────────────────────────────────────────
+detect_platforms() {
+    local platforms=()
+
+    # Claude Code: check for ~/.claude/settings.json
+    if [[ -f "$HOME/.claude/settings.json" ]]; then
+        platforms+=("claude-code")
+    fi
+
+    # OpenClaw: check for extension dir
+    if [[ -d "$HOME/.openclaw/extensions/engram" ]]; then
+        platforms+=("openclaw")
+    fi
+
+    # Codex: check for ~/.codex/
+    if [[ -d "$HOME/.codex" ]]; then
+        platforms+=("codex")
+    fi
+
+    echo "${platforms[*]}"
+}
+
+# ── Resolve current engram plugin dir (from npm install) ───────────────────
+resolve_engram_plugin_dir() {
+    # This script is at plugin/bin/engram-update, so plugin dir is one up
+    echo "$(cd "$SCRIPT_DIR/.." && pwd)"
+}
+
+# ── Update Claude Code hooks ──────────────────────────────────────────────
+update_claude_code_hooks() {
+    local dry_run="$1"
+    local settings_file="$HOME/.claude/settings.json"
+    local plugin_dir
+    plugin_dir="$(resolve_engram_plugin_dir)"
+    local adapters_dir="$plugin_dir/hooks/adapters"
+
+    echo -e "  ${BOLD}Claude Code Hooks${NC}"
+
+    if ! [[ -f "$settings_file" ]]; then
+        echo -e "    ${DIM}No settings.json found${NC}"
+        echo ""
+        return
+    fi
+
+    # Use python3 to inspect and update hook paths
+    local result
+    result=$(python3 -c "
+import json, sys
+
+settings_file = '$settings_file'
+adapters_dir = '$adapters_dir'
+dry_run = '$dry_run' == 'true'
+
+with open(settings_file) as f:
+    settings = json.load(f)
+
+hooks = settings.get('hooks', {})
+if not hooks:
+    print('NO_HOOKS')
+    sys.exit(0)
+
+# Map adapter filenames to their purpose
+ENGRAM_ADAPTERS = {
+    'claude-session-start.sh': 'SessionStart',
+    'claude-pretool-guard.sh': 'PreToolUse',
+    'claude-write-validate.sh': 'PostToolUse',
+    'claude-stop-quality-gate.sh': 'Stop',
+}
+
+changes = 0
+missing = []
+
+# Check each hook event for engram hooks that need path updates
+for event, matchers in hooks.items():
+    for matcher in matchers:
+        for hook in matcher.get('hooks', []):
+            cmd = hook.get('command', '')
+            if 'engram' not in cmd.lower():
+                continue
+            # Extract the adapter filename
+            basename = cmd.rsplit('/', 1)[-1] if '/' in cmd else cmd
+            new_path = f'{adapters_dir}/{basename}'
+            if cmd != new_path:
+                changes += 1
+                if not dry_run:
+                    hook['command'] = new_path
+
+# Check which engram hooks are installed
+installed_adapters = set()
+for event, matchers in hooks.items():
+    for matcher in matchers:
+        for hook in matcher.get('hooks', []):
+            cmd = hook.get('command', '')
+            if 'engram' in cmd.lower():
+                basename = cmd.rsplit('/', 1)[-1] if '/' in cmd else cmd
+                installed_adapters.add(basename)
+
+for adapter in ENGRAM_ADAPTERS:
+    if adapter not in installed_adapters:
+        missing.append(adapter)
+
+if not dry_run and changes > 0:
+    with open(settings_file, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write('\n')
+
+# Output status
+if changes > 0:
+    print(f'UPDATED:{changes}')
+elif missing:
+    print(f'MISSING:{\";\".join(missing)}')
+else:
+    print('OK')
+" 2>&1)
+
+    case "$result" in
+        UPDATED:*)
+            local count="${result#UPDATED:}"
+            if [[ "$dry_run" == "true" ]]; then
+                echo -e "    ${YELLOW}would update${NC}  $count hook path(s) to current install location"
+            else
+                echo -e "    ${GREEN}updated${NC}       $count hook path(s) to: $adapters_dir/"
+            fi
+            ;;
+        MISSING:*)
+            local missing_list="${result#MISSING:}"
+            echo -e "    ${YELLOW}missing${NC}       hooks not installed: ${missing_list//;/, }"
+            if [[ "$dry_run" == "false" ]]; then
+                echo -e "    ${DIM}Run the installer to add missing hooks: setup-claude-code.sh --global${NC}"
+            fi
+            ;;
+        OK)
+            echo -e "    ${GREEN}up to date${NC}    hook paths point to current install"
+            ;;
+        NO_HOOKS)
+            echo -e "    ${DIM}No hooks configured — run installer to set up${NC}"
+            ;;
+        *)
+            echo -e "    ${RED}error${NC}         $result"
+            ;;
+    esac
+
+    echo ""
+}
+
+# ── Update Claude Code MCP config ─────────────────────────────────────────
+update_claude_code_mcp() {
+    local dry_run="$1"
+    local plugin_dir
+    plugin_dir="$(resolve_engram_plugin_dir)"
+    local server_mjs="$plugin_dir/mcp/server.mjs"
+
+    echo -e "  ${BOLD}Claude Code MCP Server${NC}"
+
+    # Check both ~/.claude.json and project-level .mcp.json
+    local targets=()
+    [[ -f "$HOME/.claude.json" ]] && targets+=("$HOME/.claude.json")
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        echo -e "    ${DIM}No MCP config found — run installer to set up${NC}"
+        echo ""
+        return
+    fi
+
+    local node_bin
+    node_bin="$(command -v node 2>/dev/null || which node 2>/dev/null)"
+
+    for target in "${targets[@]}"; do
+        local result
+        result=$(python3 -c "
+import json, sys, os
+
+target = '$target'
+plugin_dir = '$plugin_dir'
+server_mjs = '$server_mjs'
+node_bin = '$node_bin'
+dry_run = '$dry_run' == 'true'
+
+with open(target) as f:
+    data = json.load(f)
+
+mcp = data.get('mcpServers', {}).get('engram')
+if not mcp:
+    print('NOT_INSTALLED')
+    sys.exit(0)
+
+changes = 0
+
+# Check command (node path)
+if mcp.get('command', '') != node_bin:
+    changes += 1
+    if not dry_run:
+        mcp['command'] = node_bin
+
+# Check args (server.mjs path)
+args = mcp.get('args', [])
+if args and args[0] != server_mjs:
+    changes += 1
+    if not dry_run:
+        mcp['args'] = [server_mjs]
+
+# Check env ENGRAM_DIR
+env = mcp.get('env', {})
+if env.get('ENGRAM_DIR', '') != plugin_dir:
+    changes += 1
+    if not dry_run:
+        mcp.setdefault('env', {})['ENGRAM_DIR'] = plugin_dir
+
+# Preserve vault path — don't overwrite user's vault setting
+# Just make sure it exists
+if 'LACP_OBSIDIAN_VAULT' not in env:
+    changes += 1
+    # Try to resolve from .engram.env
+    vault = os.path.expanduser('~/.openclaw/data/knowledge')
+    env_file = os.path.expanduser('~/.openclaw/extensions/engram/config/.engram.env')
+    if os.path.isfile(env_file):
+        for line in open(env_file):
+            line = line.strip()
+            if line.startswith('LACP_OBSIDIAN_VAULT='):
+                vault = line.split('=', 1)[1].strip().strip('\"').strip(\"'\")
+                break
+    if not dry_run:
+        mcp.setdefault('env', {})['LACP_OBSIDIAN_VAULT'] = vault
+
+if not dry_run and changes > 0:
+    with open(target, 'w') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+
+if changes > 0:
+    print(f'UPDATED:{changes}')
+else:
+    print('OK')
+" 2>&1)
+
+        local basename
+        basename=$(basename "$target")
+        case "$result" in
+            UPDATED:*)
+                local count="${result#UPDATED:}"
+                if [[ "$dry_run" == "true" ]]; then
+                    echo -e "    ${YELLOW}would update${NC}  $count setting(s) in $basename"
+                else
+                    echo -e "    ${GREEN}updated${NC}       $count setting(s) in $basename"
+                fi
+                ;;
+            OK)
+                echo -e "    ${GREEN}up to date${NC}    $basename"
+                ;;
+            NOT_INSTALLED)
+                echo -e "    ${DIM}engram not in $basename — run installer to set up${NC}"
+                ;;
+            *)
+                echo -e "    ${RED}error${NC}         $result"
+                ;;
+        esac
+    done
+
+    echo ""
+}
+
+# ── Update OpenClaw extension ─────────────────────────────────────────────
+update_openclaw_extension() {
+    local dry_run="$1"
+    local ext_dir="$HOME/.openclaw/extensions/engram"
+    local plugin_dir
+    plugin_dir="$(resolve_engram_plugin_dir)"
+
+    echo -e "  ${BOLD}OpenClaw Extension${NC}"
+
+    if ! [[ -d "$ext_dir" ]]; then
+        echo -e "    ${DIM}Not installed${NC}"
+        echo ""
+        return
+    fi
+
+    local changes=0
+
+    # Sync key directories from npm install to extension
+    local sync_dirs=("bin" "lib" "hooks" "mcp" "rules" "policy")
+    for dir in "${sync_dirs[@]}"; do
+        local src="$plugin_dir/$dir"
+        local dst="$ext_dir/$dir"
+        if [[ -d "$src" ]]; then
+            # Check if any files differ
+            local diff_count=0
+            if [[ -d "$dst" ]]; then
+                diff_count=$(diff -rq "$src" "$dst" 2>/dev/null | wc -l | tr -d ' ' || true)
+            else
+                diff_count=1
+            fi
+            if [[ "$diff_count" -gt 0 ]]; then
+                changes=$((changes + 1))
+                if [[ "$dry_run" == "true" ]]; then
+                    echo -e "    ${YELLOW}would sync${NC}    $dir/ ($diff_count file(s) differ)"
+                else
+                    rsync -a --delete "$src/" "$dst/"
+                    echo -e "    ${GREEN}synced${NC}        $dir/"
+                fi
+            fi
+        fi
+    done
+
+    # Sync key root files
+    local sync_files=("index.ts" "openclaw.plugin.json" "plugin.json" "package.json")
+    for file in "${sync_files[@]}"; do
+        local src="$plugin_dir/../$file"
+        # For files at package root (one above plugin/)
+        if ! [[ -f "$src" ]]; then
+            src="$ROOT_DIR/$file"
+        fi
+        if [[ -f "$src" ]] && [[ -f "$ext_dir/$file" ]]; then
+            if ! diff -q "$src" "$ext_dir/$file" >/dev/null 2>&1; then
+                changes=$((changes + 1))
+                if [[ "$dry_run" == "true" ]]; then
+                    echo -e "    ${YELLOW}would update${NC}  $file"
+                else
+                    cp "$src" "$ext_dir/$file"
+                    echo -e "    ${GREEN}updated${NC}       $file"
+                fi
+            fi
+        fi
+    done
+
+    if [[ "$changes" -eq 0 ]]; then
+        echo -e "    ${GREEN}up to date${NC}"
+    fi
+
+    echo ""
+}
+
+# ── Update Codex config ───────────────────────────────────────────────────
+update_codex() {
+    local dry_run="$1"
+    local plugin_dir
+    plugin_dir="$(resolve_engram_plugin_dir)"
+
+    echo -e "  ${BOLD}Codex${NC}"
+
+    if ! [[ -d "$HOME/.codex" ]]; then
+        echo -e "    ${DIM}Not installed${NC}"
+        echo ""
+        return
+    fi
+
+    # Check if engram AGENTS.md or instructions exist in codex
+    local codex_agents="$HOME/.codex/AGENTS.md"
+    if [[ -f "$codex_agents" ]] && grep -qi "engram" "$codex_agents" 2>/dev/null; then
+        echo -e "    ${GREEN}up to date${NC}    AGENTS.md references engram"
+    else
+        echo -e "    ${DIM}No engram integration detected in Codex${NC}"
+        echo -e "    ${DIM}Codex MCP: copy engram MCP config to .codex/mcp.json in each repo${NC}"
+    fi
+
+    echo ""
+}
+
 # ── Update shared templates ─────────────────────────────────────────────────
 update_shared() {
     local dry_run="$1"
@@ -445,22 +810,34 @@ FORCE="false"
 TARGET_AGENT=""
 UPDATE_ALL="false"
 UPDATE_SHARED="false"
+UPDATE_PLATFORMS="false"
+UPDATE_WORKSPACES="false"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --agent)     TARGET_AGENT="$2"; shift 2 ;;
-        --all)       UPDATE_ALL="true"; shift ;;
-        --dry-run)   DRY_RUN="true"; shift ;;
-        --force)     FORCE="true"; shift ;;
-        --shared)    UPDATE_SHARED="true"; shift ;;
-        -h|--help)   show_help; exit 0 ;;
-        *)           echo -e "${RED}Unknown option: $1${NC}"; show_help; exit 1 ;;
+        --agent)       TARGET_AGENT="$2"; shift 2 ;;
+        --all)         UPDATE_ALL="true"; shift ;;
+        --platforms)   UPDATE_PLATFORMS="true"; shift ;;
+        --workspaces)  UPDATE_WORKSPACES="true"; shift ;;
+        --dry-run)     DRY_RUN="true"; shift ;;
+        --force)       FORCE="true"; shift ;;
+        --shared)      UPDATE_SHARED="true"; shift ;;
+        -h|--help)     show_help; exit 0 ;;
+        *)             echo -e "${RED}Unknown option: $1${NC}"; show_help; exit 1 ;;
     esac
 done
 
-# Default: update all + shared
-if [[ -z "$TARGET_AGENT" ]] && [[ "$UPDATE_ALL" == "false" ]]; then
+# Default: update everything
+if [[ -z "$TARGET_AGENT" ]] && [[ "$UPDATE_ALL" == "false" ]] \
+   && [[ "$UPDATE_PLATFORMS" == "false" ]] && [[ "$UPDATE_WORKSPACES" == "false" ]]; then
     UPDATE_ALL="true"
+    UPDATE_SHARED="true"
+fi
+
+# --all means platforms + workspaces + shared
+if [[ "$UPDATE_ALL" == "true" ]]; then
+    UPDATE_PLATFORMS="true"
+    UPDATE_WORKSPACES="true"
     UPDATE_SHARED="true"
 fi
 
@@ -471,48 +848,94 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo ""
 fi
 
-total_workspaces=0
-total_changes=0
-
-# Update shared templates
-if [[ "$UPDATE_SHARED" == "true" ]] || [[ "$UPDATE_ALL" == "true" ]]; then
-    update_shared "$DRY_RUN"
-fi
-
-# Collect workspaces
-if [[ -n "$TARGET_AGENT" ]]; then
-    ws_dir="$OPENCLAW_ROOT/workspace-${TARGET_AGENT}"
-    if ! [[ -d "$ws_dir" ]]; then
-        echo -e "  ${RED}Workspace not found: $ws_dir${NC}"
-        exit 1
-    fi
-    workspaces=("$ws_dir")
+# ── Platform detection ────────────────────────────────────────────────────
+detected_platforms="$(detect_platforms)"
+echo -e "${BOLD}Detected Platforms${NC}"
+if [[ -z "$detected_platforms" ]]; then
+    echo -e "  ${DIM}None detected${NC}"
 else
-    workspaces=()
-    for ws in "$OPENCLAW_ROOT"/workspace-*/; do
-        [[ -d "$ws" ]] && workspaces+=("$ws")
+    for p in $detected_platforms; do
+        case "$p" in
+            claude-code) echo -e "  ${GREEN}✓${NC} Claude Code  ${DIM}(~/.claude/settings.json)${NC}" ;;
+            openclaw)    echo -e "  ${GREEN}✓${NC} OpenClaw     ${DIM}(~/.openclaw/extensions/engram/)${NC}" ;;
+            codex)       echo -e "  ${GREEN}✓${NC} Codex        ${DIM}(~/.codex/)${NC}" ;;
+        esac
+    done
+fi
+echo ""
+
+# ── Platform updates ──────────────────────────────────────────────────────
+if [[ "$UPDATE_PLATFORMS" == "true" ]]; then
+    echo -e "${BOLD}Platform Updates${NC}"
+    echo ""
+
+    for p in $detected_platforms; do
+        case "$p" in
+            claude-code)
+                update_claude_code_hooks "$DRY_RUN"
+                update_claude_code_mcp "$DRY_RUN"
+                ;;
+            openclaw)
+                update_openclaw_extension "$DRY_RUN"
+                ;;
+            codex)
+                update_codex "$DRY_RUN"
+                ;;
+        esac
     done
 fi
 
-if [[ ${#workspaces[@]} -eq 0 ]]; then
-    echo -e "  ${DIM}No workspaces found.${NC}"
-    exit 0
+# ── Shared templates ──────────────────────────────────────────────────────
+if [[ "$UPDATE_SHARED" == "true" ]]; then
+    update_shared "$DRY_RUN"
 fi
 
-echo -e "${BOLD}Agent Workspaces${NC}  ${DIM}(${#workspaces[@]} found)${NC}"
-echo ""
+# ── Workspaces ────────────────────────────────────────────────────────────
+total_workspaces=0
 
-for ws in "${workspaces[@]}"; do
-    ws="${ws%/}"  # trim trailing slash
-    update_workspace "$ws" "$DRY_RUN"
-    total_workspaces=$((total_workspaces + 1))
-done
+if [[ "$UPDATE_WORKSPACES" == "true" ]] || [[ -n "$TARGET_AGENT" ]]; then
+    # Collect workspaces
+    if [[ -n "$TARGET_AGENT" ]]; then
+        ws_dir="$OPENCLAW_ROOT/workspace-${TARGET_AGENT}"
+        if ! [[ -d "$ws_dir" ]]; then
+            echo -e "  ${RED}Workspace not found: $ws_dir${NC}"
+            exit 1
+        fi
+        workspaces=("$ws_dir")
+    else
+        workspaces=()
+        for ws in "$OPENCLAW_ROOT"/workspace-*/; do
+            [[ -d "$ws" ]] && workspaces+=("$ws")
+        done
+    fi
 
-# Summary
+    if [[ ${#workspaces[@]} -gt 0 ]]; then
+        echo -e "${BOLD}Agent Workspaces${NC}  ${DIM}(${#workspaces[@]} found)${NC}"
+        echo ""
+
+        for ws in "${workspaces[@]}"; do
+            ws="${ws%/}"  # trim trailing slash
+            update_workspace "$ws" "$DRY_RUN"
+            total_workspaces=$((total_workspaces + 1))
+        done
+    else
+        echo -e "  ${DIM}No workspaces found.${NC}"
+        echo ""
+    fi
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "  Scanned ${BOLD}${total_workspaces}${NC} workspace(s)"
+if [[ "$total_workspaces" -gt 0 ]]; then
+    echo -e "  Scanned ${BOLD}${total_workspaces}${NC} workspace(s)"
+fi
+if [[ -n "$detected_platforms" ]]; then
+    echo -e "  Checked ${BOLD}$(echo "$detected_platforms" | wc -w | tr -d ' ')${NC} platform(s)"
+fi
 if [[ "$DRY_RUN" == "true" ]]; then
     echo -e "  ${YELLOW}Dry run complete. Run without --dry-run to apply changes.${NC}"
+else
+    echo -e "  ${GREEN}Update complete.${NC}"
 fi
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""

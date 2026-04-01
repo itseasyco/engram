@@ -86,71 +86,203 @@ def get_body(content: str) -> str:
     return content[end + 3:]
 
 
-# ── Category inference (mirrors inbox_processor logic) ──────────────────────
+# ── Structural type detection ──────────────────────────────────────────────
+# Detect note type by content structure BEFORE keyword matching.
+# This catches meetings, daily notes, session logs, etc. that have
+# recognizable patterns regardless of their topic keywords.
+
+MEETING_MARKERS = [
+    ("**Attendees:**", "**Duration:**"),
+    ("Attendees:", "Duration:"),
+    ("**Participants:**", "**Duration:**"),
+]
+
+DAILY_NOTE_RE = re.compile(r'^# \d{4}-\d{2}-\d{2}')
+SESSION_MARKERS = ["## Session", "## First Session", "came online", "woke up"]
+PRD_MARKERS = ["## Requirements", "## User Stories", "## Acceptance Criteria", "PRD", "Product Requirements"]
+
+# ── Team roster (for meeting sub-classification) ──────────────────────────
+# These are internal team members — everyone else is "external"
+TEAM_MEMBERS = {
+    "niko lemieux", "andrew fisher", "evan goldberg", "ari shaller",
+    "chad green", "danie beukman",
+}
+
+# Bot/notetaker patterns — always ignored when counting external attendees
+NOTETAKER_PATTERNS = [
+    "notetaker", "fireflies", "read.ai", "circleback", "otter.ai",
+    "participant ",  # anonymous/unnamed participants
+]
+
+# Keywords that signal investor context
+INVESTOR_KEYWORDS = [
+    "investor", "fundrais", "pitch", "valuation", "safe", "term sheet",
+    "cap table", "round", "pre-seed", "seed", "series a", "vc ", "venture",
+    "deck", "due diligence",
+]
+
+# Keywords that signal client/partner context
+CLIENT_KEYWORDS = [
+    "merchant", "onboard", "settlement", "payment", "processing", "volume",
+    "transaction", "integration", "demo", "walkthrough", "pricing",
+    "contract", "sow", "pilot",
+]
+
+
+def _is_internal(name: str) -> bool:
+    """Check if a meeting participant is internal team or a bot."""
+    n = name.lower().strip()
+    if n in TEAM_MEMBERS:
+        return True
+    for pat in NOTETAKER_PATTERNS:
+        if pat in n:
+            return True
+    return False
+
+
+def classify_meeting(title: str, body: str, attendees_raw: str) -> str:
+    """
+    Sub-classify a meeting by context: team, investor, client, conference, personal.
+    Returns a meetings subfolder name.
+    """
+    attendees = [a.strip() for a in attendees_raw.split(",") if a.strip()]
+    external = [a for a in attendees if not _is_internal(a)]
+
+    title_lower = title.lower()
+    content_lower = body[:3000].lower()
+
+    # Large meetings = conference/group calls
+    if len(attendees) > 15:
+        return "meetings/conference"
+
+    # Personal
+    if "family" in title_lower or "personal" in title_lower:
+        return "meetings/personal"
+
+    # All internal = team meeting
+    if len(external) == 0:
+        return "meetings/team"
+
+    # Check content for investor signals
+    if any(kw in content_lower for kw in INVESTOR_KEYWORDS):
+        return "meetings/investors"
+
+    # Check content for client/partner signals
+    if any(kw in content_lower for kw in CLIENT_KEYWORDS):
+        return "meetings/clients"
+
+    # External meeting that doesn't match investor or client
+    return "meetings/external"
+
+
+def detect_note_type(title: str, body: str, fm: dict) -> str | None:
+    """
+    Detect note type by structural patterns. Returns a category/folder string
+    or None if no structural match (falls through to keyword matching).
+    """
+    content = body[:3000]  # only scan first 3000 chars for structure
+
+    # ── Meetings (Circleback, Otter, etc.) ────────────────────────────
+    attendees_raw = None
+    for attendee_marker, duration_marker in MEETING_MARKERS:
+        if attendee_marker in content and duration_marker in content:
+            # Extract attendees line for sub-classification
+            m = re.search(re.escape(attendee_marker) + r'\s*(.+?)(?:\n|$)', content)
+            if m:
+                attendees_raw = m.group(1)
+            break
+
+    # Also catch by title pattern
+    if not attendees_raw and re.match(r'^\d{4}[\s-]\d{2}[\s-]\d{2}[\s-]', title):
+        m = re.search(r'Attendees:\s*(.+?)(?:\n|$)', content)
+        if m:
+            attendees_raw = m.group(1)
+
+    if attendees_raw is not None:
+        return classify_meeting(title, content, attendees_raw)
+
+    # ── Agent session/daily notes ─────────────────────────────────────
+    if DAILY_NOTE_RE.match(body.strip()):
+        for marker in SESSION_MARKERS:
+            if marker in content:
+                return "sessions"
+
+    # ── PRDs ──────────────────────────────────────────────────────────
+    prd_hits = sum(1 for m in PRD_MARKERS if m.lower() in content.lower())
+    if prd_hits >= 2 or (title.lower().startswith("prd") and prd_hits >= 1):
+        return "projects"
+
+    return None
+
+
+# ── Category inference (keyword-based fallback) ────────────────────────────
 
 CATEGORY_KEYWORDS = {
     "projects": [
         "repo", "repository", "codebase", "pr ", "pull request", "branch",
-        "deploy", "feature", "sprint", "backlog", "api", "endpoint",
+        "deploy", "feature", "sprint", "backlog", "endpoint",
         "dashboard", "migration", "prd", "spec", "requirements",
-    ],
-    "concepts": [
-        "pattern", "architecture", "design", "principle", "convention",
-        "best practice", "standard", "approach",
-    ],
-    "people": [
-        "team", "member", "role", "responsibility", "contact", "onboard",
-    ],
-    "systems": [
-        "infrastructure", "server", "database", "deployment", "monitoring",
-        "ci/cd", "pipeline", "docker", "kubernetes", "supabase", "render",
-        "stripe", "finix", "brale",
-    ],
-    "planning": [
-        "roadmap", "milestone", "timeline", "priority", "objective",
-        "quarter", "okr", "goal", "phase", "launch",
-    ],
-    "research": [
-        "evaluation", "comparison", "benchmark", "competitor", "market",
-        "analysis", "finding",
-    ],
-    "strategy": [
-        "vision", "direction", "fundrais", "investor", "partnership",
-        "hiring", "growth", "positioning", "branding",
     ],
     "engineering": [
         "architecture", "technical", "implementation", "refactor",
         "testing", "performance", "security", "optimization",
+        "infrastructure", "server", "database", "deployment", "monitoring",
+        "ci/cd", "pipeline", "docker", "kubernetes",
+    ],
+    "strategy": [
+        "vision", "direction", "fundrais", "investor", "partnership",
+        "hiring", "growth", "positioning", "branding",
+        "roadmap", "milestone", "timeline", "objective",
+        "quarter", "okr", "goal", "launch",
+    ],
+    "research": [
+        "evaluation", "comparison", "benchmark", "competitor", "market",
+        "analysis", "finding", "research",
+    ],
+    "people": [
+        "role", "responsibility", "contact", "onboard",
+        "1:1", "one-on-one", "career", "feedback session",
     ],
     "knowledge": [
         "learning", "concept", "reference", "how-to", "guide",
-        "documentation", "notes",
+        "documentation", "pattern", "convention", "best practice",
     ],
 }
 
 # Category to vault folder mapping
+# Meeting subtypes map to subfolders: meetings/team, meetings/investors, etc.
 CATEGORY_FOLDERS = {
+    "meetings": "meetings",
+    "meetings/team": "meetings/team",
+    "meetings/investors": "meetings/investors",
+    "meetings/clients": "meetings/clients",
+    "meetings/conference": "meetings/conference",
+    "meetings/personal": "meetings/personal",
+    "meetings/external": "meetings/external",
+    "sessions": "sessions",
     "projects": "projects",
-    "concepts": "knowledge",
     "people": "people",
-    "systems": "engineering",
-    "planning": "engineering",
     "research": "research",
     "strategy": "strategy",
     "engineering": "engineering",
     "knowledge": "knowledge",
-    "changelog": "engineering",
     "reference": "reference",
 }
 
 
 def infer_category(title: str, body: str, tags: list, fm: dict) -> str:
     """Infer the best category for a note."""
-    # Trust frontmatter category if it's a real category (not "inbox")
+    # 1. Trust frontmatter category if it's a real folder (not "inbox")
     fm_cat = fm.get("category", "")
     if fm_cat and fm_cat != "inbox" and fm_cat in CATEGORY_FOLDERS:
         return fm_cat
 
+    # 2. Structural detection — catches meetings (with subfolders), sessions, PRDs
+    structural = detect_note_type(title, body, fm)
+    if structural:
+        return structural  # may be "meetings/investors", "sessions", etc.
+
+    # 3. Keyword-based fallback
     text = f"{title} {body}".lower()
     tag_text = " ".join(str(t).lower() for t in (tags if isinstance(tags, list) else []))
     combined = f"{text} {tag_text}"
@@ -168,6 +300,18 @@ def infer_category(title: str, body: str, tags: list, fm: dict) -> str:
 
 
 # ── QMD semantic search ────────────────────────────────────────────────────
+
+def qmd_available() -> bool:
+    """Check if QMD is installed and actually responsive to search."""
+    try:
+        result = subprocess.run(
+            ["qmd", "search", "test", "--limit", "1", "--json"],
+            capture_output=True, text=True, timeout=5
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
 
 def qmd_search(query: str, limit: int = 3) -> list:
     """Run QMD semantic search, return top results."""
@@ -315,6 +459,14 @@ def process_review_stale(
     if limit > 0:
         remaining = remaining[:limit]
 
+    # Auto-disable QMD if not available
+    if use_qmd:
+        if not qmd_available():
+            print(f"  {DIM}QMD not available — skipping semantic search{NC}")
+            use_qmd = False
+        else:
+            print(f"  {DIM}QMD enabled — checking for superseded content{NC}")
+
     print(f"  {len(remaining)} notes to classify")
     print()
 
@@ -333,7 +485,8 @@ def process_review_stale(
         tags = fm.get("tags", [])
 
         category = infer_category(title, body, tags, fm)
-        target_folder = CATEGORY_FOLDERS.get(category, "knowledge")
+        # For meeting subtypes, category IS the folder path (e.g. "meetings/investors")
+        target_folder = CATEGORY_FOLDERS.get(category, category if "/" in category else "knowledge")
 
         # Check for superseded content via QMD
         superseded_by = None
@@ -384,6 +537,9 @@ def process_review_stale(
     print()
     print(f"  {BOLD}{CYAN}Phase 3: Moving Files{NC}")
 
+    # Track moves for link updates: {old_stem: new_relative_path}
+    moved_files = {}
+
     for c in classifications:
         f = c["file"]
         target = vault / c["target_folder"]
@@ -409,13 +565,138 @@ def process_review_stale(
         except (IOError, UnicodeDecodeError):
             pass
 
+        old_stem = f.stem
         shutil.move(str(f), str(dest))
+        moved_files[old_stem] = dest
 
     print(f"  {GREEN}Moved {stats['moved']} notes to target folders{NC}")
     if stats["archived"] > 0:
         print(f"  {GREEN}Archived {stats['archived']} superseded notes{NC}")
 
+    # ── Phase 4: Update wikilinks ──────────────────────────────────────
+    print()
+    print(f"  {BOLD}{CYAN}Phase 4: Updating Links{NC}")
+    update_wikilinks(vault, moved_files, stats)
+
+    # ── Phase 5: Regenerate inbox index ────────────────────────────────
+    print()
+    print(f"  {BOLD}{CYAN}Phase 5: Inbox Index{NC}")
+    regenerate_inbox_index(vault)
+
     return stats
+
+
+# ── Wikilink updater ───────────────────────────────────────────────────────
+
+WIKILINK_RE = re.compile(r'\[\[([^\]|]+)(\|[^\]]+)?\]\]')
+
+
+def update_wikilinks(vault: Path, moved_files: dict, stats: dict):
+    """
+    Scan vault for [[wikilinks]] that reference moved files and update them.
+    Obsidian uses shortest-unique-path, so [[filename]] works regardless of folder.
+    But index files and explicit path references need updating.
+    """
+    if not moved_files:
+        print(f"  {DIM}No moves to update links for{NC}")
+        return
+
+    moved_stems = set(moved_files.keys())
+    links_updated = 0
+
+    # Only scan index files and files that likely contain cross-references
+    index_files = list(vault.rglob("index.md")) + list(vault.rglob("review-queue.md"))
+
+    for idx_file in index_files:
+        try:
+            content = idx_file.read_text(encoding="utf-8")
+        except (IOError, UnicodeDecodeError):
+            continue
+
+        original = content
+        found_stale = []
+
+        for match in WIKILINK_RE.finditer(content):
+            link_target = match.group(1).strip()
+            # Check if this link points to a moved file
+            link_stem = link_target.rsplit("/", 1)[-1]  # strip any path prefix
+            if link_stem in moved_stems:
+                found_stale.append(link_stem)
+
+        if found_stale:
+            # Remove lines containing stale links from index files
+            # (they'll be re-indexed by the curator on next run)
+            lines = content.split("\n")
+            new_lines = []
+            removed = 0
+            for line in lines:
+                stale = False
+                for stem in found_stale:
+                    if f"[[{stem}]]" in line or f"[[{stem}|" in line:
+                        stale = True
+                        removed += 1
+                        break
+                if not stale:
+                    new_lines.append(line)
+
+            if removed > 0:
+                idx_file.write_text("\n".join(new_lines), encoding="utf-8")
+                links_updated += removed
+                print(f"  {GREEN}cleaned{NC}  {idx_file.relative_to(vault)} ({removed} stale links removed)")
+
+    stats["links_updated"] = links_updated
+    if links_updated == 0:
+        print(f"  {GREEN}No stale links found in index files{NC}")
+
+
+# ── Inbox index regeneration ──────────────────────────────────────────────
+
+def regenerate_inbox_index(vault: Path):
+    """Regenerate the inbox/index.md to reflect current state."""
+    inbox = vault / "inbox"
+    index_file = inbox / "index.md"
+
+    if not inbox.exists():
+        return
+
+    # Count actual files in inbox (excluding subdirectories' contents)
+    direct_files = [f for f in inbox.iterdir() if f.is_file() and f.suffix == ".md" and f.name != "index.md"]
+    queue_dirs = [d for d in inbox.iterdir() if d.is_dir()]
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    lines = [
+        "---",
+        "type: folder-index",
+        f'generated: "{now}"',
+        "---",
+        "",
+        "# inbox",
+        "",
+        "Incoming notes awaiting classification",
+        "",
+        f"**{len(direct_files)} notes** | Last updated: {now}",
+        "",
+    ]
+
+    if direct_files:
+        lines.append("## Notes")
+        lines.append("")
+        for f in sorted(direct_files, key=lambda x: x.stem):
+            lines.append(f"- [[{f.stem}]] -- {f.stem.replace('-', ' ').title()}")
+        lines.append("")
+
+    for qdir in sorted(queue_dirs):
+        queue_files = list(qdir.glob("*.md"))
+        if queue_files:
+            lines.append(f"## {qdir.name}")
+            lines.append("")
+            for f in sorted(queue_files, key=lambda x: x.stem):
+                lines.append(f"- [[{f.stem}]] -- {f.stem.replace('-', ' ').title()}")
+            lines.append("")
+
+    index_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  {GREEN}Regenerated{NC}  inbox/index.md ({len(direct_files)} notes, {len(queue_dirs)} queues)")
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -456,6 +737,7 @@ def main():
     print(f"    Duplicates removed: {stats.get('duplicates_removed', 0)}")
     print(f"    Moved to folders:   {stats.get('moved', 0)}")
     print(f"    Archived:           {stats.get('archived', 0)}")
+    print(f"    Links cleaned:      {stats.get('links_updated', 0)}")
     if stats.get("classified"):
         print(f"    Classification:")
         for folder, count in sorted(stats["classified"].items()):
