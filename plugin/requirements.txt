@@ -1,0 +1,2 @@
+# Engram Python dependencies
+neo4j>=5.0.0
