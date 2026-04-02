@@ -1,0 +1,8 @@
+{
+  "bolt_url": "bolt://localhost:7687",
+  "username": "neo4j",
+  "password": "engram-dev",
+  "database": "engram",
+  "max_connection_pool_size": 10,
+  "connection_timeout": 5
+}
