@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""
+CLI wrapper for Engram meeting briefing generation.
+
+Usage:
+    engram-meeting-briefing --vault /path/to/vault --title "Meeting Title" \
+        --date 2026-04-05 --attendees kate-levchuk,marc-andreessen
+
+Output: JSON with briefing metadata.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Generate a pre-meeting intelligence dossier")
+    p.add_argument(
+        "--vault",
+        default=os.environ.get("LACP_OBSIDIAN_VAULT", os.environ.get("OPENCLAW_VAULT", "")),
+        help="Obsidian vault root",
+    )
+    p.add_argument("--title", required=True, help="Meeting title")
+    p.add_argument("--date", required=True, help="Meeting date (YYYY-MM-DD)")
+    p.add_argument("--attendees", required=True, help="Comma-separated attendee slugs")
+    p.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    p.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
+    return p
+
+
+def resolve_vault(raw: str) -> Path:
+    value = raw.strip() if raw else ""
+    if not value:
+        openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
+        value = os.path.join(openclaw_home, "data", "knowledge")
+    return Path(value).expanduser().resolve()
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    vault = resolve_vault(args.vault)
+
+    if not vault.exists():
+        payload = {"ok": False, "kind": "meeting_briefing", "error": f"vault_missing:{vault}"}
+        print(json.dumps(payload, indent=2))
+        return 2
+
+    # Add lib directory to path
+    lib_dir = str(Path(__file__).resolve().parent.parent / "lib")
+    sys.path.insert(0, lib_dir)
+
+    from meeting_briefing import generate_briefing
+    from entity_extractor import _slugify
+
+    # Try to import GraphDB (from Phase 1)
+    db = None
+    try:
+        from graph_db import GraphDB
+        db = GraphDB()
+        if not db.is_available():
+            db = None
+    except ImportError:
+        pass
+
+    attendee_slugs = [s.strip() for s in args.attendees.split(",") if s.strip()]
+
+    meeting = {
+        "title": args.title,
+        "date": args.date,
+        "slug": _slugify(f"{args.date}-{args.title}"),
+        "attendees": [{"slug": s, "name": s.replace("-", " ").title()} for s in attendee_slugs],
+    }
+
+    result = generate_briefing(
+        db=db,
+        vault_path=str(vault),
+        meeting=meeting,
+        dry_run=args.dry_run,
+    )
+
+    payload = {
+        "ok": True,
+        "kind": "meeting_briefing",
+        "vault": str(vault),
+        **result,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

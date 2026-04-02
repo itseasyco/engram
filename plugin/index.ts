@@ -506,7 +506,58 @@ const engramPlugin = {
       },
     });
 
-    const toolCount = 10;
+    // engram_meeting_briefing — generate pre-meeting dossier
+    api.registerTool({
+      name: "engram_meeting_briefing",
+      description:
+        "Generate a pre-meeting intelligence dossier. Queries the knowledge graph " +
+        "for each attendee: past meetings, relationships, network connections, " +
+        "web search for recent news, and LLM-generated talking points. " +
+        "Writes briefing to meetings/briefings/.",
+      parameters: Type.Object({
+        attendee_slugs: Type.Array(Type.String(), {
+          description: "Slugs of attendees to research (e.g., ['kate-levchuk', 'marc-andreessen'])",
+        }),
+        meeting_title: Type.String({ description: "Meeting title" }),
+        meeting_date: Type.String({ description: "Meeting date (YYYY-MM-DD)" }),
+        dry_run: Type.Optional(Type.Boolean({ description: "Preview without writing. Default: false" })),
+      }),
+      async execute(_id, params: any) {
+        const args = [
+          "--vault", vaultPath,
+          "--title", params.meeting_title,
+          "--date", params.meeting_date,
+          "--attendees", params.attendee_slugs.join(","),
+        ];
+        if (params.dry_run) args.push("--dry-run");
+        const result = await runCli("engram-meeting-briefing", args);
+        return textResult(result.stdout || `meeting-briefing failed: ${result.stderr}`);
+      },
+    });
+
+    // engram_relationship_query — query the relationship graph
+    api.registerTool({
+      name: "engram_relationship_query",
+      description:
+        "Query the knowledge graph for relationships. Examples: " +
+        "'Who do we know at A16Z?', 'How are Kate and Andrew connected?', " +
+        "'Find paths between Person X and Goal Y within 3 hops.'",
+      parameters: Type.Object({
+        query: Type.String({ description: "Natural language relationship query" }),
+        max_hops: Type.Optional(Type.Number({ description: "Maximum traversal depth (default: 3)" })),
+      }),
+      async execute(_id, params: any) {
+        const args = [
+          "--vault", vaultPath,
+          "--query", params.query,
+        ];
+        if (params.max_hops) args.push("--max-hops", String(params.max_hops));
+        const result = await runCli("engram-relationship-query", args);
+        return textResult(result.stdout || `relationship-query failed: ${result.stderr}`);
+      },
+    });
+
+    const toolCount = 12;
     api.logger.info(
       `[lacp] Plugin loaded (version=${process.env.npm_package_version ?? "2.2.0"}, hooks=4, tools=${toolCount})`,
     );

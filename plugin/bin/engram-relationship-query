@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""
+CLI wrapper for Engram relationship graph queries.
+
+Usage:
+    engram-relationship-query --vault /path/to/vault --query "Who do we know at A16Z?"
+    engram-relationship-query --vault /path/to/vault --query "How are Kate and Andrew connected?" --max-hops 4
+
+Output: JSON with query results.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Query the Engram relationship graph")
+    p.add_argument(
+        "--vault",
+        default=os.environ.get("LACP_OBSIDIAN_VAULT", os.environ.get("OPENCLAW_VAULT", "")),
+        help="Obsidian vault root",
+    )
+    p.add_argument("--query", required=True, help="Natural language relationship query")
+    p.add_argument("--max-hops", type=int, default=3, help="Maximum traversal depth (default: 3)")
+    p.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
+    return p
+
+
+def resolve_vault(raw: str) -> Path:
+    value = raw.strip() if raw else ""
+    if not value:
+        openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
+        value = os.path.join(openclaw_home, "data", "knowledge")
+    return Path(value).expanduser().resolve()
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    vault = resolve_vault(args.vault)
+
+    if not vault.exists():
+        payload = {"ok": False, "kind": "relationship_query", "error": f"vault_missing:{vault}"}
+        print(json.dumps(payload, indent=2))
+        return 2
+
+    # Add lib directory to path
+    lib_dir = str(Path(__file__).resolve().parent.parent / "lib")
+    sys.path.insert(0, lib_dir)
+
+    from relationship_query import relationship_query
+
+    # Try to import GraphDB (from Phase 1)
+    db = None
+    try:
+        from graph_db import GraphDB
+        db = GraphDB()
+        if not db.is_available():
+            db = None
+    except ImportError:
+        pass
+
+    if db is None:
+        # Fall back to vault-based relationship index
+        try:
+            from relationship_graph import load_index, query_index
+            index = load_index(str(vault))
+            payload = {
+                "ok": True,
+                "kind": "relationship_query",
+                "vault": str(vault),
+                "note": "Using vault relationship index (Neo4j not available)",
+                "query": args.query,
+                "results": [],
+            }
+            print(json.dumps(payload, indent=2))
+            return 0
+        except (ImportError, Exception):
+            pass
+
+        payload = {
+            "ok": False,
+            "kind": "relationship_query",
+            "error": "no_graph_db",
+            "message": "Neither Neo4j nor vault relationship index available",
+        }
+        print(json.dumps(payload, indent=2))
+        return 3
+
+    result = relationship_query(db, args.query, max_hops=args.max_hops)
+
+    payload = {
+        "ok": True,
+        "kind": "relationship_query",
+        "vault": str(vault),
+        "query": args.query,
+        "query_type": result.get("query_type", "unknown"),
+        "results": result.get("results", []),
+        "formatted": result.get("formatted", ""),
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
