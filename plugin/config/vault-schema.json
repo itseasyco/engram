@@ -23,6 +23,15 @@
     "people_investors": "people/investors",
     "people_clients": "people/clients",
     "strategy": "strategy",
-    "archive": "archive"
+    "archive": "archive",
+    "organizations": "organizations",
+    "strategy_goals": "strategy/goals",
+    "strategy_decisions": "strategy/decisions",
+    "strategy_synthesis": "strategy/synthesis",
+    "meetings_briefings": "meetings/briefings",
+    "meetings_team": "meetings/team",
+    "meetings_investors": "meetings/investors",
+    "meetings_clients": "meetings/clients",
+    "metadata": "_metadata"
   }
 }

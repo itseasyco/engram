@@ -42,6 +42,7 @@ def _build_folder_to_category() -> dict[str, str]:
             "projects": "projects",
             "concepts": "concepts",
             "people": "people",
+            "organizations": "organizations",
             "systems": "systems",
             "inbox": "inbox",
             "planning": "planning",

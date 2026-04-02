@@ -22,6 +22,7 @@ _FOLDER_META = [
     ("projects",  "Per-repo and per-project knowledge"),
     ("concepts",  "Cross-project concepts and patterns"),
     ("people",    "Team context and roles"),
+    ("organizations", "Company and fund profiles"),
     ("systems",   "Infrastructure and architecture"),
     ("inbox",     "Incoming notes awaiting classification"),
     ("planning",  "Product planning and roadmaps"),

@@ -61,6 +61,16 @@ _DEFAULTS = {
     "changelog_environments": "changelog/environments",
     "templates": "templates",
     "archive": "archive",
+    # v4.0: Entity graph + intelligence
+    "organizations": "organizations",
+    "strategy_goals": "strategy/goals",
+    "strategy_decisions": "strategy/decisions",
+    "strategy_synthesis": "strategy/synthesis",
+    "meetings_briefings": "meetings/briefings",
+    "meetings_team": "meetings/team",
+    "meetings_investors": "meetings/investors",
+    "meetings_clients": "meetings/clients",
+    "metadata": "_metadata",
 }
 
 # Cache
