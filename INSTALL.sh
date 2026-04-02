@@ -261,6 +261,56 @@ check_and_install_obsidian_headless() {
     fi
 }
 
+check_and_install_neo4j() {
+    # Neo4j is optional — graph DB features degrade gracefully without it
+    if command -v neo4j &>/dev/null; then
+        local neo4j_version
+        neo4j_version=$(neo4j --version 2>/dev/null | head -1 || echo "unknown")
+        log_success "Neo4j found ($neo4j_version)"
+        return 0
+    fi
+
+    log_warning "Neo4j not found"
+    echo -e "  ${DIM}Neo4j provides the graph intelligence layer (entity relationships, spreading activation).${NC}"
+    echo -e "  ${DIM}Engram works without it — graph features will gracefully degrade to JSON indexes.${NC}"
+    echo ""
+
+    if prompt_yes_no "Install Neo4j Community Edition? (brew install neo4j)" "n"; then
+        echo ""
+        if [ "$HAS_GUM" = "true" ]; then
+            if gum spin --spinner dot --title "Installing Neo4j..." -- brew install neo4j 2>/dev/null; then
+                log_success "Neo4j installed"
+            else
+                log_error "Neo4j installation failed"
+                log_info "Install manually: brew install neo4j (macOS) or see https://neo4j.com/docs/operations-manual/current/installation/"
+                return 1
+            fi
+        else
+            log_info "Installing Neo4j (this may take a moment)..."
+            if brew install neo4j 2>&1 | tail -5; then
+                log_success "Neo4j installed"
+            else
+                log_error "Neo4j installation failed"
+                log_info "Install manually: brew install neo4j (macOS) or see https://neo4j.com/docs/operations-manual/current/installation/"
+                return 1
+            fi
+        fi
+
+        if command -v neo4j &>/dev/null; then
+            log_success "Verified: Neo4j ready"
+            log_info "Start Neo4j with: neo4j start"
+            log_info "Default bolt URL: bolt://localhost:7687"
+            return 0
+        else
+            log_error "neo4j command not found after install"
+            return 1
+        fi
+    else
+        log_info "Skipped Neo4j installation (graph features will use fallback mode)"
+        return 0  # Not a failure — Neo4j is optional
+    fi
+}
+
 check_and_install_gitnexus() {
     if command -v gitnexus &>/dev/null; then
         log_success "GitNexus found ($(which gitnexus))"
@@ -663,6 +713,8 @@ run_wizard() {
     echo ""
     check_and_install_obsidian_cli || true
     echo ""
+    check_and_install_neo4j || true
+    echo ""
 
     # 5. Advanced config (optional)
     WIZARD_ADVANCED=false
@@ -936,6 +988,18 @@ PKGJSON
             local lib_count
             lib_count=$(ls -1 "$PLUGIN_PATH/lib"/*.py 2>/dev/null | wc -l | tr -d ' ')
             log_success "Python library modules installed ($lib_count modules)"
+        fi
+
+        # Python pip dependencies
+        if [ -f "$SCRIPT_DIR/plugin/requirements.txt" ]; then
+            cp "$SCRIPT_DIR/plugin/requirements.txt" "$PLUGIN_PATH/requirements.txt"
+            log_info "Installing Python dependencies..."
+            if python3 -m pip install -r "$PLUGIN_PATH/requirements.txt" --quiet 2>/dev/null; then
+                log_success "Python dependencies installed"
+            else
+                log_warning "Some Python dependencies failed to install"
+                log_info "  Run manually: pip install -r $PLUGIN_PATH/requirements.txt"
+            fi
         fi
 
         # Config
