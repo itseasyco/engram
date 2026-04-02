@@ -1,0 +1,24 @@
+{
+  "_version": "1.0.0",
+  "_description": "Self-improving entity alias dictionary. When fuzzy matching resolves an entity, the alias is written back here so next time it is instant.",
+  "people": {
+    "andrew": "Andrew Fisher",
+    "andrew fisher": "Andrew Fisher",
+    "niko": "Niko Lemieux",
+    "niko lemieux": "Niko Lemieux",
+    "evan": "Evan Goldberg",
+    "evan goldberg": "Evan Goldberg",
+    "ari": "Ari Shaller",
+    "ari shaller": "Ari Shaller",
+    "chad": "Chad Green",
+    "chad green": "Chad Green",
+    "danie": "Danie Beukman",
+    "danie beukman": "Danie Beukman"
+  },
+  "organizations": {
+    "a16z": "Andreessen Horowitz",
+    "andreessen horowitz": "Andreessen Horowitz",
+    "yc": "Y Combinator",
+    "y combinator": "Y Combinator"
+  }
+}
