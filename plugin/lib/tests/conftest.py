@@ -1,9 +1,10 @@
-"""Shared fixtures for graph DB tests."""
+"""Shared fixtures for engram lib tests."""
 
 import json
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -113,3 +114,43 @@ related_entities:
     note_path = temp_vault / "strategy" / "goals" / "series-a-fundraise.md"
     note_path.write_text(content)
     return note_path
+
+
+@pytest.fixture
+def sample_meeting_note(temp_vault):
+    """Create a sample meeting note in the vault."""
+    content = """---
+title: "2026-03-25 Investor Call — Kate Levchuk"
+category: inbox
+---
+
+# Investor Call — Kate Levchuk
+
+**Date:** 2026-03-25
+**Duration:** 1800 seconds
+**Attendees:** Andrew Fisher, Kate Levchuk, Niko Lemieux
+
+## Notes
+- Discussed Series A timeline and compliance roadmap
+- Kate interested in stablecoin settlement layer
+- Follow-up: send pitch deck v3
+
+## Action Items
+- [ ] Send updated pitch deck to Kate by Friday
+- [ ] Schedule follow-up call for next week
+"""
+    (temp_vault / "meetings" / "investors").mkdir(parents=True, exist_ok=True)
+    note_path = temp_vault / "meetings" / "investors" / "2026-03-25-investor-call-kate.md"
+    note_path.write_text(content)
+    return note_path
+
+
+@pytest.fixture
+def mock_graph_db():
+    """Mock GraphDB that returns canned results for common queries."""
+    db = MagicMock()
+    db.is_available.return_value = True
+    db.execute_read_only.return_value = []
+    db.execute_write.return_value = None
+    db.execute.return_value = []
+    return db
