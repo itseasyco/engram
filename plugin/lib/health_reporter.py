@@ -116,6 +116,26 @@ def compute_graph_metrics(vault_path: Path) -> dict:
                     1 for f in queue_dir.glob("*.md") if f.name != "index.md"
                 )
 
+    # Graph DB health
+    graph_db_stats = {"available": False}
+    try:
+        from .graph_db import get_graph_db
+        db = get_graph_db()
+        if db.is_available():
+            stats = db.execute_read_only(
+                "MATCH (n) WITH count(n) AS nodes "
+                "OPTIONAL MATCH ()-[r]->() "
+                "RETURN nodes, count(r) AS edges"
+            )
+            if stats:
+                graph_db_stats = {
+                    "available": True,
+                    "nodes": stats[0].get("nodes", 0),
+                    "edges": stats[0].get("edges", 0),
+                }
+    except Exception:
+        pass
+
     return {
         "note_count": note_count,
         "link_count": link_count,
@@ -126,6 +146,7 @@ def compute_graph_metrics(vault_path: Path) -> dict:
         "inbox_pending": inbox_pending,
         "category_counts": dict(category_counts),
         "broken_link_count": broken_links,
+        "graph_db": graph_db_stats,
     }
 
 
@@ -232,6 +253,25 @@ def generate_health_report(
 
     for cat, count in sorted(metrics["category_counts"].items(), key=lambda x: x[1], reverse=True):
         lines.append(f"| {cat} | {count} |")
+
+    # Graph DB section in report
+    graph_db_info = metrics.get("graph_db", {})
+    if graph_db_info.get("available"):
+        lines.extend([
+            "",
+            "## Graph Database",
+            "",
+            f"- Status: connected",
+            f"- Nodes: {graph_db_info.get('nodes', 0)}",
+            f"- Edges: {graph_db_info.get('edges', 0)}",
+        ])
+    else:
+        lines.extend([
+            "",
+            "## Graph Database",
+            "",
+            "- Status: unavailable",
+        ])
 
     # Cycle results summary
     if cycle_results:
