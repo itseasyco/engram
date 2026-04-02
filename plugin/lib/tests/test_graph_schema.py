@@ -23,6 +23,10 @@ class TestGraphSchema:
         assert "Goal" in NODE_TYPES
         assert "Meeting" in NODE_TYPES
         assert "Note" in NODE_TYPES
+        assert "Feature" in NODE_TYPES
+        assert "Decision" in NODE_TYPES
+        assert "IntelligenceReport" in NODE_TYPES
+        assert "Session" in NODE_TYPES
 
     def test_edge_types_registered(self):
         from lib.graph_schema import EDGE_TYPES
@@ -38,6 +42,9 @@ class TestGraphSchema:
         assert vault_rel_to_cypher("works-at") == "WORKS_AT"
         assert vault_rel_to_cypher("portfolio-company-of") == "PORTFOLIO_COMPANY_OF"
         assert vault_rel_to_cypher("met-with") == "MET_WITH"
+        # Fallback path: unmapped types convert mechanically
+        assert vault_rel_to_cypher("next-stage") == "NEXT_STAGE"
+        assert vault_rel_to_cypher("some-unknown-rel") == "SOME_UNKNOWN_REL"
 
     def test_schema_is_idempotent(self):
         from lib.graph_db import GraphDB
