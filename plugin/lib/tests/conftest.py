@@ -30,7 +30,7 @@ def neo4j_config(tmp_path):
         "bolt_url": os.environ.get("NEO4J_BOLT_URL", "bolt://localhost:7687"),
         "username": os.environ.get("NEO4J_USERNAME", "neo4j"),
         "password": os.environ.get("NEO4J_PASSWORD", "engram-dev"),
-        "database": "engram-test",
+        "database": "neo4j",
         "max_connection_pool_size": 5,
         "connection_timeout": 5,
     }

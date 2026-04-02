@@ -54,7 +54,7 @@ class GraphDB:
         self.bolt_url = self._config.get("bolt_url", "bolt://localhost:7687")
         self._username = self._config.get("username", "neo4j")
         self._password = self._config.get("password", "neo4j")
-        self._database = self._config.get("database", "engram")
+        self._database = self._config.get("database", "neo4j")
         self._pool_size = self._config.get("max_connection_pool_size", 10)
         self._timeout = self._config.get("connection_timeout", 5)
 
@@ -79,7 +79,7 @@ class GraphDB:
                 "bolt_url": env_url,
                 "username": os.environ.get("ENGRAM_NEO4J_USERNAME", "neo4j"),
                 "password": os.environ.get("ENGRAM_NEO4J_PASSWORD", "neo4j"),
-                "database": os.environ.get("ENGRAM_NEO4J_DATABASE", "engram"),
+                "database": os.environ.get("ENGRAM_NEO4J_DATABASE", "neo4j"),
             }
 
         # Default config file location
