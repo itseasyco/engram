@@ -8,10 +8,8 @@ This is the CQRS sync layer: vault is the write side, graph DB is the query side
 """
 
 import logging
-import os
 import re
 from pathlib import Path
-from typing import Optional
 
 from .consolidation import _parse_frontmatter
 from .graph_schema import vault_rel_to_cypher
