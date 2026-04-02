@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Score a goal against all relationship signals")
+    p.add_argument(
+        "--vault",
+        default=os.environ.get("LACP_OBSIDIAN_VAULT", os.environ.get("OPENCLAW_VAULT", "")),
+        help="Obsidian vault root",
+    )
+    p.add_argument("--goal", required=True, help="Goal slug to score")
+    p.add_argument("--json", action="store_true", default=True, help="Output JSON (default)")
+    return p
+
+
+def resolve_vault(raw: str) -> Path:
+    value = raw.strip() if raw else ""
+    if not value:
+        openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
+        value = os.path.join(openclaw_home, "data", "knowledge")
+    return Path(value).expanduser().resolve()
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    vault = resolve_vault(args.vault)
+    if not vault.exists():
+        payload = {"ok": False, "kind": "objective_status", "error": f"vault_missing:{vault}"}
+        print(json.dumps(payload, indent=2))
+        return 2
+
+    # Add lib to path
+    lib_dir = str(Path(__file__).resolve().parent.parent / "lib")
+    sys.path.insert(0, lib_dir)
+
+    from graph_db import GraphDB
+    from opportunity_scorer import score_opportunity
+    from deal_tracker import detect_stale_deals, find_overdue_actions
+
+    db = GraphDB()
+    if not db.is_available():
+        payload = {"ok": False, "kind": "objective_status", "error": "neo4j_unavailable"}
+        print(json.dumps(payload, indent=2))
+        return 3
+
+    # Find all people connected to this goal
+    goal_people = db.execute_read_only("""
+        MATCH (g:Goal {slug: $slug})-[*1..2]-(p:Person)
+        WHERE p.relationship_stage IS NOT NULL
+        RETURN DISTINCT p.slug AS slug, p.name AS name,
+               p.relationship_stage AS stage
+    """, {"slug": args.goal})
+
+    if not goal_people:
+        payload = {
+            "ok": True,
+            "kind": "objective_status",
+            "goal": args.goal,
+            "people": [],
+            "message": "No people connected to this goal",
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    # Score each person
+    scored_people = []
+    for person in goal_people:
+        score = score_opportunity(db, person["slug"])
+        score["name"] = person["name"]
+        score["stage"] = person["stage"]
+        scored_people.append(score)
+
+    scored_people.sort(key=lambda s: s["total"], reverse=True)
+
+    # Get stale and overdue for these people
+    all_stale = detect_stale_deals(db)
+    all_overdue = find_overdue_actions(db)
+    person_slugs = {p["slug"] for p in goal_people}
+    relevant_stale = [s for s in all_stale if s["slug"] in person_slugs]
+    relevant_overdue = [o for o in all_overdue if o["slug"] in person_slugs]
+
+    payload = {
+        "ok": True,
+        "kind": "objective_status",
+        "goal": args.goal,
+        "people_scored": len(scored_people),
+        "scores": scored_people,
+        "stale_relationships": relevant_stale,
+        "overdue_actions": relevant_overdue,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

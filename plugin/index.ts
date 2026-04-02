@@ -557,7 +557,40 @@ const engramPlugin = {
       },
     });
 
-    const toolCount = 12;
+    // engram_deal_pipeline — view deal stages, overdue actions
+    api.registerTool({
+      name: "engram_deal_pipeline",
+      description:
+        "View the deal pipeline: relationships grouped by stage, stale deals, " +
+        "overdue follow-ups, and opportunity scores.",
+      parameters: Type.Object({
+        stage: Type.Optional(Type.String({ description: "Filter by stage (e.g., 'active-conversation')" })),
+      }),
+      async execute(_id, params: any) {
+        const args = ["--vault", vaultPath];
+        if (params.stage) args.push("--stage", params.stage);
+        const result = await runCli("engram-deal-pipeline", args);
+        return textResult(result.stdout || "No pipeline data available.");
+      },
+    });
+
+    // engram_objective_status — score a goal against all signals
+    api.registerTool({
+      name: "engram_objective_status",
+      description:
+        "Score the current state of a goal against all relationship signals, " +
+        "meeting history, and network connections.",
+      parameters: Type.Object({
+        goal_slug: Type.String({ description: "Slug of the goal to score" }),
+      }),
+      async execute(_id, params: any) {
+        const args = ["--vault", vaultPath, "--goal", params.goal_slug];
+        const result = await runCli("engram-objective-status", args);
+        return textResult(result.stdout || "No objective data available.");
+      },
+    });
+
+    const toolCount = 14;
     api.logger.info(
       `[lacp] Plugin loaded (version=${process.env.npm_package_version ?? "2.2.0"}, hooks=4, tools=${toolCount})`,
     );

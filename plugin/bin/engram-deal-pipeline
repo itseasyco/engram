@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="View the deal pipeline: stages, stale deals, overdue actions, scores")
+    p.add_argument(
+        "--vault",
+        default=os.environ.get("LACP_OBSIDIAN_VAULT", os.environ.get("OPENCLAW_VAULT", "")),
+        help="Obsidian vault root",
+    )
+    p.add_argument("--stage", default=None, help="Filter by relationship stage (e.g., 'active-conversation')")
+    p.add_argument("--json", action="store_true", default=True, help="Output JSON (default)")
+    return p
+
+
+def resolve_vault(raw: str) -> Path:
+    value = raw.strip() if raw else ""
+    if not value:
+        openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
+        value = os.path.join(openclaw_home, "data", "knowledge")
+    return Path(value).expanduser().resolve()
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    vault = resolve_vault(args.vault)
+    if not vault.exists():
+        payload = {"ok": False, "kind": "deal_pipeline", "error": f"vault_missing:{vault}"}
+        print(json.dumps(payload, indent=2))
+        return 2
+
+    # Add lib to path
+    lib_dir = str(Path(__file__).resolve().parent.parent / "lib")
+    sys.path.insert(0, lib_dir)
+
+    from graph_db import GraphDB
+    from deal_tracker import run_deal_tracking, get_pipeline
+    from opportunity_scorer import score_all_active_relationships
+
+    db = GraphDB()
+    if not db.is_available():
+        payload = {"ok": False, "kind": "deal_pipeline", "error": "neo4j_unavailable"}
+        print(json.dumps(payload, indent=2))
+        return 3
+
+    pipeline = get_pipeline(db)
+    deal_result = run_deal_tracking(db, dry_run=True)
+    scores = score_all_active_relationships(db)
+
+    # Filter by stage if requested
+    if args.stage:
+        pipeline = {k: v for k, v in pipeline.items() if k == args.stage}
+
+    payload = {
+        "ok": True,
+        "kind": "deal_pipeline",
+        "pipeline": pipeline,
+        "stale_deals": deal_result.get("stale_deals", []),
+        "overdue_actions": deal_result.get("overdue_actions", []),
+        "pending_transitions": deal_result.get("transitions", []),
+        "opportunity_scores": {
+            "relationships_scored": len(scores),
+            "top_10": scores[:10],
+        },
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

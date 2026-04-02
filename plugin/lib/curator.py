@@ -40,6 +40,8 @@ from .staleness import scan_staleness
 from .wikilink_weaver import weave_wikilinks
 from .graph_db import get_graph_db
 from .graph_sync import sync_vault_to_graph
+from .deal_tracker import run_deal_tracking
+from .opportunity_scorer import score_all_active_relationships
 from .graph_mycelium import run_full_mycelium_cycle
 
 logger = logging.getLogger("curator")
@@ -115,7 +117,7 @@ def run_curator_cycle(
     all_steps = [
         "inbox", "consolidation", "entities", "graph_sync", "wikilinks",
         "relationships", "staleness", "conflicts", "schema",
-        "intelligence", "indexes", "health",
+        "intelligence", "deals", "indexes", "health",
     ]
     if steps is None:
         steps = all_steps
@@ -126,7 +128,7 @@ def run_curator_cycle(
 
     # Step 1: Process inbox
     if "inbox" in steps:
-        logger.info("Step 1/12: Processing inbox...")
+        logger.info("Step 1/13: Processing inbox...")
         try:
             inbox_result = process_inbox(str(vault), dry_run=dry_run)
             results["inbox"] = inbox_result
@@ -143,7 +145,7 @@ def run_curator_cycle(
 
     # Step 2: Mycelium consolidation
     if "consolidation" in steps:
-        logger.info("Step 2/12: Running mycelium consolidation...")
+        logger.info("Step 2/13: Running mycelium consolidation...")
         try:
             consolidation_result = run_consolidation(
                 vault_path=str(vault),
@@ -171,7 +173,7 @@ def run_curator_cycle(
 
     # Step 3: Entity extraction (NEW)
     if "entities" in steps:
-        logger.info("Step 3/12: Extracting entities...")
+        logger.info("Step 3/13: Extracting entities...")
         try:
             entity_result = extract_entities_batch(
                 vault_path=str(vault),
@@ -190,7 +192,7 @@ def run_curator_cycle(
 
     # Step 4: Graph DB sync (NEW)
     if "graph_sync" in steps:
-        logger.info("Step 4/12: Syncing vault to graph DB...")
+        logger.info("Step 4/13: Syncing vault to graph DB...")
         try:
             db = get_graph_db()
             if db.is_available():
@@ -210,7 +212,7 @@ def run_curator_cycle(
 
     # Step 5: Weave wikilinks (includes entity links)
     if "wikilinks" in steps:
-        logger.info("Step 5/12: Weaving wikilinks...")
+        logger.info("Step 5/13: Weaving wikilinks...")
         try:
             wikilink_result = weave_wikilinks(
                 vault_path=str(vault),
@@ -228,7 +230,7 @@ def run_curator_cycle(
 
     # Step 6: Relationship inference (NEW)
     if "relationships" in steps:
-        logger.info("Step 6/12: Rebuilding relationship index...")
+        logger.info("Step 6/13: Rebuilding relationship index...")
         try:
             rel_result = rebuild_relationship_index(
                 vault_path=str(vault),
@@ -262,7 +264,7 @@ def run_curator_cycle(
 
     # Step 7: Staleness scan
     if "staleness" in steps:
-        logger.info("Step 7/12: Scanning staleness...")
+        logger.info("Step 7/13: Scanning staleness...")
         try:
             staleness_result = scan_staleness(
                 vault_path=str(vault),
@@ -281,7 +283,7 @@ def run_curator_cycle(
 
     # Step 8: Conflict resolution
     if "conflicts" in steps:
-        logger.info("Step 8/12: Resolving conflicts...")
+        logger.info("Step 8/13: Resolving conflicts...")
         try:
             conflict_result = resolve_conflicts(
                 vault_path=str(vault),
@@ -300,7 +302,7 @@ def run_curator_cycle(
 
     # Step 9: Schema enforcement
     if "schema" in steps:
-        logger.info("Step 9/12: Enforcing schema...")
+        logger.info("Step 9/13: Enforcing schema...")
         try:
             schema_result = enforce_schema(
                 vault_path=str(vault),
@@ -320,7 +322,7 @@ def run_curator_cycle(
 
     # Step 10: Cross-reference intelligence (NEW)
     if "intelligence" in steps:
-        logger.info("Step 10/12: Running cross-reference intelligence...")
+        logger.info("Step 10/13: Running cross-reference intelligence...")
         try:
             intel_result = generate_intelligence_report(
                 vault_path=str(vault),
@@ -336,9 +338,36 @@ def run_curator_cycle(
             logger.error("Intelligence report failed: %s", exc)
             results["intelligence"] = {"error": str(exc)}
 
-    # Step 11: Index update
+    # Step 11: Deal tracking + opportunity scoring (Phase 3)
+    if "deals" in steps:
+        logger.info("Step 11/13: Running deal tracking...")
+        try:
+            db = get_graph_db()
+            if db and db.is_available():
+                deal_result = run_deal_tracking(db, dry_run=dry_run)
+                results["deals"] = deal_result
+
+                scores = score_all_active_relationships(db)
+                results["opportunity_scores"] = {
+                    "relationships_scored": len(scores),
+                    "top_5": scores[:5],
+                }
+                logger.info(
+                    "Deals: %d transitions, %d stale, %d overdue. %d relationships scored.",
+                    len(deal_result.get("transitions", [])),
+                    len(deal_result.get("stale_deals", [])),
+                    len(deal_result.get("overdue_actions", [])),
+                    len(scores),
+                )
+            else:
+                results["deals"] = {"skipped": True, "reason": "graph_db_unavailable"}
+        except Exception as exc:
+            logger.error("Deal tracking failed: %s", exc)
+            results["deals"] = {"error": str(exc)}
+
+    # Step 12: Index update
     if "indexes" in steps:
-        logger.info("Step 11/12: Regenerating indexes...")
+        logger.info("Step 12/13: Regenerating indexes...")
         try:
             index_result = regenerate_indexes(
                 vault_path=str(vault),
@@ -358,7 +387,7 @@ def run_curator_cycle(
     cycle_duration = time.monotonic() - cycle_start
 
     if "health" in steps:
-        logger.info("Step 12/12: Generating health report...")
+        logger.info("Step 13/13: Generating health report...")
         try:
             health_result = generate_health_report(
                 vault_path=str(vault),
