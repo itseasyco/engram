@@ -1,7 +1,6 @@
 """Tests for Neo4j connection manager."""
 
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 # Tests that don't require a live Neo4j instance
@@ -31,9 +30,14 @@ class TestGraphDBConfig:
         db = GraphDB()
         assert db.bolt_url == "bolt://custom:7687"
 
-    def test_default_config_when_nothing_set(self):
+    def test_default_config_when_nothing_set(self, monkeypatch):
         from lib.graph_db import GraphDB
 
+        monkeypatch.delenv("ENGRAM_NEO4J_BOLT_URL", raising=False)
+        monkeypatch.delenv("ENGRAM_NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("ENGRAM_NEO4J_PASSWORD", raising=False)
+        monkeypatch.delenv("ENGRAM_NEO4J_DATABASE", raising=False)
+        monkeypatch.delenv("OPENCLAW_PLUGIN_DIR", raising=False)
         db = GraphDB()
         assert db.bolt_url == "bolt://localhost:7687"
 
