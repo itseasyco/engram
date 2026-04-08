@@ -201,11 +201,50 @@ def register_qmd_collections(target: Path) -> list[str]:
     return [name]
 
 
+def move_lcm_db(source: Path, target: Path) -> dict:
+    """Move ~/.openclaw/lcm.db to ~/.engram/lcm.db with a pre-flight backup."""
+    src_db = source / "lcm.db"
+    if not src_db.exists():
+        return {"moved": False, "reason": "no_source"}
+    target.mkdir(parents=True, exist_ok=True)
+    dst_db = target / "lcm.db"
+    if dst_db.exists():
+        return {"moved": False, "reason": "target_exists", "target": str(dst_db)}
+    # Capture the original size BEFORE any copy so the post-copy
+    # verification compares to a stable reference, not to the in-flight
+    # source which could in theory be touched by another process.
+    original_size = src_db.stat().st_size
+    backup = src_db.with_suffix(f".db.bak.{int(time.time())}")
+    shutil.copy2(src_db, backup)
+    shutil.copy2(src_db, dst_db)
+    if dst_db.stat().st_size != original_size or backup.stat().st_size != original_size:
+        dst_db.unlink(missing_ok=True)
+        return {
+            "moved": False,
+            "reason": "size_mismatch",
+            "backup": str(backup),
+            "expected": original_size,
+        }
+    src_db.unlink()
+    return {
+        "moved": True,
+        "from": str(src_db),
+        "to": str(dst_db),
+        "backup": str(backup),
+        "size": original_size,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Migrate Engram config to ~/.engram/config.json")
     p.add_argument("--source", default=os.path.expanduser("~/.openclaw"))
     p.add_argument("--target", default=os.path.expanduser("~/.engram"))
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "--move-lcm",
+        action="store_true",
+        help="Move lcm.db from source to target (with backup)",
+    )
     args = p.parse_args(argv)
 
     result = migrate(
@@ -213,6 +252,8 @@ def main(argv: list[str] | None = None) -> int:
         target=Path(args.target),
         dry_run=args.dry_run,
     )
+    if args.move_lcm and not args.dry_run:
+        result["lcm"] = move_lcm_db(Path(args.source), Path(args.target))
     print(json.dumps(result, indent=2, default=str))
     return 0
 

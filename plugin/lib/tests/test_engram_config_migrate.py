@@ -118,3 +118,79 @@ def test_register_qmd_collections_no_qmd(fake_openclaw, tmp_path, monkeypatch):
     target = tmp_path / "engram"
     result = mig.migrate(source=fake_openclaw, target=target, dry_run=False)
     assert result["qmd_collections"] == []
+
+
+def test_move_lcm_db_success(tmp_path):
+    source = tmp_path / "openclaw"
+    target = tmp_path / "engram"
+    source.mkdir()
+    src_db = source / "lcm.db"
+    payload = b"x" * 2048
+    src_db.write_bytes(payload)
+
+    result = mig.move_lcm_db(source, target)
+
+    assert result["moved"] is True
+    assert result["size"] == len(payload)
+    assert result["from"] == str(src_db)
+    assert result["to"] == str(target / "lcm.db")
+    dst_db = target / "lcm.db"
+    assert dst_db.exists()
+    assert dst_db.read_bytes() == payload
+    assert not src_db.exists()
+    backups = list(source.glob("lcm.db.bak.*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == payload
+    assert result["backup"] == str(backups[0])
+
+
+def test_move_lcm_db_no_source(tmp_path):
+    source = tmp_path / "openclaw"
+    target = tmp_path / "engram"
+    source.mkdir()
+    result = mig.move_lcm_db(source, target)
+    assert result == {"moved": False, "reason": "no_source"}
+    assert not (target / "lcm.db").exists()
+
+
+def test_move_lcm_db_target_exists(tmp_path):
+    source = tmp_path / "openclaw"
+    target = tmp_path / "engram"
+    source.mkdir()
+    target.mkdir()
+    src_db = source / "lcm.db"
+    src_db.write_bytes(b"source-data")
+    dst_db = target / "lcm.db"
+    dst_db.write_bytes(b"existing-target")
+
+    result = mig.move_lcm_db(source, target)
+
+    assert result["moved"] is False
+    assert result["reason"] == "target_exists"
+    assert result["target"] == str(dst_db)
+    # source must still be present and untouched
+    assert src_db.exists()
+    assert src_db.read_bytes() == b"source-data"
+    # target untouched
+    assert dst_db.read_bytes() == b"existing-target"
+
+
+def test_move_lcm_flag_via_main(fake_openclaw, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PATH", "")  # hide qmd to keep output clean
+    target = tmp_path / "engram"
+    src_db = fake_openclaw / "lcm.db"
+    payload = b"db-bytes-" * 128
+    src_db.write_bytes(payload)
+
+    rc = mig.main([
+        "--source", str(fake_openclaw),
+        "--target", str(target),
+        "--move-lcm",
+    ])
+    assert rc == 0
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["lcm"]["moved"] is True
+    assert (target / "lcm.db").exists()
+    assert (target / "lcm.db").read_bytes() == payload
+    assert not src_db.exists()
