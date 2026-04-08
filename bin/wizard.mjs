@@ -62,6 +62,8 @@ function writeEngramConfig(payload) {
     policy: {
       tier: payload.policyTier ?? 'review',
       approvalCacheTtlMinutes: 60,
+      costCeilingHourlyUsd: null,
+      costCeilingDailyUsd: null,
     },
     lcm: {
       queryBatchSize: 32,
@@ -77,6 +79,9 @@ function writeEngramConfig(payload) {
       codex: process.env.CODEX_HOME ?? join(HOME, '.codex'),
     },
   };
+  if (existsSync(ENGRAM_CONFIG_PATH)) {
+    note(yellow(`Overwriting existing ${ENGRAM_CONFIG_PATH} (back up first if you have hand edits)`));
+  }
   writeFileSync(ENGRAM_CONFIG_PATH, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
   return ENGRAM_CONFIG_PATH;
 }
