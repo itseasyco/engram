@@ -79,24 +79,24 @@ _schema_mtime: float = 0
 
 
 def _vault_root() -> Path:
-    """Resolve the vault root path."""
-    vault = os.environ.get(
-        "LACP_OBSIDIAN_VAULT",
-        os.environ.get("OPENCLAW_VAULT", ""),
-    )
-    if not vault:
-        openclaw_home = os.environ.get("OPENCLAW_HOME", os.path.expanduser("~/.openclaw"))
-        vault = os.path.join(openclaw_home, "data", "knowledge")
-    return Path(vault)
+    """Resolve the vault root path via engram_config."""
+    from engram_config import load
+    return Path(load().vault_path)
 
 
 def _schema_path() -> Path:
-    """Return path to vault-schema.json."""
-    plugin_dir = os.environ.get(
-        "OPENCLAW_PLUGIN_DIR",
-        os.path.expanduser("~/.openclaw/extensions/engram"),
-    )
-    return Path(plugin_dir) / "config" / "vault-schema.json"
+    """Return path to vault-schema.json. Prefer ENGRAM_HOME, fall back to legacy."""
+    engram_home = os.environ.get("ENGRAM_HOME", os.path.expanduser("~/.engram"))
+    new_path = Path(engram_home) / "extensions" / "engram" / "config" / "vault-schema.json"
+    if new_path.exists():
+        return new_path
+    legacy = Path(
+        os.environ.get(
+            "OPENCLAW_PLUGIN_DIR",
+            os.path.expanduser("~/.openclaw/extensions/engram"),
+        )
+    ) / "config" / "vault-schema.json"
+    return legacy
 
 
 def _load_schema() -> dict:

@@ -173,3 +173,16 @@ def test_load_propagates_os_error_on_unreadable_file(isolated_home):
             ec.load()
     finally:
         os.chmod(cfg_path, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def test_vault_paths_uses_engram_config(isolated_home, monkeypatch):
+    import importlib
+    import vault_paths
+    importlib.reload(vault_paths)
+    (isolated_home / "config.json").write_text(
+        '{"vaultPath": "/v", "schemaVersion": 1}'
+    )
+    ec._cache.clear()
+    importlib.reload(vault_paths)
+    assert str(vault_paths.root()) == "/v"
+    assert str(vault_paths.resolve("memory")) == "/v/memory"
