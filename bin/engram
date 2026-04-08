@@ -244,12 +244,12 @@ cmd_status() {
     script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
     local engram_lib_search="$script_dir/../plugin/lib"
     local mode
-    mode=$(python3 -c "
+    mode=$(ENGRAM_LIB_SEARCH="$engram_lib_search" python3 -c "
 import sys, os
 for p in [
     os.path.expanduser(os.environ.get('ENGRAM_HOME', '~/.engram') + '/extensions/engram/lib'),
     os.path.expanduser('~/.openclaw/extensions/engram/lib'),
-    '$engram_lib_search',
+    os.environ['ENGRAM_LIB_SEARCH'],
 ]:
     if os.path.isdir(p):
         sys.path.insert(0, p)
@@ -632,24 +632,27 @@ case "$1" in
             kpi)      shift; exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
             heal)
                 shift
-                local script_dir
-                script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-                local engram_lib_search="$script_dir/../plugin/lib"
-                local vault_path
-                vault_path=$(python3 -c "
+                _engram_vh_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+                _engram_vh_lib="$_engram_vh_dir/../plugin/lib"
+                _engram_vh_path=$(ENGRAM_LIB_SEARCH="$_engram_vh_lib" python3 -c "
 import sys, os
 for p in [
     os.path.expanduser(os.environ.get('ENGRAM_HOME', '~/.engram') + '/extensions/engram/lib'),
     os.path.expanduser('~/.openclaw/extensions/engram/lib'),
-    '$engram_lib_search',
+    os.environ['ENGRAM_LIB_SEARCH'],
 ]:
     if os.path.isdir(p):
         sys.path.insert(0, p)
         break
 from engram_config import load
 print(load().vault_path)
-" 2>/dev/null)
-                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "$vault_path" "$@"
+" 2>/dev/null || true)
+                if [[ -z "$_engram_vh_path" ]]; then
+                    echo "engram vault heal: could not resolve vault_path from engram_config" >&2
+                    echo "Run 'engram wizard' to create ~/.engram/config.json, or set ENGRAM_HOME." >&2
+                    exit 1
+                fi
+                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "$_engram_vh_path" "$@"
                 ;;
             migrate)       shift; exec python3 "$PLUGIN_BIN/engram-vault-migrate" "$@" ;;
             review-stale)  shift; exec python3 "$PLUGIN_BIN/engram-vault-review-stale" "$@" ;;
