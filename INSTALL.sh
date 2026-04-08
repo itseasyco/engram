@@ -1268,6 +1268,8 @@ write_engram_config() {
     local CODEX_HOME_SAFE="${CODEX_HOME:-$HOME/.codex}"
 
     if [ "$HAS_JQ" = "true" ]; then
+        local tmp
+        tmp=$(mktemp)
         jq -n \
             --arg vault "$DETECTED_VAULT" \
             --arg kr "$ENGRAM_HOME/knowledge" \
@@ -1283,7 +1285,9 @@ write_engram_config() {
             --arg curatorUrl "$WIZARD_CURATOR_URL_SAFE" \
             --arg openclawHome "$OPENCLAW_HOME_SAFE" \
             --arg claudeHome "$CLAUDE_HOME_SAFE" \
-            --arg codexHome "$CODEX_HOME_SAFE" '
+            --arg codexHome "$CODEX_HOME_SAFE" \
+            --argjson cch null \
+            --argjson ccd null '
             {
               schemaVersion: 1,
               profile: $profile,
@@ -1305,7 +1309,9 @@ write_engram_config() {
               },
               policy: {
                 tier: $tier,
-                approvalCacheTtlMinutes: 60
+                approvalCacheTtlMinutes: 60,
+                costCeilingHourlyUsd: $cch,
+                costCeilingDailyUsd: $ccd
               },
               lcm: {
                 queryBatchSize: 32,
@@ -1318,11 +1324,12 @@ write_engram_config() {
                 claudeCode: $claudeHome,
                 codex: $codexHome
               }
-            }' > "$ENGRAM_CONFIG"
+            }' > "$tmp"
+        mv "$tmp" "$ENGRAM_CONFIG"
         log_success "Wrote $ENGRAM_CONFIG"
     else
         log_warning "jq not installed — falling back to engram-migrate-config"
-        python3 "$PLUGIN_PATH/../bin/engram-migrate-config" --target "$ENGRAM_HOME" || true
+        python3 "$SCRIPT_DIR/bin/engram-migrate-config" --target "$ENGRAM_HOME"
     fi
 }
 
