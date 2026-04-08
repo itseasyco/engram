@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -130,11 +132,19 @@ def _read_file() -> dict:
     path = config_path()
     if not path.exists():
         return {}
+    # OSError (permission denied, I/O errors) is intentionally allowed to
+    # propagate — the caller needs to know their config is unreadable, not
+    # silently fall back to defaults.
+    text = path.read_text(encoding="utf-8")
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return _apply_aliases(raw)
-    except (json.JSONDecodeError, OSError):
+        raw = json.loads(text)
+    except json.JSONDecodeError as err:
+        print(
+            f"[engram_config] warning: ignoring malformed {path}: {err}",
+            file=sys.stderr,
+        )
         return {}
+    return _apply_aliases(raw)
 
 
 def _resolve_paths(merged: dict, home: Path) -> dict:
@@ -186,11 +196,24 @@ def save(updates: dict[str, Any]) -> Path:
             f"Invalid mode {updates['mode']!r}. Must be one of {VALID_MODES}"
         )
 
+    path = config_path()
+    # If the existing file exists but is malformed, preserve it before we
+    # overwrite so unrecoverable user edits are never silently destroyed.
+    if path.exists():
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            backup = path.with_suffix(f".json.corrupt.{int(time.time())}")
+            path.rename(backup)
+            print(
+                f"[engram_config] warning: backed up malformed config to {backup}",
+                file=sys.stderr,
+            )
+
     existing = _read_file()
     merged = _deep_merge(existing or {}, updates)
     merged.setdefault("schemaVersion", SCHEMA_VERSION)
 
-    path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
