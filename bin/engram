@@ -233,38 +233,27 @@ cmd_wizard() {
     fi
 }
 
-_source_env_config() {
-    # Source the LACP env config so env vars are available to subcommands
-    local env_file="$HOME/.openclaw/extensions/engram/config/.engram.env"
-    if [[ -f "$env_file" ]]; then
-        while IFS= read -r line; do
-            line="${line%%#*}"  # strip comments
-            line="${line#"${line%%[![:space:]]*}"}"  # trim leading whitespace
-            [[ -z "$line" ]] && continue
-            if [[ "$line" == *=* ]]; then
-                local key="${line%%=*}"
-                local val="${line#*=}"
-                # Only export if not already set in environment
-                if [[ -z "${!key:-}" ]]; then
-                    export "$key=$val"
-                fi
-            fi
-        done < "$env_file"
-    fi
-}
-
 cmd_status() {
-    _source_env_config
     show_banner
 
     echo -e "${BOLD}System Status${NC}"
     echo ""
 
     # Mode
+    local script_dir
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    local engram_lib_search="$script_dir/../plugin/lib"
     local mode
     mode=$(python3 -c "
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.openclaw/extensions/engram/lib'))
+for p in [
+    os.path.expanduser(os.environ.get('ENGRAM_HOME', '~/.engram') + '/extensions/engram/lib'),
+    os.path.expanduser('~/.openclaw/extensions/engram/lib'),
+    '$engram_lib_search',
+]:
+    if os.path.isdir(p):
+        sys.path.insert(0, p)
+        break
 try:
     from mode import get_config
     c = get_config()
@@ -324,7 +313,6 @@ except Exception as e:
 }
 
 cmd_doctor() {
-    _source_env_config
     show_banner
     echo -e "${BOLD}Running diagnostics...${NC}"
     echo ""
@@ -644,8 +632,24 @@ case "$1" in
             kpi)      shift; exec "$PLUGIN_BIN/engram-memory-kpi" "$@" ;;
             heal)
                 shift
-                _source_env_config
-                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "${LACP_OBSIDIAN_VAULT:-${OPENCLAW_VAULT:-$HOME/.openclaw/data/knowledge}}" "$@"
+                local script_dir
+                script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+                local engram_lib_search="$script_dir/../plugin/lib"
+                local vault_path
+                vault_path=$(python3 -c "
+import sys, os
+for p in [
+    os.path.expanduser(os.environ.get('ENGRAM_HOME', '~/.engram') + '/extensions/engram/lib'),
+    os.path.expanduser('~/.openclaw/extensions/engram/lib'),
+    '$engram_lib_search',
+]:
+    if os.path.isdir(p):
+        sys.path.insert(0, p)
+        break
+from engram_config import load
+print(load().vault_path)
+" 2>/dev/null)
+                exec python3 "$(dirname "$PLUGIN_BIN")/lib/vault_doctor.py" "$vault_path" "$@"
                 ;;
             migrate)       shift; exec python3 "$PLUGIN_BIN/engram-vault-migrate" "$@" ;;
             review-stale)  shift; exec python3 "$PLUGIN_BIN/engram-vault-review-stale" "$@" ;;
@@ -716,23 +720,6 @@ case "$1" in
         if [ -d "$hook_dir" ]; then
             rm -rf "$hook_dir"
             echo -e "  ${GREEN}✓${NC} Removed $hook_dir"
-        fi
-
-        # Clean gateway config
-        if command -v jq &>/dev/null && [ -f "$HOME/.openclaw/openclaw.json" ]; then
-            tmp=""
-            tmp=$(mktemp)
-            jq '
-                del(.plugins.entries["engram"]) |
-                del(.plugins.entries["engram"]) |
-                .plugins.allow = [.plugins.allow[] | select(. != "engram" and . != "engram")] |
-                del(.plugins.installs["engram"]) |
-                del(.plugins.installs["engram"]) |
-                del(.hooks.internal.entries["engram-session-capture"])
-            ' "$HOME/.openclaw/openclaw.json" > "$tmp" && mv "$tmp" "$HOME/.openclaw/openclaw.json"
-            echo -e "  ${GREEN}✓${NC} Cleaned gateway config"
-        else
-            echo -e "  ${YELLOW}!${NC} Could not clean gateway config (jq not found). Edit ~/.openclaw/openclaw.json manually."
         fi
 
         # Unlink npm global
