@@ -38,6 +38,8 @@ PLUGIN_NAME="engram"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_VERSION=$(node -p "require('${SCRIPT_DIR}/package.json').version" 2>/dev/null || echo "3.0.0")
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+ENGRAM_HOME="${ENGRAM_HOME:-$HOME/.engram}"
+ENGRAM_CONFIG="$ENGRAM_HOME/config.json"
 PLUGIN_PATH="$OPENCLAW_HOME/extensions/$PLUGIN_NAME"
 GATEWAY_CONFIG="$OPENCLAW_HOME/openclaw.json"
 
@@ -1240,99 +1242,111 @@ ENVEOF
     fi
 }
 
-# ─── Step 5: Update gateway config ──────────────────────────────────────────
+# ─── Step 5: Write Engram config + host pointers ────────────────────────────
 
-update_gateway_config() {
-    log_step 5 "Updating gateway config"
+write_engram_config() {
+    log_step 5 "Writing Engram config"
 
-    if [ "$HAS_JQ" != "true" ]; then
-        log_warning "Skipping gateway config update (jq not installed)"
-        log_info "  Add manually to $GATEWAY_CONFIG:"
-        echo '  "plugins.allow": add "engram"'
-        echo '  "plugins.entries.engram": { "enabled": true, "config": { ... } }'
-        return
+    mkdir -p "$ENGRAM_HOME"
+    if [ -f "$ENGRAM_CONFIG" ]; then
+        cp "$ENGRAM_CONFIG" "$ENGRAM_CONFIG.bak.$(date +%s)"
+        log_info "Engram config backed up"
     fi
 
-    # Backup gateway config
-    cp "$GATEWAY_CONFIG" "$GATEWAY_CONFIG.bak.$(date +%s)"
-    log_info "Gateway config backed up"
+    # Defaults so nothing trips set -u
+    local WIZARD_CURATOR_URL_SAFE="${WIZARD_CURATOR_URL:-}"
+    local WIZARD_CONTEXT_ENGINE_SAFE="${WIZARD_CONTEXT_ENGINE_RESOLVED:-lossless-claw}"
 
-    # Check if plugin already registered
-    if jq -e '.plugins.entries["engram"]' "$GATEWAY_CONFIG" &>/dev/null; then
-        log_warning "Plugin already registered in gateway config"
-        return
-    fi
-
-    # Resolve context engine for JSON (null for file-based)
-    local ce_json="null"
-    if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ]; then
-        ce_json='"lossless-claw"'
-    fi
-
-    # Add to plugins.allow if not present
-    local tmp
-    tmp=$(mktemp)
-
-    jq --arg name "$PLUGIN_NAME" '
-      .plugins.allow = (
-        if (.plugins.allow | index($name)) then .plugins.allow
-        else .plugins.allow + [$name]
-        end
-      )
-    ' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
-    log_success "Added to plugins.allow"
-
-    # Compute mutations flag
     local mutations_enabled="true"
     if [ "$WIZARD_MODE" = "connected" ]; then
         mutations_enabled="false"
     fi
 
-    # Add plugin entry with wizard values
-    tmp=$(mktemp)
-    jq --arg vault "$DETECTED_VAULT" \
-       --arg kr "$OPENCLAW_HOME/data/knowledge" \
-       --arg profile "$WIZARD_PROFILE" \
-       --arg tier "$WIZARD_POLICY_TIER" \
-       --argjson cg "$WIZARD_CODE_GRAPH" \
-       --argjson prov "$WIZARD_PROVENANCE" \
-       --argjson lf "$WIZARD_LOCAL_FIRST" \
-       --argjson ce "$ce_json" \
-       --arg mode "$WIZARD_MODE" \
-       --arg mutations "$mutations_enabled" \
-       --arg curatorUrl "$WIZARD_CURATOR_URL" '
-      .plugins.entries["engram"] = {
-        "enabled": true,
-        "config": {
-          "profile": $profile,
-          "obsidianVault": $vault,
-          "knowledgeRoot": $kr,
-          "localFirst": $lf,
-          "provenanceEnabled": $prov,
-          "codeGraphEnabled": $cg,
-          "policyTier": $tier,
-          "contextEngine": $ce,
-          "mode": $mode,
-          "mutationsEnabled": $mutations,
-          "curatorUrl": (if $curatorUrl == "" then null else $curatorUrl end)
-        }
-      }
-    ' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
-    log_success "Plugin entry added to gateway config"
+    # Pre-expand host paths so we never emit literal "~" into JSON
+    local OPENCLAW_HOME_SAFE="${OPENCLAW_HOME:-$HOME/.openclaw}"
+    local CLAUDE_HOME_SAFE="${CLAUDE_HOME:-$HOME/.claude}"
+    local CODEX_HOME_SAFE="${CODEX_HOME:-$HOME/.codex}"
 
-    # Add install record
+    if [ "$HAS_JQ" = "true" ]; then
+        jq -n \
+            --arg vault "$DETECTED_VAULT" \
+            --arg kr "$ENGRAM_HOME/knowledge" \
+            --arg ar "$ENGRAM_HOME/automation" \
+            --arg profile "$WIZARD_PROFILE" \
+            --arg tier "$WIZARD_POLICY_TIER" \
+            --argjson cg "$WIZARD_CODE_GRAPH" \
+            --argjson prov "$WIZARD_PROVENANCE" \
+            --argjson lf "$WIZARD_LOCAL_FIRST" \
+            --arg ce "$WIZARD_CONTEXT_ENGINE_SAFE" \
+            --arg mode "$WIZARD_MODE" \
+            --argjson mut "$mutations_enabled" \
+            --arg curatorUrl "$WIZARD_CURATOR_URL_SAFE" \
+            --arg openclawHome "$OPENCLAW_HOME_SAFE" \
+            --arg claudeHome "$CLAUDE_HOME_SAFE" \
+            --arg codexHome "$CODEX_HOME_SAFE" '
+            {
+              schemaVersion: 1,
+              profile: $profile,
+              vaultPath: $vault,
+              knowledgeRoot: $kr,
+              automationRoot: $ar,
+              mode: $mode,
+              mutationsEnabled: $mut,
+              agentRole: "developer",
+              curator: {
+                url: (if $curatorUrl == "" then null else $curatorUrl end),
+                token: null
+              },
+              features: {
+                localFirst: $lf,
+                provenanceEnabled: $prov,
+                codeGraphEnabled: $cg,
+                contextEngine: (if $ce == "" then null else $ce end)
+              },
+              policy: {
+                tier: $tier,
+                approvalCacheTtlMinutes: 60
+              },
+              lcm: {
+                queryBatchSize: 32,
+                promotionThreshold: 5,
+                autoDiscoveryInterval: "daily"
+              },
+              qmd: { collections: [] },
+              hosts: {
+                openclaw: $openclawHome,
+                claudeCode: $claudeHome,
+                codex: $codexHome
+              }
+            }' > "$ENGRAM_CONFIG"
+        log_success "Wrote $ENGRAM_CONFIG"
+    else
+        log_warning "jq not installed — falling back to engram-migrate-config"
+        python3 "$PLUGIN_PATH/../bin/engram-migrate-config" --target "$ENGRAM_HOME" || true
+    fi
+}
+
+update_host_pointers() {
+    # Leave a tiny pointer in openclaw.json so OpenClaw still discovers Engram,
+    # but the actual config lives in ~/.engram/config.json.
+    if [ "$HAS_JQ" != "true" ] || [ ! -f "$GATEWAY_CONFIG" ]; then
+        return
+    fi
+    cp "$GATEWAY_CONFIG" "$GATEWAY_CONFIG.bak.$(date +%s)"
+    local tmp
     tmp=$(mktemp)
-    jq --arg ver "$PLUGIN_VERSION" --arg path "$PLUGIN_PATH" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" '
-      .plugins.installs["engram"] = {
-        "source": "path",
-        "spec": "engram",
-        "installPath": $path,
-        "version": $ver,
-        "resolvedVersion": $ver,
-        "installedAt": $now
-      }
+    jq --arg cfg "$ENGRAM_CONFIG" '
+      .plugins.allow = (
+        if (.plugins.allow | index("engram")) then .plugins.allow
+        else .plugins.allow + ["engram"]
+        end
+      )
+      | .plugins.entries["engram"] = {
+          "enabled": true,
+          "configRef": $cfg
+        }
     ' "$GATEWAY_CONFIG" > "$tmp" && mv "$tmp" "$GATEWAY_CONFIG"
-    log_success "Install record added to gateway config"
+    log_success "Updated openclaw.json to point at $ENGRAM_CONFIG"
 }
 
 # ─── Step 6: Initialize Obsidian vault ───────────────────────────────────────
@@ -1432,14 +1446,16 @@ init_stack_and_integrations() {
 
     # Lossless-claw config
     if [ "$WIZARD_CONTEXT_ENGINE_RESOLVED" = "lossless-claw" ] && [ "$HAS_JQ" = "true" ]; then
-        _run_init_task "Lossless-claw config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.contextEngine = \"lossless-claw\"' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5 || true
+        _run_init_task "Lossless-claw config" \
+          "tmp=\$(mktemp) && jq '.features.contextEngine = \"lossless-claw\"' '$ENGRAM_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$ENGRAM_CONFIG'" 5 || true
     fi
 
     # GitNexus / code graph
     if [ "$WIZARD_CODE_GRAPH" = "true" ]; then
         if command -v gitnexus &>/dev/null; then
             if [ "$HAS_JQ" = "true" ]; then
-                _run_init_task "Code graph config" "tmp=\$(mktemp) && jq '.plugins.entries[\"engram\"].config.codeGraphEnabled = true' '$GATEWAY_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$GATEWAY_CONFIG'" 5 || true
+                _run_init_task "Code graph config" \
+                  "tmp=\$(mktemp) && jq '.features.codeGraphEnabled = true' '$ENGRAM_CONFIG' > \"\$tmp\" && mv \"\$tmp\" '$ENGRAM_CONFIG'" 5 || true
             fi
             if [ -x "$bin_dir/engram-brain-graph" ]; then
                 _run_init_task "MCP server configs" "bash '$bin_dir/engram-brain-graph' mcp-config '$DETECTED_VAULT' --output '$PLUGIN_PATH/config/mcp-servers.json'" 15 || true
@@ -1852,6 +1868,7 @@ print_summary() {
     echo -e "${BOLD}Locations:${NC}"
     echo "  Config:  $PLUGIN_PATH/config/.engram.env"
     echo "  Gateway: $GATEWAY_CONFIG"
+    echo "  Engram config: $ENGRAM_CONFIG"
     echo "  Logs:    $PLUGIN_PATH/logs/"
     echo "  Docs:    $PLUGIN_PATH/docs/"
     echo ""
@@ -2008,7 +2025,8 @@ main() {
     setup_plugin_directory
     create_data_directories
     generate_env_config
-    update_gateway_config
+    write_engram_config
+    update_host_pointers
     init_obsidian_vault
     init_stack_and_integrations
     write_tools_md
