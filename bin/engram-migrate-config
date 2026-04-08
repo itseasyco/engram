@@ -160,13 +160,45 @@ def migrate(
             os.environ["ENGRAM_HOME"] = prev_home
         ec._cache.clear()
 
-    return {
+    result = {
         "dry_run": False,
         "source_found": source_found,
         "wrote": str(written_path),
         "target_backup": str(pre_backup) if pre_backup else None,
         "gateway_backup": str(gateway_backup) if gateway_backup else None,
     }
+    result["qmd_collections"] = register_qmd_collections(target)
+    return result
+
+
+def register_qmd_collections(target: Path) -> list[str]:
+    """Register the configured vault as a QMD collection if qmd is on PATH."""
+    import shutil, subprocess
+    if not shutil.which("qmd"):
+        return []
+    cfg_path = target / "config.json"
+    if not cfg_path.exists():
+        return []
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    vault = cfg.get("vaultPath")
+    if not vault or not Path(vault).exists():
+        return []
+    name = "engram-vault"
+    try:
+        subprocess.run(
+            ["qmd", "collection", "add", name, vault],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return []
+    # Persist the collection name in config.qmd.collections
+    qmd = cfg.setdefault("qmd", {})
+    cols = qmd.setdefault("collections", [])
+    if name not in cols:
+        cols.append(name)
+        cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    return [name]
 
 
 def main(argv: list[str] | None = None) -> int:

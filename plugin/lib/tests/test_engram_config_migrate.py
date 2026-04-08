@@ -111,3 +111,10 @@ def test_migrate_handles_missing_gateway(tmp_path, monkeypatch):
     cfg = ec.load()
     assert cfg.mode == "standalone"
     assert result["source_found"] is False
+
+
+def test_register_qmd_collections_no_qmd(fake_openclaw, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", "")  # hide qmd
+    target = tmp_path / "engram"
+    result = mig.migrate(source=fake_openclaw, target=target, dry_run=False)
+    assert result["qmd_collections"] == []
