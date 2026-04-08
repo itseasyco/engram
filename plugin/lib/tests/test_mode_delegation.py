@@ -60,3 +60,37 @@ def test_check_mutation_allowed_in_connected(isolated):
     allowed, reason = mode.check_mutation_allowed("brain-expand")
     assert allowed is False
     assert "connected mode" in reason
+
+
+def test_set_mode_round_trip(isolated):
+    mode.set_mode(
+        "curator",
+        curator_url="https://curator.example",
+        curator_token="tok-123",
+        vault_path="/roundtrip/vault",
+        agent_role="curator-bot",
+    )
+    ec._cache.clear()
+    cfg = mode.get_config()
+    assert cfg.mode == "curator"
+    assert cfg.curator_url == "https://curator.example"
+    assert cfg.curator_token == "tok-123"
+    assert cfg.vault_path == "/roundtrip/vault"
+    assert cfg.agent_role == "curator-bot"
+    assert cfg.mutations_enabled is True  # curator mode -> mutations enabled
+
+    # Re-verify via ec.load() directly to catch any snake_case/camelCase
+    # translation bugs in set_mode's update dict.
+    raw = ec.load()
+    assert raw.vault_path == "/roundtrip/vault"
+    assert raw.curator_url == "https://curator.example"
+    assert raw.curator_token == "tok-123"
+    assert raw.agent_role == "curator-bot"
+
+
+def test_set_mode_connected_disables_mutations(isolated):
+    mode.set_mode("connected")
+    ec._cache.clear()
+    cfg = mode.get_config()
+    assert cfg.mode == "connected"
+    assert cfg.mutations_enabled is False
