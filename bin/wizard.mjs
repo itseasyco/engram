@@ -36,6 +36,50 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, '..');
 const PLUGIN_ROOT = existsSync(join(REPO_ROOT, 'plugin')) ? join(REPO_ROOT, 'plugin') : REPO_ROOT;
+const ENGRAM_CONFIG_PATH = join(ENGRAM_HOME, 'config.json');
+
+function writeEngramConfig(payload) {
+  mkdirSync(ENGRAM_HOME, { recursive: true });
+  const merged = {
+    schemaVersion: 1,
+    profile: payload.profile ?? 'autonomous',
+    vaultPath: payload.vaultPath,
+    knowledgeRoot: payload.knowledgeRoot ?? join(ENGRAM_HOME, 'knowledge'),
+    automationRoot: payload.automationRoot ?? join(ENGRAM_HOME, 'automation'),
+    mode: payload.mode ?? 'standalone',
+    mutationsEnabled: payload.mutationsEnabled ?? true,
+    agentRole: payload.agentRole ?? 'developer',
+    curator: {
+      url: payload.curatorUrl ?? null,
+      token: payload.curatorToken ?? null,
+    },
+    features: {
+      localFirst: payload.localFirst ?? true,
+      provenanceEnabled: payload.provenanceEnabled ?? true,
+      codeGraphEnabled: payload.codeGraphEnabled ?? true,
+      contextEngine: payload.contextEngine ?? 'lossless-claw',
+    },
+    policy: {
+      tier: payload.policyTier ?? 'review',
+      approvalCacheTtlMinutes: 60,
+    },
+    lcm: {
+      queryBatchSize: 32,
+      promotionThreshold: 5,
+      autoDiscoveryInterval: 'daily',
+    },
+    qmd: {
+      collections: payload.qmdCollections ?? [],
+    },
+    hosts: {
+      openclaw: payload.openclawHome ?? OPENCLAW_HOME,
+      claudeCode: process.env.CLAUDE_HOME ?? join(HOME, '.claude'),
+      codex: process.env.CODEX_HOME ?? join(HOME, '.codex'),
+    },
+  };
+  writeFileSync(ENGRAM_CONFIG_PATH, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+  return ENGRAM_CONFIG_PATH;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -920,6 +964,20 @@ async function main() {
   try {
     writeFileSync(CONFIG_OUTPUT, JSON.stringify(config, null, 2), 'utf-8');
     log.success(`Config written to ${dim(CONFIG_OUTPUT)}`);
+
+    const engramConfigPath = writeEngramConfig({
+      profile: safetyProfile,
+      vaultPath: vaultPath,
+      mode: operatingMode,
+      curatorUrl: curatorUrl || null,
+      curatorToken: curatorToken || null,
+      policyTier: policyTier,
+      codeGraphEnabled: codeGraph,
+      provenanceEnabled: provenance,
+      localFirst: localFirst,
+      contextEngine: contextEngineResolved,
+    });
+    note(green(`Wrote ${engramConfigPath}`));
   } catch (err) {
     log.error(`Failed to write config: ${err.message}`);
     process.exit(1);
