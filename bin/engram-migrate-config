@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""
+engram-migrate-config — migrate Engram config out of openclaw.json
+into ~/.engram/config.json.
+
+Usage:
+  engram-migrate-config [--source ~/.openclaw] [--target ~/.engram] [--dry-run]
+
+Idempotent: if the target already has a config.json with the same
+content this writes nothing. Always backs the source up first.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+# Make engram_config importable when run from a checkout or installed plugin
+_HERE = Path(__file__).resolve().parent
+for candidate in (
+    _HERE.parent / "plugin" / "lib",
+    Path.home() / ".engram" / "extensions" / "engram" / "lib",
+    Path.home() / ".openclaw" / "extensions" / "engram" / "lib",
+):
+    if (candidate / "engram_config.py").exists():
+        sys.path.insert(0, str(candidate))
+        break
+
+import engram_config as ec  # noqa: E402
+
+LEGACY_TO_NEW = {
+    "profile": "profile",
+    "obsidianVault": "vaultPath",
+    "knowledgeRoot": "knowledgeRoot",
+    "automationRoot": "automationRoot",
+    "policyTier": ("policy", "tier"),
+    "contextEngine": ("features", "contextEngine"),
+    "localFirst": ("features", "localFirst"),
+    "provenanceEnabled": ("features", "provenanceEnabled"),
+    "codeGraphEnabled": ("features", "codeGraphEnabled"),
+    "mode": "mode",
+    "mutationsEnabled": "mutationsEnabled",
+    "curatorUrl": ("curator", "url"),
+    "curatorToken": ("curator", "token"),
+    "agentRole": "agentRole",
+}
+
+
+def _coerce_bool(v: Any) -> Any:
+    if isinstance(v, str) and v.lower() in ("true", "false"):
+        return v.lower() == "true"
+    return v
+
+
+def _set_nested(out: dict, key: Any, value: Any) -> None:
+    if isinstance(key, tuple):
+        cursor = out
+        for part in key[:-1]:
+            cursor = cursor.setdefault(part, {})
+        cursor[key[-1]] = value
+    else:
+        out[key] = value
+
+
+def _read_legacy_engram_config(source: Path) -> dict:
+    """Pull engram config out of openclaw.json and mode.json. Returns {} if absent."""
+    found: dict = {}
+    gateway = source / "openclaw.json"
+    if gateway.exists():
+        try:
+            data = json.loads(gateway.read_text(encoding="utf-8"))
+            entry = (
+                data.get("plugins", {})
+                    .get("entries", {})
+                    .get("engram", {})
+                    .get("config", {})
+            )
+            for legacy_key, new_key in LEGACY_TO_NEW.items():
+                if legacy_key in entry:
+                    _set_nested(found, new_key, _coerce_bool(entry[legacy_key]))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    mode_file = source / "config" / "mode.json"
+    if mode_file.exists():
+        try:
+            data = json.loads(mode_file.read_text(encoding="utf-8"))
+            if "mode" in data and "mode" not in found:
+                found["mode"] = data["mode"]
+            if "mutations_enabled" in data and "mutationsEnabled" not in found:
+                found["mutationsEnabled"] = bool(data["mutations_enabled"])
+            if "vault_path" in data and "vaultPath" not in found:
+                found["vaultPath"] = data["vault_path"]
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return found
+
+
+def _backup(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    bak = path.with_suffix(path.suffix + f".bak.{int(time.time())}")
+    shutil.copy2(path, bak)
+    return bak
+
+
+def migrate(
+    *,
+    source: Path,
+    target: Path,
+    dry_run: bool = False,
+) -> dict:
+    source = Path(source).expanduser()
+    target = Path(target).expanduser()
+
+    legacy = _read_legacy_engram_config(source)
+    source_found = bool(legacy)
+
+    # Build merged config: defaults + legacy values
+    merged: dict = {"schemaVersion": ec.SCHEMA_VERSION}
+    for k, v in legacy.items():
+        merged[k] = v
+
+    if dry_run:
+        # Still resolve via _deep_merge so the preview matches save() output
+        preview = ec._deep_merge(ec.DEFAULTS, merged)
+        return {
+            "dry_run": True,
+            "source_found": source_found,
+            "preview": preview,
+            "would_write": str(target / "config.json"),
+        }
+
+    # Backup target if it already exists
+    target_cfg = target / "config.json"
+    pre_backup = _backup(target_cfg)
+
+    # Backup gateway too (we never edit it here, but record the snapshot)
+    gateway_backup = _backup(source / "openclaw.json")
+
+    target.mkdir(parents=True, exist_ok=True)
+
+    # Snapshot/restore ENGRAM_HOME so migrate() never leaks env into
+    # the surrounding process or test session.
+    prev_home = os.environ.get("ENGRAM_HOME")
+    try:
+        os.environ["ENGRAM_HOME"] = str(target)
+        ec._cache.clear()
+        written_path = ec.save(merged)
+    finally:
+        if prev_home is None:
+            os.environ.pop("ENGRAM_HOME", None)
+        else:
+            os.environ["ENGRAM_HOME"] = prev_home
+        ec._cache.clear()
+
+    return {
+        "dry_run": False,
+        "source_found": source_found,
+        "wrote": str(written_path),
+        "target_backup": str(pre_backup) if pre_backup else None,
+        "gateway_backup": str(gateway_backup) if gateway_backup else None,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Migrate Engram config to ~/.engram/config.json")
+    p.add_argument("--source", default=os.path.expanduser("~/.openclaw"))
+    p.add_argument("--target", default=os.path.expanduser("~/.engram"))
+    p.add_argument("--dry-run", action="store_true")
+    args = p.parse_args(argv)
+
+    result = migrate(
+        source=Path(args.source),
+        target=Path(args.target),
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
