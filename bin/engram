@@ -248,8 +248,8 @@ cmd_status() {
 import sys, os
 for p in [
     os.path.expanduser(os.environ.get('ENGRAM_HOME', '~/.engram') + '/extensions/engram/lib'),
-    os.path.expanduser('~/.openclaw/extensions/engram/lib'),
     os.environ['ENGRAM_LIB_SEARCH'],
+    os.path.expanduser('~/.openclaw/extensions/engram/lib'),
 ]:
     if os.path.isdir(p):
         sys.path.insert(0, p)
@@ -638,8 +638,8 @@ case "$1" in
 import sys, os
 for p in [
     os.path.expanduser(os.environ.get('ENGRAM_HOME', '~/.engram') + '/extensions/engram/lib'),
-    os.path.expanduser('~/.openclaw/extensions/engram/lib'),
     os.environ['ENGRAM_LIB_SEARCH'],
+    os.path.expanduser('~/.openclaw/extensions/engram/lib'),
 ]:
     if os.path.isdir(p):
         sys.path.insert(0, p)
