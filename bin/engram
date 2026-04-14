@@ -635,6 +635,7 @@ case "$1" in
         ;;
     vault)
         shift
+        _source_env_config
         case "${1:-}" in
             status)   shift; exec "$PLUGIN_BIN/engram-obsidian" status "$@" ;;
             audit)    shift; exec "$PLUGIN_BIN/engram-obsidian" audit "$@" ;;
