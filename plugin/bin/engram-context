@@ -332,10 +332,11 @@ cmd_query() {
         log_info "Using QMD semantic search"
         local qmd_output
         qmd_output=$(qmd search "$topic" -c vault 2>/dev/null || true)
-        if [[ -n "$qmd_output" ]]; then
+        # Filter out QMD's "No results found." message which is not an actual result
+        if [[ -n "$qmd_output" && "$qmd_output" != "No results found." ]]; then
             qmd_searched=true
             while IFS= read -r line; do
-                [[ -n "$line" ]] && results+=("qmd: $line")
+                [[ -n "$line" && "$line" != "No results found." ]] && results+=("qmd: $line")
             done <<< "$qmd_output"
         fi
     fi
@@ -359,14 +360,19 @@ cmd_query() {
         fi
     fi
 
+    # Build a grep pattern that OR-matches individual words in the topic.
+    # "curator cron" becomes "(curator)|(cron)" so lines containing either word match.
+    local grep_pattern
+    grep_pattern=$(echo "$topic" | tr ' ' '\n' | sed 's/^/(/; s/$/)/' | paste -sd '|' -)
+
     for dir in "${search_dirs[@]}"; do
         if [[ -d "$dir" ]]; then
             local matches
-            matches=$(grep -ril "$topic" "$dir" 2>/dev/null | head -20 || true)
+            matches=$(grep -rilE "$grep_pattern" "$dir" 2>/dev/null | head -20 || true)
             while IFS= read -r file; do
                 if [[ -n "$file" && -f "$file" ]]; then
                     local matching_lines
-                    matching_lines=$(grep -i "$topic" "$file" 2>/dev/null | head -5 || true)
+                    matching_lines=$(grep -iE "$grep_pattern" "$file" 2>/dev/null | head -5 || true)
                     while IFS= read -r line; do
                         [[ -n "$line" ]] && results+=("$(basename "$file" .md): $line")
                     done <<< "$matching_lines"
@@ -380,9 +386,10 @@ cmd_query() {
         log_info "Searching Obsidian vault via QMD"
         local vault_qmd
         vault_qmd=$(cd "$LACP_OBSIDIAN_VAULT" && qmd search "$topic" 2>/dev/null || true)
-        if [[ -n "$vault_qmd" ]]; then
+        # Filter out QMD's "No results found." message
+        if [[ -n "$vault_qmd" && "$vault_qmd" != "No results found." ]]; then
             while IFS= read -r line; do
-                [[ -n "$line" ]] && results+=("vault: $line")
+                [[ -n "$line" && "$line" != "No results found." ]] && results+=("vault: $line")
             done <<< "$vault_qmd"
         fi
     fi
